@@ -109,3 +109,6 @@ ENV/
 # IDE settings
 .vscode/
 .idea/
+
+# pydev copier answers
+.copier-answers.yml
