@@ -428,6 +428,17 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+all = [
+    { name = "ipython", version = "8.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "ipython", version = "8.33.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "ipython", version = "9.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pdbpp" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "rich" },
+    { name = "ruff" },
+]
 dev = [
     { name = "ipython", version = "8.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "ipython", version = "8.33.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
@@ -451,6 +462,15 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+all = [
+    { name = "ipython" },
+    { name = "pdbpp" },
+    { name = "pre-commit", specifier = ">=4.1.0" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "rich" },
+    { name = "ruff", specifier = ">=0.9.9" },
+]
 dev = [
     { name = "ipython" },
     { name = "pdbpp" },

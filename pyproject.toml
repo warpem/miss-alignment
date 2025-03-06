@@ -53,6 +53,11 @@ lint = [
     "pre-commit>=4.1.0",
     "ruff>=0.9.9",
 ]
+all = [
+    {include-group = "test"},
+    {include-group = "dev"},
+    {include-group = "lint"},
+]
 
 [tool.uv]
 default-groups = ["test", "dev", "lint"]
