@@ -1,0 +1,113 @@
+# https://peps.python.org/pep-0517/
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# read more about configuring hatch at:
+# https://hatch.pypa.io/latest/config/build/
+[tool.hatch.build.targets.wheel]
+only-include = ["src"]
+sources = ["src"]
+
+# https://peps.python.org/pep-0621/
+[project]
+name = "miss-alignment"
+version = "0.1.0"
+description = "She has a chaotic good alignment for tilt-series."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "Marten Chaillet", email = "martenchaillet@gmail.com" }]
+# https://pypi.org/classifiers/
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",    
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# add your package dependencies here
+dependencies = [
+    "numpy>=2.0.2",
+    "torch>=2.6.0",
+]
+
+# https://peps.python.org/pep-0621/#dependencies-optional-dependencies
+# "extras" (e.g. for `pip install .[test]`)
+#[project.optional-dependencies]
+## add dependencies used for testing here
+#test = ["pytest", "pytest-cov"]
+## add anything else you like to have in your dev environment here
+#dev = [
+#    "ipython",
+#    "pdbpp",  # https://github.com/pdbpp/pdbpp
+#    "rich",  # https://github.com/Textualize/rich
+#]
+
+[project.urls]
+homepage = "https://github.com/warpem/miss-alignment"
+repository = "https://github.com/warpem/miss-alignment"
+
+[dependency-groups]
+# add dependencies used for testing here
+test = ["pytest", "pytest-cov"]
+# add anything else you like to have in your dev environment here
+dev = [
+    "ipython",
+    "pdbpp",  # https://github.com/pdbpp/pdbpp
+    "rich",  # https://github.com/Textualize/rich
+]
+lint = [
+    "pre-commit>=4.1.0",
+    "ruff>=0.9.9",
+]
+
+[tool.uv]
+default-groups = ["test", "dev", "lint"]
+
+# Entry points
+# https://peps.python.org/pep-0621/#entry-points
+# same as console_scripts entry point
+# [project.scripts]
+# miss-alignment-cli = "miss_alignment:main_cli"
+
+# [project.entry-points."some.group"]
+# tomatoes = "miss_alignment:main_tomatoes"
+
+
+
+# https://docs.pytest.org/
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+filterwarnings = ["error"]
+
+# https://coverage.readthedocs.io/
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@overload",
+    "except ImportError",
+    "\\.\\.\\.",
+    "raise NotImplementedError()",
+    "pass",
+]
+
+[tool.coverage.run]
+source = ["miss_alignment"]
+
+# https://github.com/mgedmin/check-manifest#configuration
+# add files that you want check-manifest to explicitly ignore here
+# (files that are in the repo but shouldn't go in the package)
+[tool.check-manifest]
+ignore = [
+    ".pre-commit-config.yaml",
+    ".ruff_cache/**/*",
+    "tests/**/*",
+]
