@@ -64,6 +64,9 @@ def process_emdb_maps(input_dir, output_dir, target_spacing=10.0):
     # Find all unique EMDB codes
     code_files = find_unique_emdb_codes(input_dir)
 
+    # make tuple of target spacing; needed for fourier rescale
+    target_spacing = (target_spacing, target_spacing, target_spacing)
+
     for code, files in code_files.items():
         if len(files) != 2:
             print(
@@ -102,7 +105,7 @@ def process_emdb_maps(input_dir, output_dir, target_spacing=10.0):
         source_spacing = (float(voxel_size.z), float(voxel_size.y), float(voxel_size.x))
 
         # Downsample to target resolution
-        target_spacing = (target_spacing, target_spacing, target_spacing)
+
         downsampled_map, new_spacing = fourier_rescale_3d(
             avg_map, source_spacing, target_spacing
         )
