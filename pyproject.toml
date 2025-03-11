@@ -35,7 +35,7 @@ dependencies = [
     "jmespath>=1.0.1",
     "mrcfile>=1.5.4",
     "numpy>=2.0.2",
-    "torch>=2.6.0",
+    "torch>=2.5.0",
     "torch-fourier-rescale>=0.0.2",
     "tqdm>=4.67.1",
 ]
@@ -44,7 +44,7 @@ dependencies = [
 homepage = "https://github.com/warpem/miss-alignment"
 repository = "https://github.com/warpem/miss-alignment"
 
-[dependency-groups]
+[project.optional-dependencies]
 # add dependencies used for testing here
 test = ["pytest", "pytest-cov"]
 # add anything else you like to have in your dev environment here
@@ -52,17 +52,15 @@ dev = [
     "ipython",
     "pdbpp",
     "requests>=2.32.3", # https://github.com/pdbpp/pdbpp
-    "rich", # https://github.com/Textualize/rich
-]
-lint = [
+    "rich", # https://github.com/Textualize/rich,
     "pre-commit>=4.1.0",
     "ruff>=0.9.9",
 ]
-all = [
-    {include-group = "test"},
-    {include-group = "dev"},
-    {include-group = "lint"},
-]
+#all = [
+#    {include-group = "test"},
+#    {include-group = "dev"},
+#    {include-group = "lint"},
+#]
 
 [tool.uv]
 default-groups = ["test", "dev", "lint"]
