@@ -32,12 +32,16 @@ classifiers = [
 ]
 # add your package dependencies here
 dependencies = [
-    "jmespath>=1.0.1",
+    "jmespath>=1",
     "mrcfile>=1.5.4",
-    "numpy>=2.0.2",
-    "torch>=2.5.0",
-    "torch-fourier-rescale>=0.0.2",
+    "numpy>=2",
+    "torch>=2.2",
+    "torch-fourier-rescale>=0.1",
+    "torch-fourier-slice",
+    "torch-fourier-shift",
     "tqdm>=4.67.1",
+    "scipy",
+    "lightning",
 ]
 
 [project.urls]
@@ -55,6 +59,7 @@ dev = [
     "rich", # https://github.com/Textualize/rich,
     "pre-commit>=4.1.0",
     "ruff>=0.9.9",
+    "matplotlib"
 ]
 #all = [
 #    {include-group = "test"},
