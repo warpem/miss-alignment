@@ -38,7 +38,7 @@ class EMDBRandomSampler:
 
     BASE_URL = "https://www.ebi.ac.uk/emdb/api"
 
-    def __init__(self, seed: int = 42, min_id: int = 20_000, max_id: int = 50_000):
+    def __init__(self, seed: int, min_id: int = 20_000, max_id: int = 50_000):
         """
         Initialize the EMDB random sampler with specified parameters.
 
@@ -639,8 +639,8 @@ class EMDBRandomSampler:
 
 if __name__ == "__main__":
     # # Create a sampler with a specific seed for reproducibility
-    sampler = EMDBRandomSampler(seed=42, min_id=20_000, max_id=50_000)
-    #
+    sampler = EMDBRandomSampler(seed=43, min_id=20_000, max_id=50_000)
+
     # # Sample random EMDB entries
     # print("Starting search for high-quality EMDB entries...")
     # print("Criteria:")
