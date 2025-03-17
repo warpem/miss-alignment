@@ -1,3 +1,6 @@
+from os import PathLike
+from pathlib import Path
+
 import einops
 import numpy as np
 import torch
@@ -9,30 +12,33 @@ from torch_fourier_shift import fourier_shift_image_2d
 import torch.nn.functional as F
 
 
-class MRCDataset(Dataset):
+class EMDBDataset(Dataset):
     """
     Dataset for loading MRC files and applying transformations.
 
     Parameters
     ----------
-    mrc_files : list
-        List of paths to MRC files.
+    directory : PathLike
+        Directory with MRC files for training.
     target_size : int or tuple
         Target size to pad/crop images to. If an integer, same size is used for all dimensions.
-    translation_std : float
-        Standard deviation for Gaussian random translations.
-    device : str
-        Device to use for transformations ('cpu' or 'cuda').
     """
 
-    def __init__(self, mrc_files, target_size=64, device="cpu"):
-        self.mrc_files = mrc_files
+    def __init__(
+        self,
+        directory: PathLike,
+        target_size: int = 64,
+    ):
+        self.dataset_directory = Path(directory)
 
-        if isinstance(target_size, int):
-            self.target_size = (target_size, target_size, target_size)
-        else:
-            self.target_size = tuple(target_size)
-        self.device = device
+        if len(self.mrc_files) == 0:
+            raise FileNotFoundError("No MRC files found in the dataset directory.")
+
+        self.target_size = (target_size, target_size, target_size)
+
+    @property
+    def mrc_files(self):
+        return sorted(self.dataset_directory.glob("*.mrc"))
 
     def __len__(self):
         return len(self.mrc_files)
@@ -42,7 +48,7 @@ class MRCDataset(Dataset):
         mrc_path = self.mrc_files[idx]
         with mrcfile.open(mrc_path) as mrc:
             # Convert to torch tensor and move to device
-            volume = torch.from_numpy(mrc.data.astype(np.float32)).to(self.device)
+            volume = torch.from_numpy(mrc.data.astype(np.float32))
 
         volume = self._preprocess(volume, random_affine=True)
 
@@ -54,7 +60,7 @@ class MRCDataset(Dataset):
             "volume": einops.rearrange(volume, "d h w -> 1 d h w"),
             "aligned": einops.rearrange(aligned, "d h w -> 1 d h w"),
             "misaligned": einops.rearrange(misaligned, "d h w -> 1 d h w"),
-            "file_path": mrc_path,
+            "file_path": mrc_path.__str__(),
         }
 
     def _generate_reconstructions(
@@ -115,7 +121,7 @@ class MRCDataset(Dataset):
         padded_volume = F.pad(
             volume,
             pad_size,
-            mode="replicate",
+            mode="constant",
         )
         return padded_volume
 

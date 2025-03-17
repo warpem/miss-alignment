@@ -1,5 +1,16 @@
 """She has a chaotic good alignment for tilt-series."""
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("miss_alignment")
+except PackageNotFoundError:
+    __version__ = "uninstalled"
+
 __author__ = "Marten Chaillet"
 __email__ = "martenchaillet@gmail.com"
+__all__ = ["__version__", "cli", "download_training_data"]
+
+
+from ._cli import cli
+from .data import download_training_data

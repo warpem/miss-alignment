@@ -42,6 +42,8 @@ dependencies = [
     "tqdm>=4.67.1",
     "scipy",
     "lightning",
+    "typer",
+    "zenodo-get"
 ]
 
 [project.urls]
@@ -68,18 +70,11 @@ dev = [
 #]
 
 [tool.uv]
-default-groups = ["test", "dev", "lint"]
+default-groups = ["test", "dev"]
 
-# Entry points
-# https://peps.python.org/pep-0621/#entry-points
 # same as console_scripts entry point
-# [project.scripts]
-# miss-alignment-cli = "miss_alignment:main_cli"
-
-# [project.entry-points."some.group"]
-# tomatoes = "miss_alignment:main_tomatoes"
-
-
+[project.scripts]
+miss-alignment = "miss_alignment:cli"
 
 # https://docs.pytest.org/
 [tool.pytest.ini_options]

@@ -1,10 +1,11 @@
 import os
 import torch
 import matplotlib.pyplot as plt
+import numpy as np
 from typing import Dict
 
 # Import your classes
-from training_datamodule import MRCDataModule
+from training_datamodule import EMDBDataModule
 
 
 def plot_volume_slices(
@@ -150,23 +151,24 @@ def main():
     seed = 42
     rng = torch.Generator()
     rng.manual_seed(seed)
+    np.random.seed(seed)
 
     # Define data directory (update this to your actual data directory)
-    data_dir = "../../../datasets/emdb/"
+    data_dir = "/home/marten/work/datasets/emdb/train"
 
     # Initialize the data module
-    data_module = MRCDataModule(
-        data_dir=data_dir,
+    data_module = EMDBDataModule(
+        dataset_directory=data_dir,
         rng=rng,
         batch_size=1,  # Use batch size of 1 for visualization
         target_size=64,
-        train_val_test_split=(0.8, 0.2, 0.0),  # No test set for this example
-        num_workers=1,  # Use 0 for debugging
+        train_val_split=(0.8, 0.2),  # No test set for this example
+        num_workers=1,  # Use at least 1 for reproducibility
     )
 
     # Set up the data module
     data_module.prepare_data()
-    data_module.setup()
+    data_module.setup(stage="fit")
 
     # Plot samples from both train and validation sets
     output_dir = "volume_plots"
