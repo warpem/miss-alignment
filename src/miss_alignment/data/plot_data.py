@@ -1,7 +1,6 @@
 import os
 import torch
 import matplotlib.pyplot as plt
-import numpy as np
 from typing import Dict
 
 # Import your classes
@@ -147,19 +146,12 @@ def plot_dataset_samples(
 
 
 def main():
-    # Set random seed for reproducibility
-    seed = 42
-    rng = torch.Generator()
-    rng.manual_seed(seed)
-    np.random.seed(seed)
-
     # Define data directory (update this to your actual data directory)
     data_dir = "/home/marten/work/datasets/emdb/train"
 
     # Initialize the data module
     data_module = EMDBDataModule(
         dataset_directory=data_dir,
-        rng=rng,
         batch_size=1,  # Use batch size of 1 for visualization
         target_size=64,
         train_val_split=(0.8, 0.2),  # No test set for this example

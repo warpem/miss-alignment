@@ -52,9 +52,15 @@ class EMDBDataset(Dataset):
 
         volume = self._preprocess(volume, random_affine=True)
 
-        tilt_angles = Rotation.from_euler("Y", np.arange(-51, 54, 3), degrees=True)
+        tilt_angles = Rotation.from_euler(
+            seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+        )
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
         aligned, misaligned = self._generate_reconstructions(volume, rotations)
+
+        volume = volume.float()
+        aligned = aligned.float()
+        misaligned = misaligned.float()
 
         return {  # add channel dimension to all output
             "volume": einops.rearrange(volume, "d h w -> 1 d h w"),
@@ -67,25 +73,41 @@ class EMDBDataset(Dataset):
         self, volume: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         tilts = project_3d_to_2d(volume, rotation_matrices=matrices, pad=True)
+        big_std = torch.rand(1) * 2.0  # number between 0 a 2
+        small_std = torch.rand(1) * big_std  # number between 0 and big_std
         smoll_translations = torch.normal(
             mean=0.0,
-            std=0.5,
+            std=float(small_std),
             size=(matrices.shape[0], 2),  # batch of number of tilts
             device=volume.device,
         )
+        smoll_shifted = fourier_shift_image_2d(tilts, smoll_translations)
+        smoll_shifted = smoll_shifted + torch.normal(
+            mean=0.0,
+            std=1.0,
+            size=smoll_shifted.shape,
+            device=volume.device,
+        )
         aligned = backproject_2d_to_3d(
-            fourier_shift_image_2d(tilts, smoll_translations),
+            smoll_shifted,
             rotation_matrices=matrices,
             pad=True,
         )
         big_translations = torch.normal(
             mean=0.0,
-            std=1.5,
+            std=float(big_std),
             size=(matrices.shape[0], 2),  # batch of number of tilts
             device=volume.device,
         )
+        big_shifted = fourier_shift_image_2d(tilts, big_translations)
+        big_shifted = big_shifted + torch.normal(
+            mean=0.0,
+            std=1.0,
+            size=big_shifted.shape,
+            device=volume.device,
+        )
         misaligned = backproject_2d_to_3d(
-            fourier_shift_image_2d(tilts, big_translations),
+            big_shifted,
             rotation_matrices=matrices,
             pad=True,
         )
@@ -155,7 +177,7 @@ class EMDBDataset(Dataset):
         # random translation sampled from Gaussian
         translation = torch.normal(
             mean=0.0,
-            std=0.05,  # standard deviation assuming box coords from -1 to 1
+            std=0.1,  # standard deviation assuming box coords from -1 to 1
             size=(3,),
             device=volume.device,
         )

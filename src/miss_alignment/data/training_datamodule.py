@@ -1,17 +1,11 @@
 from os import PathLike
 from pathlib import Path
+from copy import deepcopy
 
-import numpy as np
 import pytorch_lightning as pl
-import torch
 from torch.utils.data import DataLoader, random_split
 
-from training_dataset import EMDBDataset
-
-
-def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
+from .training_dataset import EMDBDataset
 
 
 class EMDBDataModule(pl.LightningDataModule):
@@ -37,8 +31,7 @@ class EMDBDataModule(pl.LightningDataModule):
     def __init__(
         self,
         dataset_directory: PathLike,
-        rng: torch.Generator,
-        batch_size: int = 8,
+        batch_size: int = 4,
         target_size: int = 64,
         train_val_split: tuple = (
             0.7,
@@ -50,9 +43,8 @@ class EMDBDataModule(pl.LightningDataModule):
         self.dataset_directory = Path(dataset_directory)
         self.batch_size = batch_size
         self.target_size = target_size
-        self.train_val_test_split = train_val_split
+        self.train_val_split = train_val_split
         self.num_workers = num_workers
-        self.rng = rng
 
         # Verify split fractions sum to 1
         if sum(train_val_split) != 1.0:
@@ -77,11 +69,13 @@ class EMDBDataModule(pl.LightningDataModule):
         if stage == "fit":
             full_dataset = EMDBDataset(self.dataset_directory)
             n_total = len(full_dataset)
-            n_train = int(0.7 * n_total)
+            n_train = int(self.train_val_split[0] * n_total)
             n_val = n_total - n_train
             self.train_dataset, self.val_dataset = random_split(
-                full_dataset, [n_train, n_val], generator=self.rng
+                full_dataset,
+                [n_train, n_val],  # generator=self.rng
             )
+            self.val_dataset = deepcopy(self.val_dataset)
 
     def train_dataloader(self):
         """
@@ -93,8 +87,6 @@ class EMDBDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
-            worker_init_fn=seed_worker,
-            generator=self.rng,
         )
 
     def val_dataloader(self):
@@ -107,6 +99,4 @@ class EMDBDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            worker_init_fn=seed_worker,
-            generator=self.rng,
         )

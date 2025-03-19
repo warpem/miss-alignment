@@ -5,3 +5,4 @@ from ._resnet import (
     resnet3d_34 as resnet3d_34,
     resnet3d_50 as resnet3d_50,
 )
+from .models import MissAlignment as MissAlignment

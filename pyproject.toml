@@ -42,6 +42,8 @@ dependencies = [
     "tqdm>=4.67.1",
     "scipy",
     "lightning",
+    "tensorboard",
+    "standard-imghdr",  # workaround for tensorboard with python 3.13
     "typer",
     "zenodo-get"
 ]
