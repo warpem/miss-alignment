@@ -7,3 +7,10 @@
 [![codecov](https://codecov.io/gh/McHaillet/miss-alignment/branch/main/graph/badge.svg)](https://codecov.io/gh/McHaillet/miss-alignment)
 
 She has a chaotic good alignment for tilt-series.
+
+
+Run training with:
+
+```commandline
+miss-alignment train --dataset-directory datasets/emdb/train/ --output-directory test_001/ --batch-size 16 --n-workers 4 --seed 45132
+```

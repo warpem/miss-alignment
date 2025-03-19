@@ -73,18 +73,22 @@ class EMDBDataset(Dataset):
         self, volume: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         tilts = project_3d_to_2d(volume, rotation_matrices=matrices, pad=True)
+
+        # generate shift magnitude
         big_std = torch.rand(1) * 2.0  # number between 0 a 2
-        small_std = torch.rand(1) * big_std  # number between 0 and big_std
+        smoll_std = torch.rand(1) * big_std  # number between 0 and big_std
+
+        # create aligned reconstruction
         smoll_translations = torch.normal(
             mean=0.0,
-            std=float(small_std),
+            std=float(smoll_std),
             size=(matrices.shape[0], 2),  # batch of number of tilts
             device=volume.device,
         )
         smoll_shifted = fourier_shift_image_2d(tilts, smoll_translations)
         smoll_shifted = smoll_shifted + torch.normal(
             mean=0.0,
-            std=1.0,
+            std=3.0,  # microscope noise
             size=smoll_shifted.shape,
             device=volume.device,
         )
@@ -93,6 +97,8 @@ class EMDBDataset(Dataset):
             rotation_matrices=matrices,
             pad=True,
         )
+
+        # create worse aligned reconstruction
         big_translations = torch.normal(
             mean=0.0,
             std=float(big_std),
@@ -102,7 +108,7 @@ class EMDBDataset(Dataset):
         big_shifted = fourier_shift_image_2d(tilts, big_translations)
         big_shifted = big_shifted + torch.normal(
             mean=0.0,
-            std=1.0,
+            std=3.0,
             size=big_shifted.shape,
             device=volume.device,
         )
@@ -111,6 +117,10 @@ class EMDBDataset(Dataset):
             rotation_matrices=matrices,
             pad=True,
         )
+
+        aligned = self._normalize(aligned)
+        misaligned = self._normalize(misaligned)
+
         return aligned, misaligned
 
     def _preprocess(

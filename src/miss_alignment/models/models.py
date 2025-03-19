@@ -11,7 +11,7 @@ class MissAlignment(pl.LightningModule):
     in_channels: int = 1
     num_classes: int = 1
 
-    def __init__(self, batch_size: int = 4, learning_rate: float = 1e-04):
+    def __init__(self, learning_rate: float = 1e-04):
         super().__init__()
         self.learning_rate = learning_rate
         self.save_hyperparameters()

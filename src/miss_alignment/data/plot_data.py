@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from typing import Dict
 
 # Import your classes
-from training_datamodule import EMDBDataModule
+from miss_alignment.data import EMDBDataModule
 
 
 def plot_volume_slices(
@@ -163,7 +163,7 @@ def main():
     data_module.setup(stage="fit")
 
     # Plot samples from both train and validation sets
-    output_dir = "volume_plots"
+    output_dir = "emdb_volume_plots"
     plot_dataset_samples(data_module, num_samples=3, output_dir=output_dir)
 
     print(f"Plots saved to {output_dir}")

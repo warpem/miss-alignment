@@ -23,7 +23,7 @@ def train_miss_align(
     torch.set_float32_matmul_precision("medium")
     seed_everything(seed, workers=True)
 
-    model = MissAlignment(batch_size=batch_size, learning_rate=learning_rate)
+    model = MissAlignment(learning_rate=learning_rate)
     data_module = EMDBDataModule(
         dataset_directory,
         batch_size=batch_size,
