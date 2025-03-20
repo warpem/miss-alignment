@@ -51,13 +51,6 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
-        """The network should assign a higher score to the aligned box (s_a) than to
-        the misaligned box (s_m). Minimize this loss:
-
-            loss = (s_m - s_a)
-
-        (s_a and s_m fall to 0 and 1 range by applying a sigmoid as final layer)
-        """
         aligned, misaligned = batch["aligned"], batch["misaligned"]
         s_a, s_m = self(aligned), self(misaligned)
         loss = loss_l2(s_m, s_a)
