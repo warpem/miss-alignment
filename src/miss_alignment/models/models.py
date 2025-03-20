@@ -7,6 +7,13 @@ from torch import Tensor, optim
 from ._resnet import resnet3d_18
 
 
+LAMBDA = 0.01
+
+
+def loss_l2(s_m, s_a):
+    return s_m - s_a + LAMBDA * (s_m ** 2 + s_a ** 2)
+
+
 class MissAlignment(pl.LightningModule):
     in_channels: int = 1
     num_classes: int = 1
@@ -39,8 +46,8 @@ class MissAlignment(pl.LightningModule):
         """
         aligned, misaligned = batch["aligned"], batch["misaligned"]
         s_a, s_m = self(aligned), self(misaligned)
-        loss = s_m - s_a
-        loss = 1.0 - torch.mean(loss)  # the closer to 0 the better
+        loss = loss_l2(s_m, s_a)
+        loss = torch.mean(loss)
         self.log(
             name="training loss", value=loss, batch_size=aligned.shape[0], prog_bar=True
         )
@@ -53,8 +60,8 @@ class MissAlignment(pl.LightningModule):
     ):
         aligned, misaligned = batch["aligned"], batch["misaligned"]
         s_a, s_m = self(aligned), self(misaligned)
-        loss = s_m - s_a
-        loss = 1.0 - torch.mean(loss)
+        loss = loss_l2(s_m, s_a)
+        loss = torch.mean(loss)
         self.log(
             name="validation loss",
             value=loss,

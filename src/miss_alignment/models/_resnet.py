@@ -112,7 +112,6 @@ class ResNet3D(nn.Module):
         # Global average pooling and fully connected layer
         self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
-        self.sigmoid = nn.Sigmoid()
 
         # Initialize weights
         for m in self.modules():
@@ -158,7 +157,6 @@ class ResNet3D(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
-        x = self.sigmoid(x)
 
         return x
 
