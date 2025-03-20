@@ -2,16 +2,30 @@ from typing import Optional, Callable, Any
 
 import pytorch_lightning as pl
 import torch
-from torch import Tensor, optim
 
 from ._resnet import resnet3d_18
 
 
-LAMBDA = 0.01
+LAMBDA = 0.1
 
 
-def loss_l2(s_m, s_a):
-    return s_m - s_a + LAMBDA * (s_m ** 2 + s_a ** 2)
+def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
+    """Contrastive loss with L2-normalization.
+
+    loss = s_m - s_a + LAMBDA * (s_m ** 2 - s_a ** 2)
+
+    Parameters
+    ----------
+    s_m: torch.Tensor
+        Score assigned to misaligned volume. (b,)
+    s_a: torch.Tensor
+        Score assigned to aligned volume.  (b,)
+
+    Returns
+    -------
+    loss: torch.Tensor
+    """
+    return s_m - s_a + LAMBDA * (s_m ** 2 + s_a ** 2)  # (b,)
 
 
 class MissAlignment(pl.LightningModule):
@@ -28,7 +42,7 @@ class MissAlignment(pl.LightningModule):
 
         self.net = resnet3d_18(self.in_channels, self.num_classes)
 
-    def forward(self, image: Tensor) -> Tensor:
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
         out = self.net(image)
         return out
 
@@ -81,7 +95,7 @@ class MissAlignment(pl.LightningModule):
         self.validation_step_outputs.clear()
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(
+        optimizer = torch.optim.Adam(
             params=self.parameters(),
             lr=self.learning_rate,
         )
