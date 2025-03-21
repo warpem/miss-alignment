@@ -1,15 +1,75 @@
 from os import PathLike
 from pathlib import Path
+from typing import List
 
+import random
 import einops
 import numpy as np
 import torch
+from torchvision.transforms import functional as TF
 from torch.utils.data import Dataset
 import mrcfile
 from scipy.spatial.transform import Rotation
 from torch_fourier_slice import project_3d_to_2d, backproject_2d_to_3d
 from torch_fourier_shift import fourier_shift_image_2d
 import torch.nn.functional as F
+
+
+def random_contrast(*images):
+    std_change, mean_change = (
+        torch.normal(1, 0.3, (1,)), torch.normal(0, 0.3, (1,))
+    )
+    return [i * std_change + mean_change for i in images]
+
+
+def random_flip(*images: torch.Tensor, p=0.5) -> List[torch.Tensor]:
+    """Apply the same random flip to multiple images."""
+    if random.random() > 1 - p:
+        images = [TF.hflip(image) for image in images]
+    if random.random() > 1 - p:
+        images = [TF.vflip(image) for image in images]
+    return list(images)
+
+
+def random_cube_mask(*volumes: torch.Tensor, p=0.5, size_range=(0.1, 0.3)) -> \
+List[torch.Tensor]:
+    """Apply the same random cube mask to multiple volumes.
+
+    Args:
+        *volumes: 3D volumes of shape [D, H, W] without channel dimension
+        p: Probability of applying the mask
+        size_range: Range for the size of the cube as a fraction of the volume dimensions
+
+    Returns:
+        List of masked volumes
+    """
+    if random.random() > 1 - p:
+        # Get the dimensions of the first volume (assuming all have same dimensions)
+        d, h, w = volumes[0].shape
+
+        # Determine mask size as fraction of volume dimensions
+        mask_fraction = random.uniform(size_range[0], size_range[1])
+        mask_d = max(1, int(d * mask_fraction))
+        mask_h = max(1, int(h * mask_fraction))
+        mask_w = max(1, int(w * mask_fraction))
+
+        # Random starting positions for the mask
+        start_d = random.randint(0, d - mask_d)
+        start_h = random.randint(0, h - mask_h)
+        start_w = random.randint(0, w - mask_w)
+
+        # Apply the same mask to all volumes
+        masked_volumes = []
+        for volume in volumes:
+            masked = volume.clone()
+            masked[start_d:start_d + mask_d,
+            start_h:start_h + mask_h,
+            start_w:start_w + mask_w] = 0
+            masked_volumes.append(masked)
+
+        return masked_volumes
+
+    return list(volumes)
 
 
 class EMDBDataset(Dataset):
@@ -27,6 +87,7 @@ class EMDBDataset(Dataset):
     def __init__(
         self,
         directory: PathLike,
+        train: bool = True,
         target_size: int = 64,
     ):
         self.dataset_directory = Path(directory)
@@ -35,6 +96,14 @@ class EMDBDataset(Dataset):
             raise FileNotFoundError("No MRC files found in the dataset directory.")
 
         self.target_size = (target_size, target_size, target_size)
+
+        self.train() if train else self.eval()
+
+    def train(self):
+        self._is_training = True
+
+    def eval(self):
+        self._is_training = False
 
     @property
     def mrc_files(self):
@@ -73,55 +142,48 @@ class EMDBDataset(Dataset):
         self, volume: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         tilts = project_3d_to_2d(volume, rotation_matrices=matrices, pad=True)
+        tilts = tilts + torch.normal(
+            mean=0.0,
+            std=float(torch.normal(3, .5, (1,))),
+            size=tilts.shape,
+            device=tilts.device,
+        )
 
         # generate shift magnitude
-        big_std = torch.rand(1) * 2.0  # number between 0 a 2
-        smoll_std = torch.rand(1) * big_std  # number between 0 and big_std
+        misaligned_std = torch.rand(1) * 2.0  # number between 0 a 2
+        aligned_std = torch.rand(1) * misaligned_std  # number between 0 and misaligned_std
 
         # create aligned reconstruction
-        smoll_translations = torch.normal(
-            mean=0.0,
-            std=float(smoll_std),
-            size=(matrices.shape[0], 2),  # batch of number of tilts
-            device=volume.device,
-        )
-        smoll_shifted = fourier_shift_image_2d(tilts, smoll_translations)
-        smoll_shifted = smoll_shifted + torch.normal(
-            mean=0.0,
-            std=3.0,  # microscope noise
-            size=smoll_shifted.shape,
-            device=volume.device,
-        )
-        aligned = backproject_2d_to_3d(
-            smoll_shifted,
-            rotation_matrices=matrices,
-            pad=True,
-        )
-
-        # create worse aligned reconstruction
-        big_translations = torch.normal(
-            mean=0.0,
-            std=float(big_std),
-            size=(matrices.shape[0], 2),  # batch of number of tilts
-            device=volume.device,
-        )
-        big_shifted = fourier_shift_image_2d(tilts, big_translations)
-        big_shifted = big_shifted + torch.normal(
-            mean=0.0,
-            std=3.0,
-            size=big_shifted.shape,
-            device=volume.device,
-        )
-        misaligned = backproject_2d_to_3d(
-            big_shifted,
-            rotation_matrices=matrices,
-            pad=True,
-        )
-
+        aligned = self._reconstruct(tilts, aligned_std, matrices)
         aligned = self._normalize(aligned)
+
+        # create misaligned
+        misaligned = self._reconstruct(tilts, misaligned_std, matrices)
         misaligned = self._normalize(misaligned)
 
+        if self._is_training:  # contrast adjustment
+            aligned, misaligned = random_contrast(aligned, misaligned)
+            aligned, misaligned = random_flip(aligned, misaligned)
+            aligned, misaligned = random_cube_mask(aligned, misaligned)
+
         return aligned, misaligned
+
+    def _reconstruct(self, tilts, shift_std, matrices):
+        translations = torch.normal(
+            mean=0.0,
+            std=float(shift_std),
+            size=(matrices.shape[0], 2),  # batch of number of tilts
+            device=tilts.device,
+        )
+        shifted = fourier_shift_image_2d(
+            tilts, translations
+        )
+        reconstruction = backproject_2d_to_3d(
+            shifted,
+            rotation_matrices=matrices,
+            pad=True,
+        )
+        return reconstruction
 
     def _preprocess(
         self, volume: torch.Tensor, random_affine: bool = True

@@ -6,7 +6,7 @@ import torch
 from ._resnet import resnet3d_18
 
 
-LAMBDA = 0.1
+LAMBDA = .01  # earlier .1
 
 
 def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
@@ -39,9 +39,6 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.save_hyperparameters()
 
-        self.validation_epoch_loss = 0
-        self.validation_step_outputs = []
-
         self.net = resnet3d_18(self.in_channels, self.num_classes)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
@@ -57,8 +54,21 @@ class MissAlignment(pl.LightningModule):
         s_a, s_m = self(aligned), self(misaligned)
         loss = loss_l2(s_m, s_a)
         loss = torch.mean(loss)
+        batch_size = aligned.shape[0]
         self.log(
-            name="training loss", value=loss, batch_size=aligned.shape[0], prog_bar=True
+            name="train loss", value=loss, batch_size=batch_size, prog_bar=True
+        )
+        self.log(
+            name="train s_m",
+            value=s_m.mean(),
+            batch_size=batch_size,
+            prog_bar=True,
+        )
+        self.log(
+            name="train s_a",
+            value=s_a.mean(),
+            batch_size=batch_size,
+            prog_bar=True,
         )
         return loss
 
@@ -71,28 +81,35 @@ class MissAlignment(pl.LightningModule):
         s_a, s_m = self(aligned), self(misaligned)
         loss = loss_l2(s_m, s_a)
         loss = torch.mean(loss)
+        batch_size = aligned.shape[0]
         self.log(
-            name="validation loss",
+            name="val loss",
             value=loss,
-            batch_size=aligned.shape[0],
+            batch_size=batch_size,
             prog_bar=True,
         )
-        self.validation_step_outputs.append(loss)
+        self.log(
+            name="val s_m",
+            value=s_m.mean(),
+            batch_size=batch_size,
+            prog_bar=True,
+        )
+        self.log(
+            name="val s_a",
+            value=s_a.mean(),
+            batch_size=batch_size,
+            prog_bar=True,
+        )
         return loss
 
     def predict_step(self):
         pass
 
-    def on_validation_epoch_end(self):
-        mean_epoch_loss = torch.mean(torch.as_tensor(self.validation_step_outputs))
-        self.validation_epoch_loss = mean_epoch_loss
-        self.log(name="validation epoch loss", value=mean_epoch_loss)
-        self.validation_step_outputs.clear()
-
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.AdamW(
             params=self.parameters(),
             lr=self.learning_rate,
+            weight_decay=0.001,
         )
         return optimizer
 

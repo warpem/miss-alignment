@@ -76,6 +76,8 @@ class EMDBDataModule(pl.LightningDataModule):
                 [n_train, n_val],  # generator=self.rng
             )
             self.val_dataset = deepcopy(self.val_dataset)
+            self.train_dataset.dataset.train()
+            self.val_dataset.dataset.eval()
 
     def train_dataloader(self):
         """
@@ -85,6 +87,7 @@ class EMDBDataModule(pl.LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
+            drop_last=True,
             num_workers=self.num_workers,
             pin_memory=True,
         )
@@ -97,6 +100,7 @@ class EMDBDataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
+            drop_last=False,
             num_workers=self.num_workers,
             pin_memory=True,
         )

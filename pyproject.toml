@@ -36,6 +36,7 @@ dependencies = [
     "mrcfile>=1.5.4",
     "numpy>=2",
     "torch>=2.2",
+    "torchvision",
     "torch-fourier-rescale>=0.1",
     "torch-fourier-slice",
     "torch-fourier-shift",
