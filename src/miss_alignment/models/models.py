@@ -12,7 +12,9 @@ LAMBDA = 0.1
 def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
     """Contrastive loss with L2-normalization.
 
-    loss = s_m - s_a + LAMBDA * (s_m ** 2 - s_a ** 2)
+    loss = s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2)
+
+    The loss is minimized, so a higher value for the misaligned volume is encouraged.
 
     Parameters
     ----------
@@ -25,7 +27,7 @@ def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
     -------
     loss: torch.Tensor
     """
-    return s_m - s_a + LAMBDA * (s_m ** 2 + s_a ** 2)  # (b,)
+    return s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2)  # (b,)
 
 
 class MissAlignment(pl.LightningModule):
