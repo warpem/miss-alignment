@@ -4,9 +4,10 @@ import pytorch_lightning as pl
 import torch
 
 from ._resnet import resnet3d_18
+from ._compact import Compact3DConvNet
 
 
-LAMBDA = .01  # earlier .1
+LAMBDA = .1  # earlier .01
 
 
 def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
@@ -39,7 +40,7 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.save_hyperparameters()
 
-        self.net = resnet3d_18(self.in_channels, self.num_classes)
+        self.net = Compact3DConvNet()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         out = self.net(image)
@@ -56,7 +57,8 @@ class MissAlignment(pl.LightningModule):
         loss = torch.mean(loss)
         batch_size = aligned.shape[0]
         self.log(
-            name="train loss", value=loss, batch_size=batch_size, prog_bar=True
+            name="train loss", value=loss, batch_size=batch_size,
+            prog_bar=True,
         )
         self.log(
             name="train s_m",

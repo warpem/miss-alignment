@@ -68,12 +68,9 @@ class EMDBDataModule(pl.LightningDataModule):
         """
         if stage == "fit":
             full_dataset = EMDBDataset(self.dataset_directory)
-            n_total = len(full_dataset)
-            n_train = int(self.train_val_split[0] * n_total)
-            n_val = n_total - n_train
             self.train_dataset, self.val_dataset = random_split(
                 full_dataset,
-                [n_train, n_val],  # generator=self.rng
+                self.train_val_split,  # generator=self.rng
             )
             self.val_dataset = deepcopy(self.val_dataset)
             self.train_dataset.dataset.train()
@@ -89,6 +86,7 @@ class EMDBDataModule(pl.LightningDataModule):
             shuffle=True,
             drop_last=True,
             num_workers=self.num_workers,
+            persistent_workers=True,
             pin_memory=True,
         )
 

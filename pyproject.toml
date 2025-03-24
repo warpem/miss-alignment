@@ -40,6 +40,7 @@ dependencies = [
     "torch-fourier-rescale>=0.1",
     "torch-fourier-slice",
     "torch-fourier-shift",
+    "torch-grid-utils",
     "tqdm>=4.67.1",
     "scipy",
     "lightning",
