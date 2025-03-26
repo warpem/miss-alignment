@@ -10,7 +10,7 @@ from ._compact import Compact3DConvNet
 LAMBDA = .1  # earlier .01
 
 
-def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
+def loss_l2(s_a: torch.Tensor, s_m: torch.Tensor) -> torch.Tensor:
     """Contrastive loss with L2-normalization.
 
     loss = s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2)
@@ -19,16 +19,20 @@ def loss_l2(s_m: torch.Tensor, s_a: torch.Tensor) -> torch.Tensor:
 
     Parameters
     ----------
-    s_m: torch.Tensor
-        Score assigned to misaligned volume. (b,)
     s_a: torch.Tensor
-        Score assigned to aligned volume.  (b,)
+        Score assigned to aligned volume. (b,)
+    s_m: torch.Tensor
+        Score assigned to misaligned volume.  (b,)
 
     Returns
     -------
     loss: torch.Tensor
     """
     return s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2)  # (b,)
+
+
+def margin_loss(s_a, s_m, margin=.5):
+    return torch.mean(torch.clamp(margin - (s_m - s_a), min=0.))
 
 
 class MissAlignment(pl.LightningModule):
@@ -53,8 +57,7 @@ class MissAlignment(pl.LightningModule):
     ):
         aligned, misaligned = batch["aligned"], batch["misaligned"]
         s_a, s_m = self(aligned), self(misaligned)
-        loss = loss_l2(s_m, s_a)
-        loss = torch.mean(loss)
+        loss = margin_loss(s_a, s_m)
         batch_size = aligned.shape[0]
         self.log(
             name="train loss", value=loss, batch_size=batch_size,
@@ -81,8 +84,7 @@ class MissAlignment(pl.LightningModule):
     ):
         aligned, misaligned = batch["aligned"], batch["misaligned"]
         s_a, s_m = self(aligned), self(misaligned)
-        loss = loss_l2(s_m, s_a)
-        loss = torch.mean(loss)
+        loss = margin_loss(s_a, s_m)
         batch_size = aligned.shape[0]
         self.log(
             name="val loss",
