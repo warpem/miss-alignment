@@ -6,7 +6,6 @@ import random
 import einops
 import numpy as np
 import torch
-from torchvision.transforms import functional as TF
 from torch.utils.data import Dataset
 import mrcfile
 from scipy.spatial.transform import Rotation as R
@@ -16,6 +15,7 @@ from torch_fourier_slice import (
 from torch_fourier_shift import fourier_shift_dft_2d,  fourier_shift_dft_3d
 from torch_grid_utils import fftfreq_grid
 import torch.nn.functional as F
+from ttmask import sphere
 
 
 def random_contrast(*images):
@@ -23,15 +23,6 @@ def random_contrast(*images):
         torch.normal(1, 0.1, (1,)), torch.normal(0, 0.1, (1,))
     )
     return [i * std_change + mean_change for i in images]
-
-
-def random_flip(*images: torch.Tensor, p=.3) -> List[torch.Tensor]:
-    """Apply the same random flip to multiple images."""
-    if random.random() > 1 - p:
-        images = [TF.hflip(image) for image in images]
-    if random.random() > 1 - p:
-        images = [TF.vflip(image) for image in images]
-    return list(images)
 
 
 def random_cube_mask(*volumes: torch.Tensor, p=.3, size_range=(0.1, 0.3)) -> \
@@ -166,7 +157,7 @@ class EMDBDataset(Dataset):
         )
 
         # set the noise_std
-        noise_std = float(torch.rand(1) * 2 + 2)
+        noise_std = float(torch.rand(1) +.5)
         aligned = aligned + torch.normal(
             mean=0.0,
             std=noise_std,
@@ -182,7 +173,6 @@ class EMDBDataset(Dataset):
 
         if self._is_training:  # contrast adjustment
             aligned, misaligned = random_contrast(aligned, misaligned)
-            aligned, misaligned = random_flip(aligned, misaligned)
             aligned, misaligned = random_cube_mask(aligned, misaligned)
 
         return aligned, misaligned
@@ -288,10 +278,23 @@ class EMDBDataset(Dataset):
     def _preprocess(
         self, volume: torch.Tensor
     ) -> torch.Tensor:
-        volume = einops.rearrange(volume, "d h w -> 1 1 d h w")
+        volume = self._mask(volume) # apply spherical mask
         volume = self._pad_to_target_size(volume)
         volume = self._normalize(volume)
-        return einops.rearrange(volume, "1 1 d h w -> d h w")
+        return volume
+
+    def _mask(self, volume: torch.Tensor) -> torch.Tensor:
+        mask = sphere(
+            volume.shape[-1],
+            volume.shape[-1] - 5,
+            wall_thickness=0,
+            soft_edge_width=3,
+            pixel_size=1,
+            centering='standard',
+            center=tuple(),
+        )
+        volume = volume * mask
+        return volume
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)

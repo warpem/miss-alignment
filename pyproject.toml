@@ -41,6 +41,7 @@ dependencies = [
     "torch-fourier-slice",
     "torch-fourier-shift",
     "torch-grid-utils",
+    "ttmask",
     "tqdm>=4.67.1",
     "scipy",
     "lightning",

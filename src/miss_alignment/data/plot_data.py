@@ -162,9 +162,6 @@ def main():
     data_module.prepare_data()
     data_module.setup(stage="fit")
 
-    print(data_module.train_dataset.dataset.mrc_files)
-    print(data_module.val_dataset.dataset.mrc_files)
-
     # Plot samples from both train and validation sets
     output_dir = "emdb_volume_plots"
     plot_dataset_samples(data_module, num_samples=3, output_dir=output_dir)
