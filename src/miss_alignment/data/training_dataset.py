@@ -122,7 +122,7 @@ class EMDBDataset(Dataset):
             # Convert to torch tensor and move to device
             volume = torch.from_numpy(mrc.data.astype(np.float32))
 
-        volume = self._preprocess(volume, random_affine=False)
+        volume = self._preprocess(volume)
 
         tilt_angles = R.from_euler(
             seq="Y", angles=np.arange(-51, 54, 3), degrees=True
@@ -286,13 +286,11 @@ class EMDBDataset(Dataset):
         return torch.real(volume_dft_small_shifts), torch.real(volume_dft_large_shifts)
 
     def _preprocess(
-        self, volume: torch.Tensor, random_affine: bool = True
+        self, volume: torch.Tensor
     ) -> torch.Tensor:
         volume = einops.rearrange(volume, "d h w -> 1 1 d h w")
         volume = self._pad_to_target_size(volume)
         volume = self._normalize(volume)
-        if random_affine:
-            volume = self._apply_random_affine_transform(volume)
         return einops.rearrange(volume, "1 1 d h w -> d h w")
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
@@ -318,60 +316,3 @@ class EMDBDataset(Dataset):
             mode="constant",
         )
         return padded_volume
-
-    def _apply_random_affine_transform(self, volume: torch.Tensor) -> torch.Tensor:
-        """
-        Apply a random 3D affine transformation (rotation + translation) to a volume.
-
-        Parameters:
-        -----------
-        volume : torch.Tensor
-            Input volume tensor of shape [batch_size, channels, depth, height, width]
-        box_size : float or None
-            Reference size for the translation. If None, it will be computed as the
-            maximum dimension of the volume.
-
-        Returns:
-        --------
-        torch.Tensor
-            Transformed volume with the same shape as the input
-        """
-        # Create identity matrix as starting point
-        affine_matrix = torch.eye(4, device=volume.device)
-
-        # random rotation matrix from uniform distribution
-        rot_matrix = torch.tensor(
-            R.random(1).as_matrix(),  # used numpy seed set for the worker
-            dtype=torch.float32,
-            device=volume.device,
-        )
-
-        # random translation sampled from Gaussian
-        translation = torch.normal(
-            mean=0.0,
-            std=0.1,  # standard deviation assuming box coords from -1 to 1
-            size=(3,),
-            device=volume.device,
-        )
-
-        # Construct affine matrix:
-        # [ R  t ]
-        # [ 0  1 ]
-        affine_matrix[:3, :3] = rot_matrix
-        affine_matrix[:3, 3] = translation
-
-        # Create the grid for sampling
-        # We need to adjust the grid to account for the center being at the middle of the volume
-        grid = F.affine_grid(
-            einops.rearrange(affine_matrix[:3, :], "h w -> 1 h w"),
-            volume.shape,
-            align_corners=True,
-        )
-
-        # Apply the transformation using grid_sample
-        transformed_volume = F.grid_sample(
-            volume, grid, mode="bilinear", padding_mode="border", align_corners=True
-        )
-
-        # Return the volume in its original shape format
-        return transformed_volume
