@@ -212,7 +212,12 @@ class EMDBDataset(Dataset):
         volume_dft = torch.fft.fftshift(volume_dft, dim=(-3, -2,))  # actual fftshift of 3D rfft
 
         # apply random 3d shift
-        random_shift = torch.tensor(np.random.normal(size=(3, )), dtype=torch.float32)
+        random_shift = torch.tensor(
+            np.random.normal(
+                loc=0, scale=.1 * volume.shape[-1], size=(3, )
+            ),
+            dtype=torch.float32
+        )
         volume_dft = fourier_shift_dft_3d(
             dft=volume_dft,
             image_shape=volume.shape,
