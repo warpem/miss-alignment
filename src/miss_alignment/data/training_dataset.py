@@ -121,16 +121,14 @@ class EMDBDataset(Dataset):
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
         aligned, misaligned = self._generate_reconstructions(volume, rotations)
 
-        volume = volume.float()
-        aligned = aligned.float()
-        misaligned = misaligned.float()
+        # volume = volume.float()
+        aligned = einops.rearrange(aligned.float(), "d h w -> 1 d h w")
+        misaligned = einops.rearrange(misaligned.float(), "d h w -> 1 d h w")
 
-        return {  # add channel dimension to all output
-            "volume": einops.rearrange(volume, "d h w -> 1 d h w"),
-            "aligned": einops.rearrange(aligned, "d h w -> 1 d h w"),
-            "misaligned": einops.rearrange(misaligned, "d h w -> 1 d h w"),
-            "file_path": mrc_path.__str__(),
-        }
+        if random.random() > .5:
+            return aligned, misaligned, torch.tensor((-1.,))
+        else:
+            return misaligned, aligned, torch.tensor((1.,))
 
     def _generate_reconstructions(
         self, volume: torch.Tensor, matrices: torch.Tensor

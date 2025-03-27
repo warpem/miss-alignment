@@ -1,7 +1,12 @@
 from typing import Optional, Callable, Any
 
+import random
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
+from torch.optim.lr_scheduler import (
+    CosineAnnealingWarmRestarts, LinearLR, SequentialLR
+)
 
 from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
@@ -28,7 +33,7 @@ def loss_l2(s_a: torch.Tensor, s_m: torch.Tensor) -> torch.Tensor:
     -------
     loss: torch.Tensor
     """
-    return s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2)  # (b,)
+    return torch.mean(s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2))  # (b,)
 
 
 def margin_loss(s_a, s_m, margin=.5):
@@ -39,11 +44,14 @@ class MissAlignment(pl.LightningModule):
     in_channels: int = 1
     num_classes: int = 1
 
-    def __init__(self, learning_rate: float = 1e-04):
+    def __init__(
+            self, learning_rate: float = 1e-04, warmup_epochs=10, margin=1.
+    ):
         super().__init__()
         self.learning_rate = learning_rate
         self.save_hyperparameters()
-
+        self.warmup_epochs = warmup_epochs
+        self.criterion = nn.MarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
@@ -55,25 +63,51 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
-        aligned, misaligned = batch["aligned"], batch["misaligned"]
-        s_a, s_m = self(aligned), self(misaligned)
-        loss = margin_loss(s_a, s_m)
-        batch_size = aligned.shape[0]
+        img1, img2, target = batch
+        score1 = self(img1)
+        score2 = self(img2)
+        loss = self.criterion(score1, score2, target)
+        # aligned, misaligned = batch["aligned"], batch["misaligned"]
+        # s_a, s_m = self(aligned), self(misaligned)
+        # loss = loss_l2(s_a, s_m)
+
+        ind = target > 0
+        s_a = (score1[ind].mean() + score2[torch.logical_not(ind)].mean()) / 2
+        s_m = (score2[ind].mean() + score1[torch.logical_not(ind)].mean()) / 2
+        batch_size = target.shape[0]
         self.log(
-            name="train loss", value=loss, batch_size=batch_size,
-            prog_bar=True,
-        )
-        self.log(
-            name="train s_m",
-            value=s_m.mean(),
+            name="train loss",
+            value=loss,
             batch_size=batch_size,
             prog_bar=True,
+            on_step=False,
+            on_epoch=True,
         )
         self.log(
             name="train s_a",
-            value=s_a.mean(),
+            value=s_a,
             batch_size=batch_size,
             prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+        )
+        self.log(
+            name="train s_m",
+            value=s_m,
+            batch_size=batch_size,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+        )
+        # Log the learning rate
+        current_lr = self.optimizers().param_groups[0]['lr']
+        self.log(
+            name='learning_rate',
+            value=current_lr,
+            batch_size=batch_size,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
         )
         return loss
 
@@ -82,10 +116,14 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
-        aligned, misaligned = batch["aligned"], batch["misaligned"]
-        s_a, s_m = self(aligned), self(misaligned)
-        loss = margin_loss(s_a, s_m)
-        batch_size = aligned.shape[0]
+        img1, img2, target = batch
+        score1 = self(img1)
+        score2 = self(img2)
+        loss = self.criterion(score1, score2, target)
+        ind = target > 0
+        s_a = (score1[ind].mean() + score2[torch.logical_not(ind)].mean()) / 2
+        s_m = (score2[ind].mean() + score1[torch.logical_not(ind)].mean()) / 2
+        batch_size = target.shape[0]
         self.log(
             name="val loss",
             value=loss,
@@ -93,14 +131,14 @@ class MissAlignment(pl.LightningModule):
             prog_bar=True,
         )
         self.log(
-            name="val s_m",
-            value=s_m.mean(),
+            name="val s_a",
+            value=s_a,
             batch_size=batch_size,
             prog_bar=True,
         )
         self.log(
-            name="val s_a",
-            value=s_a.mean(),
+            name="val s_m",
+            value=s_m,
             batch_size=batch_size,
             prog_bar=True,
         )
@@ -115,17 +153,32 @@ class MissAlignment(pl.LightningModule):
             lr=self.learning_rate,
             weight_decay=0.001,
         )
-        return optimizer
 
-    def optimizer_step(
-        self,
-        epoch_idx: int,
-        batch_idx: int,
-        optimizer: torch.optim.Optimizer,
-        optimizer_closure: Optional[Callable[[], Any]] = None,
-        **kwargs,
-    ) -> None:
-        self.log("learning rate", optimizer.param_groups[0]["lr"])
-        super().optimizer_step(
-            epoch_idx, batch_idx, optimizer, optimizer_closure, **kwargs
+        # Warm-up scheduler (linear warm-up)
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.1,  # Start at 10% of self.lr
+            end_factor=1.0,  # End at 100% of self.lr
+            total_iters=self.warmup_epochs
         )
+
+        cosine_scheduler = CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=20,  # Number of epochs/iterations for one cycle
+            # eta_min=1e-06. learning rate at the end of the cycle (default 0)
+        )
+
+        sequential_scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[self.warmup_epochs]  # Switch at the end of warm-up
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": sequential_scheduler,
+                "interval": "epoch",
+                "frequency": 1
+            }
+        }

@@ -36,10 +36,10 @@ def train_miss_align(
         precision="32",
         default_root_dir=output_directory,
         max_epochs=epochs,
-        check_val_every_n_epoch=20,
-        log_every_n_steps=20,
+        check_val_every_n_epoch=5,
         enable_checkpointing=True,
         deterministic=False,  # setting to True breaks on max_pool_3d
+        profiler="simple",
     )
     trainer.fit(model, datamodule=data_module)
     return None
