@@ -39,7 +39,6 @@ def train_miss_align(
         check_val_every_n_epoch=5,
         enable_checkpointing=True,
         deterministic=False,  # setting to True breaks on max_pool_3d
-        profiler="simple",
     )
     trainer.fit(model, datamodule=data_module)
     return None

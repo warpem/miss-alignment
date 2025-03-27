@@ -1,6 +1,3 @@
-from typing import Optional, Callable, Any
-
-import random
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -10,34 +7,6 @@ from torch.optim.lr_scheduler import (
 
 from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
-
-
-LAMBDA = .1  # earlier .01
-
-
-def loss_l2(s_a: torch.Tensor, s_m: torch.Tensor) -> torch.Tensor:
-    """Contrastive loss with L2-normalization.
-
-    loss = s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2)
-
-    The loss is minimized, so a higher value for the misaligned volume is encouraged.
-
-    Parameters
-    ----------
-    s_a: torch.Tensor
-        Score assigned to aligned volume. (b,)
-    s_m: torch.Tensor
-        Score assigned to misaligned volume.  (b,)
-
-    Returns
-    -------
-    loss: torch.Tensor
-    """
-    return torch.mean(s_a - s_m + LAMBDA * (s_m ** 2 + s_a ** 2))  # (b,)
-
-
-def margin_loss(s_a, s_m, margin=.5):
-    return torch.mean(torch.clamp(margin - (s_m - s_a), min=0.))
 
 
 class MissAlignment(pl.LightningModule):
@@ -63,18 +32,21 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
+        # get the batch data
         img1, img2, target = batch
+        batch_size = target.shape[0]
+
+        # calculate scores and loss
         score1 = self(img1)
         score2 = self(img2)
         loss = self.criterion(score1, score2, target)
-        # aligned, misaligned = batch["aligned"], batch["misaligned"]
-        # s_a, s_m = self(aligned), self(misaligned)
-        # loss = loss_l2(s_a, s_m)
 
+        # find back the actual assigned scores to aligned/misaligned volume
+        # to report back in the logs
         ind = target > 0
         s_a = (score1[ind].mean() + score2[torch.logical_not(ind)].mean()) / 2
         s_m = (score2[ind].mean() + score1[torch.logical_not(ind)].mean()) / 2
-        batch_size = target.shape[0]
+
         self.log(
             name="train loss",
             value=loss,
@@ -116,14 +88,21 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
+        # get the batch data
         img1, img2, target = batch
+        batch_size = target.shape[0]
+
+        # calculate scores and loss
         score1 = self(img1)
         score2 = self(img2)
         loss = self.criterion(score1, score2, target)
+
+        # find back the actual assigned scores to aligned/misaligned volume
+        # to report back in the logs
         ind = target > 0
         s_a = (score1[ind].mean() + score2[torch.logical_not(ind)].mean()) / 2
         s_m = (score2[ind].mean() + score1[torch.logical_not(ind)].mean()) / 2
-        batch_size = target.shape[0]
+
         self.log(
             name="val loss",
             value=loss,

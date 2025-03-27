@@ -121,7 +121,7 @@ class EMDBDataset(Dataset):
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
         aligned, misaligned = self._generate_reconstructions(volume, rotations)
 
-        # volume = volume.float()
+        # explicitly also convert to float, had problems that they were double
         aligned = einops.rearrange(aligned.float(), "d h w -> 1 d h w")
         misaligned = einops.rearrange(misaligned.float(), "d h w -> 1 d h w")
 
