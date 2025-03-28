@@ -19,7 +19,7 @@ def train_miss_align(
     learning_rate: float = 1e-5,
     seed: int = 45132,
 ) -> None:
-    """Train a semantic segmentation model for fiducial detection."""
+    """Train MissAlignment on a dataset."""
     torch.set_float32_matmul_precision("medium")
     seed_everything(seed, workers=True)
 

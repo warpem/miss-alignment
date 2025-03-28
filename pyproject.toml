@@ -48,7 +48,7 @@ dependencies = [
     "tensorboard",
     "standard-imghdr",  # workaround for tensorboard with python 3.13
     "typer",
-    "zenodo-get"
+    "zenodo-get",
 ]
 
 [project.urls]

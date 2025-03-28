@@ -14,7 +14,7 @@ class MissAlignment(pl.LightningModule):
     num_classes: int = 1
 
     def __init__(
-            self, learning_rate: float = 1e-04, warmup_epochs=10, margin=1.
+            self, learning_rate: float = 1e-04, warmup_epochs=10, margin=.5
     ):
         super().__init__()
         self.learning_rate = learning_rate
@@ -43,9 +43,13 @@ class MissAlignment(pl.LightningModule):
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
-        ind = target > 0
-        s_a = (score1[ind].mean() + score2[torch.logical_not(ind)].mean()) / 2
-        s_m = (score2[ind].mean() + score1[torch.logical_not(ind)].mean()) / 2
+        ind = target < 0  # if target==-1 the first input is aligned
+        s_a = torch.mean(  # if target==1 the first input is misaligned
+            torch.cat((score1[ind], score2[torch.logical_not(ind)]))
+        )
+        s_m = torch.mean(
+            torch.cat((score2[ind], score1[torch.logical_not(ind)]))
+        )
 
         self.log(
             name="train loss",
@@ -99,9 +103,13 @@ class MissAlignment(pl.LightningModule):
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
-        ind = target > 0
-        s_a = (score1[ind].mean() + score2[torch.logical_not(ind)].mean()) / 2
-        s_m = (score2[ind].mean() + score1[torch.logical_not(ind)].mean()) / 2
+        ind = target < 0  # if target==-1 the first input is aligned
+        s_a = torch.mean(  # if target==1 the first input is misaligned
+            torch.cat((score1[ind], score2[torch.logical_not(ind)]))
+        )
+        s_m = torch.mean(
+            torch.cat((score2[ind], score1[torch.logical_not(ind)]))
+        )
 
         self.log(
             name="val loss",
@@ -144,6 +152,7 @@ class MissAlignment(pl.LightningModule):
         cosine_scheduler = CosineAnnealingWarmRestarts(
             optimizer,
             T_0=20,  # Number of epochs/iterations for one cycle
+            T_mult=2,
             # eta_min=1e-06. learning rate at the end of the cycle (default 0)
         )
 

@@ -127,7 +127,7 @@ class EMDBDataset(Dataset):
 
         if random.random() > .5:
             return aligned, misaligned, torch.tensor((-1.,))
-        else:
+        else:  # target of 1 means image1 should be ranked higher than image2
             return misaligned, aligned, torch.tensor((1.,))
 
     def _generate_reconstructions(
