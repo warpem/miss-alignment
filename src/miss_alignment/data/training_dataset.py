@@ -85,6 +85,31 @@ class EMDBDataset(Dataset):
         else:  # target of 1 means image1 should be ranked higher than image2
             return misaligned, aligned, torch.tensor((1.,))
 
+    def prepare_test_boxes(self, shift_fraction: float = .25):
+        test_data = []
+        for mrc_path in self.mrc_files:
+            with mrcfile.open(mrc_path) as mrc:
+                # Convert to torch tensor and move to device
+                volume = torch.from_numpy(mrc.data.astype(np.float32))
+            volume = self._preprocess(volume)
+            tilt_angles = R.from_euler(
+                seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+            )
+            rotations = torch.tensor(tilt_angles.as_matrix()).float()
+            # between 0 and misaligned_std
+            _, misaligned_translations = (
+                generate_aligned_and_misaligned_shifts(
+                    rotations.shape[0],
+                    volume.shape[0] * shift_fraction,
+                )
+            )
+            test_data.append({
+                "volume": volume,
+                "rotations": rotations,
+                "translations": misaligned_translations,
+            })
+        return test_data
+
     def _generate_reconstructions(
         self, volume: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
