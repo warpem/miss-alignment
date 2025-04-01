@@ -215,11 +215,12 @@ def generate_aligned_and_misaligned_shifts(
     else:
         aligned = torch.zeros((num_points, 2))
 
-    aligned = aligned + torch.normal(
-        mean=0.0,
-        std=float(aligned_std),
-        size=(num_points, 2),  # batch of number of tilts
-    )
+    if random.random() > .5:
+        aligned = aligned + torch.normal(
+            mean=0.0,
+            std=float(aligned_std),
+            size=(num_points, 2),  # batch of number of tilts
+        )
     misaligned = misaligned + torch.normal(
         mean=0.0,
         std=float(misaligned_std),
