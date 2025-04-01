@@ -210,7 +210,10 @@ def generate_aligned_and_misaligned_shifts(
         shifts = torch.zeros((num_points, 2))
     misaligned = shifts
     # reduce intensity of aligned shifts
-    aligned = misaligned * (aligned_std / misaligned_std)
+    if random.random() > .5:
+        aligned = misaligned * (aligned_std / misaligned_std)
+    else:
+        aligned = torch.zeros((num_points, 2))
 
     aligned = aligned + torch.normal(
         mean=0.0,
@@ -227,8 +230,9 @@ def generate_aligned_and_misaligned_shifts(
         ids = select_random_indices(torch.arange(num_points))
         # if input is 10A, this is a maximum shift of 150A
         outliers = torch.rand((len(ids), 2)) * (2 * max_shift) - max_shift
-        aligned[ids] = outliers * random.random()
         misaligned[ids] = outliers
+        if random.random() > .5:
+            aligned[ids] = outliers * random.random()
 
     return aligned, misaligned
 
