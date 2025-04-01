@@ -9,10 +9,11 @@ except PackageNotFoundError:
 
 __author__ = "Marten Chaillet"
 __email__ = "martenchaillet@gmail.com"
-__all__ = ["__version__", "cli", "download_training_data", "train_miss_align"]
+__all__ = ["__version__", "cli", "download_training_data",
+           "train_miss_align", "plot_emdb_dataset"]
 
 
 from ._cli import cli
-from .data import download_training_data
+from .data import download_training_data, plot_emdb_dataset
 from .train import train_miss_align
 from .gradcam import visualize_attention

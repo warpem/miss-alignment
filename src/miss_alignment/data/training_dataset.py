@@ -1,6 +1,5 @@
 from os import PathLike
 from pathlib import Path
-from typing import List
 
 import random
 import einops
@@ -17,53 +16,9 @@ from torch_grid_utils import fftfreq_grid
 import torch.nn.functional as F
 from ttmask import sphere
 
-
-def random_contrast(*images):
-    std_change, mean_change = (
-        torch.normal(1, 0.1, (1,)), torch.normal(0, 0.1, (1,))
-    )
-    return [i * std_change + mean_change for i in images]
-
-
-def random_cube_mask(*volumes: torch.Tensor, p=.3, size_range=(0.1, 0.3)) -> \
-List[torch.Tensor]:
-    """Apply the same random cube mask to multiple volumes.
-
-    Args:
-        *volumes: 3D volumes of shape [D, H, W] without channel dimension
-        p: Probability of applying the mask
-        size_range: Range for the size of the cube as a fraction of the volume dimensions
-
-    Returns:
-        List of masked volumes
-    """
-    if random.random() > 1 - p:
-        # Get the dimensions of the first volume (assuming all have same dimensions)
-        d, h, w = volumes[0].shape
-
-        # Determine mask size as fraction of volume dimensions
-        mask_fraction = random.uniform(size_range[0], size_range[1])
-        mask_d = max(1, int(d * mask_fraction))
-        mask_h = max(1, int(h * mask_fraction))
-        mask_w = max(1, int(w * mask_fraction))
-
-        # Random starting positions for the mask
-        start_d = random.randint(0, d - mask_d)
-        start_h = random.randint(0, h - mask_h)
-        start_w = random.randint(0, w - mask_w)
-
-        # Apply the same mask to all volumes
-        masked_volumes = []
-        for volume in volumes:
-            masked = volume.clone()
-            masked[start_d:start_d + mask_d,
-            start_h:start_h + mask_h,
-            start_w:start_w + mask_w] = 0
-            masked_volumes.append(masked)
-
-        return masked_volumes
-
-    return list(volumes)
+from .augmentation import (
+    generate_aligned_and_misaligned_shifts, random_contrast, random_cube_mask
+)
 
 
 class EMDBDataset(Dataset):
@@ -133,18 +88,13 @@ class EMDBDataset(Dataset):
     def _generate_reconstructions(
         self, volume: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # generate shift magnitude
-        misaligned_std = torch.rand(1) * 2.0  # number between 0 a 2
-        aligned_std = torch.rand(1) * misaligned_std  # number between 0 and misaligned_std
-        aligned_translations = torch.normal(
-            mean=0.0,
-            std=float(aligned_std),
-            size=(matrices.shape[0], 2),  # batch of number of tilts
-        )
-        misaligned_translations = torch.normal(
-            mean=0.0,
-            std=float(misaligned_std),
-            size=(matrices.shape[0], 2),  # batch of number of tilts
+
+        # between 0 and misaligned_std
+        aligned_translations, misaligned_translations = (
+            generate_aligned_and_misaligned_shifts(
+                matrices.shape[0],
+                volume.shape[0] * .25,
+            )
         )
 
         aligned, misaligned = self._reconstruct(
@@ -154,24 +104,29 @@ class EMDBDataset(Dataset):
             misaligned_translations
         )
 
-        # set the noise_std
-        noise_std = float(torch.rand(1) +.5)
-        aligned = aligned + torch.normal(
-            mean=0.0,
-            std=noise_std,
-            size=aligned.shape,
-        )
-        misaligned = misaligned + torch.normal(
-            mean=0.0,
-            std=noise_std,
-            size=aligned.shape,
-        )
-        aligned = self._normalize(aligned)
-        misaligned = self._normalize(misaligned)
+        if self._is_training:
+            # set the noise_std => treat as augmentation?
+            noise_std = random.random() * 1.5
+            aligned = aligned + torch.normal(
+                mean=0.0,
+                std=noise_std,
+                size=aligned.shape,
+            )
+            misaligned = misaligned + torch.normal(
+                mean=0.0,
+                std=noise_std,
+                size=aligned.shape,
+            )  # renormalize after applying noise
+            aligned = self._normalize(aligned)
+            misaligned = self._normalize(misaligned)
 
-        if self._is_training:  # contrast adjustment
+            # contrast adjustment
             aligned, misaligned = random_contrast(aligned, misaligned)
+            # set random cube to 0
             aligned, misaligned = random_cube_mask(aligned, misaligned)
+        else:
+            aligned = self._normalize(aligned)
+            misaligned = self._normalize(misaligned)
 
         return aligned, misaligned
 
@@ -296,7 +251,7 @@ class EMDBDataset(Dataset):
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)
-        torch.nan_to_num(volume, nan=mean)
+        torch.nan_to_num(volume, nan=float(mean))
         return (volume - mean) / std
 
     def _pad_to_target_size(self, volume: torch.Tensor) -> torch.Tensor:
