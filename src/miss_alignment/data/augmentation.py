@@ -198,10 +198,7 @@ def generate_aligned_and_misaligned_shifts(
     tuple[torch.Tensor, torch.Tensor]
        Aligned and misaligned shift tensors, each of shape (num_points, 2).
     """
-    # between 0 and fraction of max_shift
-    misaligned_std = random.random() * (max_shift * .15)
-    aligned_std = random.random() * misaligned_std  # between 0 and misaligned
-
+    ##### Part 1: Trajectories
     if random.random() > 1. - trajectory_probability:
         _, x_shifts, y_shifts = generate_shift_trajectory(num_points)
         x_shifts = x_shifts * (max_shift * .2)
@@ -209,24 +206,31 @@ def generate_aligned_and_misaligned_shifts(
     else:
         shifts = torch.zeros((num_points, 2))
     misaligned = shifts
-    # reduce intensity of aligned shifts
-    if random.random() > .5:
-        aligned = misaligned * (aligned_std / misaligned_std)
+    # trajectories have two situations:
+    # * applied to misaligned and a softer version to aligned
+    # * applied to misaligned and not to aligned
+    if random.random() > .5:  # reduce by factor from 0. to 1.
+        aligned = misaligned * random.random()
     else:
         aligned = torch.zeros((num_points, 2))
 
+    ##### Part 2: Jitter
+    # between 0 and fraction of max_shift
+    misaligned_std = random.random() * (max_shift * .15)
+    aligned_std = random.random() * misaligned_std  # between 0 and misaligned
     if random.random() > .5:
         aligned = aligned + torch.normal(
             mean=0.0,
             std=float(aligned_std),
             size=(num_points, 2),  # batch of number of tilts
         )
-    misaligned = misaligned + torch.normal(
+    misaligned = misaligned + torch.normal(  # dont always apply
         mean=0.0,
         std=float(misaligned_std),
         size=(num_points, 2),  # batch of number of tilts
     )
 
+    ##### Part 3: Outliers
     if random.random() > 1. - outlier_probability:
         ids = select_random_indices(torch.arange(num_points))
         # if input is 10A, this is a maximum shift of 150A
