@@ -1,9 +1,9 @@
-import einops
 import typer
 from pathlib import Path
 from ._cli import OPTION_PROMPT_KWARGS, cli
 
 import torch
+import einops
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from torch_fourier_slice import (
@@ -74,11 +74,44 @@ def prep_tilts(
     return tilt_dfts_shifted
 
 
+def reconstruct(
+        tilt_image_dfts: torch.Tensor,
+        predicted_shifts: torch.Tensor,
+        tilt_rotation_matrices: torch.Tensor,
+        image_shape: tuple[int, int],
+        volume_shape: tuple[int, int, int],
+) -> torch.Tensor:
+
+    tilt_dfts_shifted = fourier_shift_dft_2d(
+        dft=tilt_image_dfts,
+        image_shape=image_shape,
+        shifts=predicted_shifts,
+        rfft=True,
+        fftshifted=True
+    )
+
+    # Rest of computation...
+    volume_dft, weights = insert_central_slices_rfft_3d(
+        image_rfft=tilt_dfts_shifted,
+        volume_shape=volume_shape,
+        rotation_matrices=tilt_rotation_matrices,
+        fftfreq_max=0.5
+    )
+
+    valid_weights = weights > 1e-3
+    volume_dft[valid_weights] /= weights[valid_weights]
+
+    volume_dft = torch.fft.ifftshift(volume_dft, dim=(-3, -2))
+    volume = torch.fft.irfftn(volume_dft, dim=(-3, -2, -1))
+    volume = torch.fft.ifftshift(volume, dim=(-3, -2, -1))
+    volume = torch.real(volume).to(torch.float32)
+    return volume
+
+
 def optimize_shifts(
         model: MissAlignment,
         tilt_image_dfts: torch.Tensor,
         tilt_rotation_matrices: torch.Tensor,
-        tolerance: float = 1e-3,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Find shifts to optimize model score.
 
@@ -105,74 +138,62 @@ def optimize_shifts(
     volume_shape = (box_size, ) * 3
     device = tilt_image_dfts.device
 
+    initial_volume = reconstruct(
+        tilt_image_dfts=tilt_image_dfts,
+        predicted_shifts=torch.zeros(size=(n_tilts, 2), device=device),
+        tilt_rotation_matrices=tilt_rotation_matrices,
+        image_shape=image_shape,
+        volume_shape=volume_shape,
+    )
+
     predicted_shifts = torch.zeros(
-        size=(n_tilts, 2), dtype=torch.float32, requires_grad=True, device=device
+        size=(n_tilts, 2),
+        dtype=torch.float32,
+        device=device,
+        requires_grad=True,
     )
 
-    alignment_optimizer = torch.optim.SGD(
-        params=[predicted_shifts, ],
-        lr=0.1,
-        momentum=0.9,
+    alignment_optimizer = torch.optim.LBFGS(
+        [predicted_shifts,],
+        history_size=10,
+        max_iter=10,
+        line_search_fn="strong_wolfe",
     )
-    volume = None
-    initial_volume = None
-    prev_loss = None
 
-    for i in range(10000):
-        # Need to detach and reattach with each iteration
-        predicted_shifts = predicted_shifts.detach().clone()
-        predicted_shifts.requires_grad = True
-
-        # Update the optimizer parameters without recreating the optimizer
-        alignment_optimizer.param_groups[0]['params'] = [predicted_shifts]
-
+    def closure():
         alignment_optimizer.zero_grad()
-
-        tilt_dfts_shifted = fourier_shift_dft_2d(
-            dft=tilt_image_dfts,
+        volume = reconstruct(
+            tilt_image_dfts=tilt_image_dfts,
+            predicted_shifts=predicted_shifts,
+            tilt_rotation_matrices=tilt_rotation_matrices,
             image_shape=image_shape,
-            shifts=predicted_shifts,
-            rfft=True,
-            fftshifted=True
-        )
-
-        # Rest of computation...
-        volume_dft, weights = insert_central_slices_rfft_3d(
-            image_rfft=tilt_dfts_shifted,
             volume_shape=volume_shape,
-            rotation_matrices=tilt_rotation_matrices,
-            fftfreq_max=0.5
         )
-
-        valid_weights = weights > 1e-3
-        volume_dft[valid_weights] /= weights[valid_weights]
-
-        volume_dft = torch.fft.ifftshift(volume_dft, dim=(-3, -2))
-        volume = torch.fft.irfftn(volume_dft, dim=(-3, -2, -1))
-        volume = torch.real(
-            torch.fft.ifftshift(volume, dim=(-3, -2, -1))
-        ).to(torch.float32)
+        volume = torch.real(volume).to(torch.float32)
         volume = einops.rearrange(volume, 'd h w -> 1 1 d h w')
-
-        if initial_volume is None:  # store the initial, misaligned
-            # reconstruction
-            initial_volume = volume.clone().detach()
 
         # Get loss and compute backward pass
         loss = model(volume)
         loss.backward()
 
-        alignment_optimizer.step()
+        print(loss.item())
+        # loss_graph += [loss.item()]
+        return loss
 
-        if prev_loss is not None and abs(loss.item() - prev_loss) < tolerance:
-            break
+    for i in range(4):
+        print(f"Iteration {i}")
+        alignment_optimizer.step(closure)
 
-        prev_loss = loss.item()
+    predicted_shifts = predicted_shifts.detach()
+    volume = reconstruct(
+        tilt_image_dfts=tilt_image_dfts,
+        predicted_shifts=predicted_shifts,
+        tilt_rotation_matrices=tilt_rotation_matrices,
+        image_shape=image_shape,
+        volume_shape=volume_shape,
+    )
 
-        if i % 100 == 0:
-            print(loss.item())
-
-    return initial_volume, volume.detach(), predicted_shifts.detach()
+    return initial_volume, volume, predicted_shifts
 
 
 @cli.command(name="optimize_alignment", no_args_is_help=True)
@@ -196,18 +217,18 @@ def optimize_alignment(
             tilt_rotation_matrices=x["rotations"],
             tilt_image_shifts=x["translations"],
         )
-        initial, final, shifts = optimize_shifts(
+        initial, final, shifts, loss_graph = optimize_shifts(
             model=model.to("cuda:0"),
             tilt_image_dfts=tilt_image_dfts.to("cuda:0"),
             tilt_rotation_matrices=x["rotations"].to("cuda:0"),
         )
 
-        print(x["translations"])
-        print(- shifts.cpu())
+        name = x["map_name"]
 
-        np.save(output_directory / "start.npy", initial.cpu().numpy())
-        np.save(output_directory / "end.npy", final.cpu().numpy())
+        print(name)
+        print(torch.abs(x["translations"] + shifts.cpu()).sum())
 
-        break
+        np.save(output_directory / f"{name}_start.npy", initial.cpu().numpy())
+        np.save(output_directory / f"{name}_end.npy", final.cpu().numpy())
 
     return None

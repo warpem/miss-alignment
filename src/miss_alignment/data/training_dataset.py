@@ -104,6 +104,7 @@ class EMDBDataset(Dataset):
                 )
             )
             test_data.append({
+                "map_name": mrc_path.stem,
                 "volume": volume,
                 "rotations": rotations,
                 "translations": misaligned_translations,
