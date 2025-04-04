@@ -20,7 +20,7 @@ def prep_tilts(
         volume: torch.Tensor,
         tilt_rotation_matrices: torch.Tensor,
         tilt_image_shifts: torch.Tensor,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     grid = fftfreq_grid(
         image_shape=volume.shape,
         rfft=False,
@@ -52,13 +52,16 @@ def prep_tilts(
     )
 
     # get random rotation offset for slice extraction
-    random_rotation = torch.tensor(R.random().as_matrix(), dtype=torch.float32)
+    random_rotation = torch.tensor(
+        R.random().as_matrix(),
+        dtype=torch.float32
+    )
 
     # extract tilt dfts
     tilt_dfts = extract_central_slices_rfft_3d(
         volume_rfft=volume_dft,
         image_shape=volume.shape,
-        rotation_matrices=tilt_rotation_matrices @ random_rotation,
+        rotation_matrices=random_rotation @ tilt_rotation_matrices,
         fftfreq_max=0.5,  # ~2x less coords to rotate
     )
 
@@ -71,7 +74,26 @@ def prep_tilts(
         fftshifted=True
     )
 
-    return tilt_dfts_shifted
+    ground_truth_reconstruction = reconstruct(
+        tilt_dfts,
+        torch.zeros_like(tilt_image_shifts),
+        tilt_rotation_matrices,
+        volume.shape[-2:],
+        volume.shape[-3:],
+    )
+    misaligned_reconstruction = reconstruct(
+        tilt_dfts_shifted,
+        torch.zeros_like(tilt_image_shifts),
+        tilt_rotation_matrices,
+        volume.shape[-2:],
+        volume.shape[-3:],
+    )
+
+    return (
+        tilt_dfts_shifted,
+        ground_truth_reconstruction,
+        misaligned_reconstruction
+    )
 
 
 def reconstruct(
@@ -112,7 +134,7 @@ def optimize_shifts(
         model: MissAlignment,
         tilt_image_dfts: torch.Tensor,
         tilt_rotation_matrices: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Find shifts to optimize model score.
 
     Parameters
@@ -127,7 +149,7 @@ def optimize_shifts(
 
     Returns
     -------
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    tuple[torch.Tensor, torch.Tensor]
         - Reconstruction before optimization.
         - Reconstruction after optimization
         - Detected translational alignment.
@@ -138,14 +160,6 @@ def optimize_shifts(
     volume_shape = (box_size, ) * 3
     device = tilt_image_dfts.device
 
-    initial_volume = reconstruct(
-        tilt_image_dfts=tilt_image_dfts,
-        predicted_shifts=torch.zeros(size=(n_tilts, 2), device=device),
-        tilt_rotation_matrices=tilt_rotation_matrices,
-        image_shape=image_shape,
-        volume_shape=volume_shape,
-    )
-
     predicted_shifts = torch.zeros(
         size=(n_tilts, 2),
         dtype=torch.float32,
@@ -155,9 +169,8 @@ def optimize_shifts(
 
     alignment_optimizer = torch.optim.LBFGS(
         [predicted_shifts,],
-        history_size=10,
-        max_iter=10,
         line_search_fn="strong_wolfe",
+        # max_iter=10
     )
 
     def closure():
@@ -180,7 +193,7 @@ def optimize_shifts(
         # loss_graph += [loss.item()]
         return loss
 
-    for i in range(4):
+    for i in range(3):
         print(f"Iteration {i}")
         alignment_optimizer.step(closure)
 
@@ -193,7 +206,7 @@ def optimize_shifts(
         volume_shape=volume_shape,
     )
 
-    return initial_volume, volume, predicted_shifts
+    return volume, predicted_shifts
 
 
 @cli.command(name="optimize_alignment", no_args_is_help=True)
@@ -212,15 +225,15 @@ def optimize_alignment(
     test_data = dataset.prepare_test_boxes()
 
     for x in test_data:
-        tilt_image_dfts = prep_tilts(
+        tilt_image_dfts, ground_truth, misaligned = prep_tilts(
             volume=x["volume"],
             tilt_rotation_matrices=x["rotations"],
             tilt_image_shifts=x["translations"],
         )
-        initial, final, shifts, loss_graph = optimize_shifts(
-            model=model.to("cuda:0"),
-            tilt_image_dfts=tilt_image_dfts.to("cuda:0"),
-            tilt_rotation_matrices=x["rotations"].to("cuda:0"),
+        final, shifts = optimize_shifts(
+            model=model,  #.to("cuda:0"),
+            tilt_image_dfts=tilt_image_dfts,  # .to("cuda:0"),
+            tilt_rotation_matrices=x["rotations"],  #.to("cuda:0"),
         )
 
         name = x["map_name"]
@@ -228,7 +241,17 @@ def optimize_alignment(
         print(name)
         print(torch.abs(x["translations"] + shifts.cpu()).sum())
 
-        np.save(output_directory / f"{name}_start.npy", initial.cpu().numpy())
-        np.save(output_directory / f"{name}_end.npy", final.cpu().numpy())
+        np.save(
+            output_directory / f"{name}_ground_truth.npy",
+            ground_truth.cpu().numpy()
+        )
+        np.save(
+            output_directory / f"{name}_misaligned.npy",
+            misaligned.cpu().numpy()
+        )
+        np.save(
+            output_directory / f"{name}_final.npy",
+            final.cpu().numpy()
+        )
 
     return None
