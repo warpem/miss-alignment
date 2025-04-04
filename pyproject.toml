@@ -39,7 +39,7 @@ dependencies = [
     "torchvision",
     "torch-fourier-rescale>=0.1",
     "torch-fourier-slice",
-    "torch-fourier-shift",
+    "torch-fourier-shift>=0.4",
     "torch-grid-utils",
     "ttmask",
     "tqdm>=4.67.1",
