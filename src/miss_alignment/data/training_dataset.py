@@ -196,13 +196,16 @@ class EMDBDataset(Dataset):
         )
 
         # get random rotation offset for slice extraction
-        random_rotation = torch.tensor(R.random().as_matrix(), dtype=torch.float32)
+        random_rotation = torch.tensor(
+            R.random().as_matrix(),
+            dtype=torch.float32
+        )
 
         # extract tilt dfts
         tilt_dfts = extract_central_slices_rfft_3d(
             volume_rfft=volume_dft,
             image_shape=volume.shape,
-            rotation_matrices=tilt_rotation_matrices @ random_rotation,
+            rotation_matrices=random_rotation @ tilt_rotation_matrices,
             fftfreq_max=0.5,  # ~2x less coords to rotate
         )
 
