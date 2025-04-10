@@ -101,6 +101,7 @@ class EMDBDataset(Dataset):
                 generate_aligned_and_misaligned_shifts(
                     rotations.shape[0],
                     volume.shape[0] * shift_fraction,
+                    outlier_probability=0.
                 )
             )
             test_data.append({
@@ -165,15 +166,15 @@ class EMDBDataset(Dataset):
     ):
         ## make volume dft
         # premultiply by sinc2
-        grid = fftfreq_grid(
+        sinc2 = torch.sinc(fftfreq_grid(
             image_shape=volume.shape,
             rfft=False,
             fftshift=True,
             norm=True,
             device=volume.device
-        )
+        )) ** 2
 
-        volume = volume * torch.sinc(grid) ** 2
+        volume = volume * sinc2
 
         # calculate DFT
         volume_dft = torch.fft.fftshift(volume, dim=(-3, -2, -1))  # volume center to array origin
@@ -254,6 +255,9 @@ class EMDBDataset(Dataset):
         volume_dft_large_shifts = torch.fft.ifftshift(volume_dft_large_shifts, dim=(-3, -2,))  # actual ifftshift
         volume_dft_large_shifts = torch.fft.irfftn(volume_dft_large_shifts, dim=(-3, -2, -1))
         volume_dft_large_shifts = torch.fft.ifftshift(volume_dft_large_shifts, dim=(-3, -2, -1))  # center in real space
+
+        volume_dft_small_shifts = volume_dft_small_shifts / sinc2
+        volume_dft_large_shifts = volume_dft_large_shifts / sinc2
 
         return torch.real(volume_dft_small_shifts), torch.real(volume_dft_large_shifts)
 

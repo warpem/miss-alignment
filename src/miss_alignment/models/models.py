@@ -9,6 +9,49 @@ from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
 
 
+class RegularizedMarginRankingLoss(nn.Module):
+    def __init__(self, margin=0.5, lambda_reg=0.1):
+        """
+        Parameters
+        ----------
+        margin : float, optional
+            Margin for ranking, by default 0.1
+        lambda_reg : float, optional
+            L2 regularization strength, by default 0.01
+        """
+        super().__init__()
+        self.margin = margin
+        self.lambda_reg = lambda_reg
+        self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+
+    def forward(self, scores1, scores2, targets):
+        """
+        Parameters
+        ----------
+        scores1 : torch.Tensor
+            Model predictions for first images
+        scores2 : torch.Tensor
+            Model predictions for second images
+        targets : torch.Tensor
+            1 if scores1 should be higher than scores2, -1 if vice versa
+
+        Returns
+        -------
+        torch.Tensor
+            Computed loss value with regularization
+        """
+        # Apply ranking loss
+        ranking_loss = self.ranking_loss(scores1, scores2, targets)
+
+        # Add L2 regularization on scores to prevent inflation
+        reg_loss = torch.mean(scores1 ** 2) + torch.mean(scores2 ** 2)
+
+        # Combined loss
+        total_loss = ranking_loss + self.lambda_reg * reg_loss
+
+        return total_loss
+
+
 class MissAlignment(pl.LightningModule):
     in_channels: int = 1
     num_classes: int = 1
@@ -20,7 +63,7 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.save_hyperparameters()
         self.warmup_epochs = warmup_epochs
-        self.criterion = nn.MarginRankingLoss(margin=margin)
+        self.criterion = RegularizedMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
