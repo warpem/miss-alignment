@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import (
     CosineAnnealingWarmRestarts, LinearLR, SequentialLR
 )
+from torch.nn import MarginRankingLoss
 
 from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
@@ -63,7 +64,7 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.save_hyperparameters()
         self.warmup_epochs = warmup_epochs
-        self.criterion = RegularizedMarginRankingLoss(margin=margin)
+        self.criterion = MarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
