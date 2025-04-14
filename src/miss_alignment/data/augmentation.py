@@ -218,7 +218,7 @@ def generate_aligned_and_misaligned_shifts(
     # between 0 and fraction of max_shift
     misaligned_std = random.random() * (max_shift * .15)
     aligned_std = random.random() * misaligned_std  # between 0 and misaligned
-    if random.random() > .75:
+    if random.random() > .5:  # 50% chance of no jitter
         aligned = aligned + torch.normal(
             mean=0.0,
             std=float(aligned_std),
@@ -238,16 +238,6 @@ def generate_aligned_and_misaligned_shifts(
         misaligned[ids] = outliers
         if random.random() > .5:
             aligned[ids] = outliers * random.random()
-
-    cast_the_die = random.random()
-    if cast_the_die < .25:
-        # only x
-        aligned[:, 0] = 0.0
-        misaligned[:, 0] = 0.0
-    if .25 <= cast_the_die < .5:
-        # only y
-        aligned[:, 1] = 0.0
-        misaligned[:, 1] = 0.0
 
     return aligned, misaligned
 
