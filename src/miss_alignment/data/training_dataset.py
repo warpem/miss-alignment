@@ -5,6 +5,7 @@ import random
 import einops
 import numpy as np
 import torch
+import tqdm
 from torch.utils.data import Dataset
 import mrcfile
 from scipy.spatial.transform import Rotation as R
@@ -40,11 +41,37 @@ class EMDBDataset(Dataset):
         target_size: int = 64,
     ):
         self.dataset_directory = Path(directory)
-
-        if len(self.mrc_files) == 0:
-            raise FileNotFoundError("No MRC files found in the dataset directory.")
-
         self.target_size = (target_size, target_size, target_size)
+
+        ## make volume dft
+        # premultiply by sinc2
+        self.sinc2 = torch.sinc(fftfreq_grid(
+            image_shape=self.target_size,
+            rfft=False,
+            fftshift=True,
+            norm=True,
+            device="cpu"
+        )) ** 2
+
+        mrc_files = list(self.dataset_directory.glob("*.mrc"))
+        self.volumes = []
+        for mrc_path in tqdm.tqdm(mrc_files):
+            with mrcfile.open(mrc_path) as mrc:
+                # Convert to torch tensor and move to device
+                volume = torch.from_numpy(mrc.data.astype(np.float32))
+            volume = self._preprocess(volume)
+            volume = volume * self.sinc2
+
+            # calculate DFT
+            volume_dft = torch.fft.fftshift(volume, dim=(
+            -3, -2, -1))  # volume center to array origin
+            volume_dft = torch.fft.rfftn(volume_dft, dim=(-3, -2, -1))
+            volume_dft = torch.fft.fftshift(volume_dft, dim=(
+            -3, -2,))  # actual fftshift of 3D rfft
+            self.volumes += [(mrc_path.stem, volume_dft)]
+
+        if len(self.volumes) == 0:
+            raise FileNotFoundError("No MRC files found in the dataset directory.")
 
         self.train() if train else self.eval()
 
@@ -54,27 +81,19 @@ class EMDBDataset(Dataset):
     def eval(self):
         self._is_training = False
 
-    @property
-    def mrc_files(self):
-        return sorted(self.dataset_directory.glob("*.mrc"))
-
     def __len__(self):
-        return len(self.mrc_files)
+        return len(self.volumes)
 
     def __getitem__(self, idx):
-        # Load MRC file
-        mrc_path = self.mrc_files[idx]
-        with mrcfile.open(mrc_path) as mrc:
-            # Convert to torch tensor and move to device
-            volume = torch.from_numpy(mrc.data.astype(np.float32))
-
-        volume = self._preprocess(volume)
+        # grab box
+        _, volume_dft = self.volumes[idx]
 
         tilt_angles = R.from_euler(
             seq="Y", angles=np.arange(-51, 54, 3), degrees=True
         )
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
-        aligned, misaligned = self._generate_reconstructions(volume, rotations)
+        aligned, misaligned = self._generate_reconstructions(volume_dft,
+                                                             rotations)
 
         # explicitly also convert to float, had problems that they were double
         aligned = einops.rearrange(aligned.float(), "d h w -> 1 d h w")
@@ -87,11 +106,7 @@ class EMDBDataset(Dataset):
 
     def prepare_test_boxes(self, shift_fraction: float = .25):
         test_data = []
-        for mrc_path in self.mrc_files:
-            with mrcfile.open(mrc_path) as mrc:
-                # Convert to torch tensor and move to device
-                volume = torch.from_numpy(mrc.data.astype(np.float32))
-            volume = self._preprocess(volume)
+        for map_name, volume in self.volumes:
             tilt_angles = R.from_euler(
                 seq="Y", angles=np.arange(-51, 54, 3), degrees=True
             )
@@ -105,7 +120,7 @@ class EMDBDataset(Dataset):
                 )
             )
             test_data.append({
-                "map_name": mrc_path.stem,
+                "map_name": map_name,
                 "volume": volume,
                 "rotations": rotations,
                 "translations": misaligned_translations,
@@ -113,14 +128,14 @@ class EMDBDataset(Dataset):
         return test_data
 
     def _generate_reconstructions(
-        self, volume: torch.Tensor, matrices: torch.Tensor
+        self, volume_dft: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
         # between 0 and misaligned_std
         aligned_translations, misaligned_translations = (
             generate_aligned_and_misaligned_shifts(
                 matrices.shape[0],
-                volume.shape[0] * .25,
+                self.target_size[0] * .25,
             )
         )
 
@@ -136,7 +151,7 @@ class EMDBDataset(Dataset):
             misaligned_translations[:, 1] = 0.0
 
         aligned, misaligned = self._reconstruct(
-            volume,
+            volume_dft,
             matrices,
             aligned_translations,
             misaligned_translations
@@ -170,38 +185,21 @@ class EMDBDataset(Dataset):
 
     def _reconstruct(
         self,
-        volume: torch.Tensor,  # (d, h, w)
+        volume_dft: torch.Tensor,  # (d, h, w)
         tilt_rotation_matrices: torch.Tensor,  # (b, 3, 3)
         tilt_shifts_small: torch.Tensor,  # (b, 2)
         tilt_shifts_large: torch.Tensor,  # (b, 2)
     ):
-        ## make volume dft
-        # premultiply by sinc2
-        sinc2 = torch.sinc(fftfreq_grid(
-            image_shape=volume.shape,
-            rfft=False,
-            fftshift=True,
-            norm=True,
-            device=volume.device
-        )) ** 2
-
-        volume = volume * sinc2
-
-        # calculate DFT
-        volume_dft = torch.fft.fftshift(volume, dim=(-3, -2, -1))  # volume center to array origin
-        volume_dft = torch.fft.rfftn(volume_dft, dim=(-3, -2, -1))
-        volume_dft = torch.fft.fftshift(volume_dft, dim=(-3, -2,))  # actual fftshift of 3D rfft
-
         # apply random 3d shift
         random_shift = torch.tensor(
             np.random.normal(
-                loc=0, scale=.1 * volume.shape[-1], size=(3, )
+                loc=0, scale=.1 * self.target_size[-1], size=(3, )
             ),
             dtype=torch.float32
         )
         volume_dft = fourier_shift_dft_3d(
             dft=volume_dft,
-            image_shape=volume.shape,
+            image_shape=self.target_size,
             shifts=random_shift,
             rfft=True,
             fftshifted=True
@@ -216,7 +214,7 @@ class EMDBDataset(Dataset):
         # extract tilt dfts
         tilt_dfts = extract_central_slices_rfft_3d(
             volume_rfft=volume_dft,
-            image_shape=volume.shape,
+            image_shape=self.target_size,
             rotation_matrices=random_rotation @ tilt_rotation_matrices,
             fftfreq_max=0.5,  # ~2x less coords to rotate
         )
@@ -224,7 +222,7 @@ class EMDBDataset(Dataset):
         # phase shift to apply translations
         tilt_dfts_small_shifts = fourier_shift_dft_2d(
             dft=tilt_dfts,
-            image_shape=volume.shape[-2:],
+            image_shape=self.target_size[-2:],
             shifts=tilt_shifts_small,
             rfft=True,
             fftshifted=True
@@ -232,7 +230,7 @@ class EMDBDataset(Dataset):
 
         tilt_dfts_large_shifts = fourier_shift_dft_2d(
             dft=tilt_dfts,
-            image_shape=volume.shape[-2:],
+            image_shape=self.target_size[-2:],
             shifts=tilt_shifts_large,
             rfft=True,
             fftshifted=True
@@ -241,14 +239,14 @@ class EMDBDataset(Dataset):
         # reconstruct
         volume_dft_small_shifts, weights = insert_central_slices_rfft_3d(
             image_rfft=tilt_dfts_small_shifts,
-            volume_shape=volume.shape,
+            volume_shape=self.target_size,
             rotation_matrices=tilt_rotation_matrices,  # no rotation offset
             fftfreq_max=0.5
         )
 
         volume_dft_large_shifts, weights = insert_central_slices_rfft_3d(
             image_rfft=tilt_dfts_large_shifts,
-            volume_shape=volume.shape,
+            volume_shape=self.target_size,
             rotation_matrices=tilt_rotation_matrices,  # no rotation offset
             fftfreq_max=0.5
         )
@@ -267,8 +265,8 @@ class EMDBDataset(Dataset):
         volume_dft_large_shifts = torch.fft.irfftn(volume_dft_large_shifts, dim=(-3, -2, -1))
         volume_dft_large_shifts = torch.fft.ifftshift(volume_dft_large_shifts, dim=(-3, -2, -1))  # center in real space
 
-        volume_dft_small_shifts = volume_dft_small_shifts / sinc2
-        volume_dft_large_shifts = volume_dft_large_shifts / sinc2
+        volume_dft_small_shifts = volume_dft_small_shifts / self.sinc2
+        volume_dft_large_shifts = volume_dft_large_shifts / self.sinc2
 
         return torch.real(volume_dft_small_shifts), torch.real(volume_dft_large_shifts)
 
