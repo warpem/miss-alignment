@@ -40,6 +40,7 @@ dependencies = [
     "torch-fourier-rescale>=0.1",
     "torch-fourier-slice",
     "torch-fourier-shift>=0.0.4",
+    "torch-cubic-spline-grids",
     "torch-grid-utils",
     "ttmask",
     "tqdm>=4.67.1",
@@ -49,6 +50,7 @@ dependencies = [
     "standard-imghdr",  # workaround for tensorboard with python 3.13
     "typer",
     "zenodo-get",
+    "matplotlib",
 ]
 
 [project.urls]
