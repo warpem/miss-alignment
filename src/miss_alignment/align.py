@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 import einops
 import numpy as np
+from pytorch_lightning import seed_everything
 from scipy.spatial.transform import Rotation as R
 from torch_fourier_slice import (
     extract_central_slices_rfft_3d, insert_central_slices_rfft_3d
@@ -129,15 +130,14 @@ def reconstruct(
     volume = torch.fft.irfftn(volume_dft, dim=(-3, -2, -1))
     volume = torch.fft.ifftshift(volume, dim=(-3, -2, -1))
 
-    # grid = fftfreq_grid(
-    #     image_shape=volume.shape,
-    #     rfft=False,
-    #     fftshift=True,
-    #     norm=True,
-    #     device=volume.device,
-    # )
-    #
-    # volume = volume / torch.sinc(grid) ** 2
+    grid = fftfreq_grid(
+        image_shape=volume.shape,
+        rfft=False,
+        fftshift=True,
+        norm=True,
+        device=volume.device,
+    )
+    volume = volume / torch.sinc(grid) ** 2
 
     volume = torch.real(volume).to(torch.float32)
     return volume
@@ -254,7 +254,10 @@ def optimize_alignment(
         model_checkpoint: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
         test_data_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
         output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
+        seed: int = 45132,
 ) -> None:
+    seed_everything(seed, workers=True)
+
     model = MissAlignment.load_from_checkpoint(
         model_checkpoint,
         map_location="cpu"
@@ -267,7 +270,7 @@ def optimize_alignment(
 
     x1, x2 = [], []
 
-    for _ in range(5):
+    for _ in range(2):
         test_data = dataset.prepare_test_boxes()
         for x in test_data:
             name = x["map_name"]
@@ -337,18 +340,20 @@ def optimize_alignment(
                 final.cpu().numpy()
             )
 
+    ids = list(range(len(x1)))
     fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
                            figsize=(8, 4))
-    ax[0].set_title("y shift; sum(abs(tilt_shifts_y))")
-    ax[0].plot([a[0] for a in x1], label="misaligned")
-    ax[0].plot([a[0] for a in x2], label="aligned")
-    ax[1].set_title("x shift; sum(abs(tilt_shifts_x))")
-    ax[1].plot([a[1] for a in x1], label="misaligned")
-    ax[1].plot([a[1] for a in x2], label="aligned")
+    ax[0].set_title("total y shift")
+    ax[0].plot(ids, [a[0] for a in x1], "o", alpha=.8, label="misaligned")
+    ax[0].plot(ids, [a[0] for a in x2], "o", alpha=.8, label="aligned")
+    ax[1].set_title("total x shift")
+    ax[1].plot(ids, [a[1] for a in x1], "o", alpha=.8, label="misaligned")
+    ax[1].plot(ids, [a[1] for a in x2], "o", alpha=.8, label="aligned")
     ax[1].legend()
     ax[0].set_xlabel("example id")
     ax[1].set_xlabel("example id")
     ax[0].set_ylabel("sum of shifts")
+    ax[0].set_ylim(0, 100)
     plt.savefig(output_directory / f"corrections_graph.png",
                 bbox_inches="tight", dpi=300)
 
