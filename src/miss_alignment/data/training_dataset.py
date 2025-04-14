@@ -124,6 +124,17 @@ class EMDBDataset(Dataset):
             )
         )
 
+        # randomly remove x or y shifts
+        die_roll = random.random()
+        if die_roll < .25:
+            # only x
+            aligned_translations[:, 0] = 0.0
+            misaligned_translations[:, 0] = 0.0
+        if .25 <= die_roll < .5:
+            # only y
+            aligned_translations[:, 1] = 0.0
+            misaligned_translations[:, 1] = 0.0
+
         aligned, misaligned = self._reconstruct(
             volume,
             matrices,
