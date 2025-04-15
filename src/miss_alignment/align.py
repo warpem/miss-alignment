@@ -20,35 +20,22 @@ from miss_alignment.models import MissAlignment
 
 
 def prep_tilts(
-        volume: torch.Tensor,
+        volume_dft: torch.Tensor,
         tilt_rotation_matrices: torch.Tensor,
         tilt_image_shifts: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    grid = fftfreq_grid(
-        image_shape=volume.shape,
-        rfft=False,
-        fftshift=True,
-        norm=True,
-        device=volume.device
-    )
-
-    volume = volume * torch.sinc(grid) ** 2
-
-    # calculate DFT
-    volume_dft = torch.fft.fftshift(volume, dim=(-3, -2, -1))  # volume center to array origin
-    volume_dft = torch.fft.rfftn(volume_dft, dim=(-3, -2, -1))
-    volume_dft = torch.fft.fftshift(volume_dft, dim=(-3, -2,))  # actual fftshift of 3D rfft
-
+    size = volume_dft.shape[-3]
+    shape = (size, ) * 3
     # random shift not needed for evaluation
     random_shift = torch.tensor(
         np.random.normal(
-            loc=0, scale=.1 * volume.shape[-1], size=(3,)
+            loc=0, scale=.1 * size, size=(3,)
         ),
         dtype=torch.float32
     )
     volume_dft = fourier_shift_dft_3d(
         dft=volume_dft,
-        image_shape=(volume.shape),
+        image_shape=shape,
         shifts=random_shift,
         rfft=True,
         fftshifted=True
@@ -63,7 +50,7 @@ def prep_tilts(
     # extract tilt dfts
     tilt_dfts = extract_central_slices_rfft_3d(
         volume_rfft=volume_dft,
-        image_shape=volume.shape,
+        image_shape=shape,
         rotation_matrices=random_rotation @ tilt_rotation_matrices,
         fftfreq_max=0.5,  # ~2x less coords to rotate
     )
@@ -71,7 +58,7 @@ def prep_tilts(
     # phase shift to apply translations
     tilt_dfts_shifted = fourier_shift_dft_2d(
         dft=tilt_dfts,
-        image_shape=volume.shape[-2:],
+        image_shape=shape[-2:],
         shifts=tilt_image_shifts,
         rfft=True,
         fftshifted=True
@@ -81,15 +68,15 @@ def prep_tilts(
         tilt_dfts,
         torch.zeros_like(tilt_image_shifts),
         tilt_rotation_matrices,
-        volume.shape[-2:],
-        volume.shape[-3:],
+        shape[-2:],
+        shape[-3:],
     )
     misaligned_reconstruction = reconstruct(
         tilt_dfts_shifted,
         torch.zeros_like(tilt_image_shifts),
         tilt_rotation_matrices,
-        volume.shape[-2:],
-        volume.shape[-3:],
+        shape[-2:],
+        shape[-3:],
     )
 
     return (
@@ -270,7 +257,7 @@ def optimize_alignment(
 
     x1, x2 = [], []
 
-    for _ in range(2):
+    for _ in range(5):
         test_data = dataset.prepare_test_boxes()
         for x in test_data:
             name = x["map_name"]
@@ -278,7 +265,7 @@ def optimize_alignment(
             misalignment -= misalignment.mean(axis=0)  # ensure shifts are
             # centered around 0
             tilt_image_dfts, ground_truth, misaligned = prep_tilts(
-                volume=x["volume"],
+                volume_dft=x["volume"],
                 tilt_rotation_matrices=x["rotations"],
                 tilt_image_shifts=misalignment,
             )
