@@ -218,12 +218,12 @@ def generate_aligned_and_misaligned_shifts(
     # between 0 and fraction of max_shift
     misaligned_std = random.random() * (max_shift * .15)
     aligned_std = random.random() * misaligned_std  # between 0 and misaligned
-    if random.random() > .5:  # 50% chance of no jitter
-        aligned = aligned + torch.normal(
-            mean=0.0,
-            std=float(aligned_std),
-            size=(num_points, 2),  # batch of number of tilts
-        )
+    # if random.random() > .5:  # 50% chance of no jitter
+    aligned = aligned + torch.normal(
+        mean=0.0,
+        std=float(aligned_std),
+        size=(num_points, 2),  # batch of number of tilts
+    )
     misaligned = misaligned + torch.normal(  # dont always apply
         mean=0.0,
         std=float(misaligned_std),
