@@ -184,33 +184,4 @@ class MissAlignment(pl.LightningModule):
             lr=self.learning_rate,
             weight_decay=0.001,
         )
-
-        # Warm-up scheduler (linear warm-up)
-        warmup_scheduler = LinearLR(
-            optimizer,
-            start_factor=0.1,  # Start at 10% of self.lr
-            end_factor=1.0,  # End at 100% of self.lr
-            total_iters=self.warmup_epochs
-        )
-
-        cosine_scheduler = CosineAnnealingWarmRestarts(
-            optimizer,
-            T_0=20,  # Number of epochs/iterations for one cycle
-            T_mult=2,
-            # eta_min=1e-06. learning rate at the end of the cycle (default 0)
-        )
-
-        sequential_scheduler = SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[self.warmup_epochs]  # Switch at the end of warm-up
-        )
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": sequential_scheduler,
-                "interval": "epoch",
-                "frequency": 1
-            }
-        }
+        return optimizer
