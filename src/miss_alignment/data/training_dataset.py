@@ -157,7 +157,7 @@ class EMDBDataset(Dataset):
             misaligned_translations
         )
 
-        if self._is_training:
+        if self._is_training and random.random() > .5:
             # set the noise_std => treat as augmentation?
             noise_std = random.random() * 1.5
             aligned = aligned + torch.normal(
@@ -170,16 +170,15 @@ class EMDBDataset(Dataset):
                 std=noise_std,
                 size=aligned.shape,
             )  # renormalize after applying noise
-            aligned = self._normalize(aligned)
-            misaligned = self._normalize(misaligned)
 
+        aligned = self._normalize(aligned)
+        misaligned = self._normalize(misaligned)
+
+        if self._is_training:
             # contrast adjustment
             aligned, misaligned = random_contrast(aligned, misaligned)
             # set random cube to 0
             aligned, misaligned = random_cube_mask(aligned, misaligned)
-        else:
-            aligned = self._normalize(aligned)
-            misaligned = self._normalize(misaligned)
 
         return aligned, misaligned
 
