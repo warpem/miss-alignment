@@ -2,6 +2,7 @@ import typer
 from pathlib import Path
 from ._cli import OPTION_PROMPT_KWARGS, cli
 import tqdm
+import random
 
 import matplotlib.pyplot as plt
 import torch
@@ -17,6 +18,9 @@ from torch_grid_utils import fftfreq_grid, coordinate_grid
 
 from miss_alignment.data import EMDBDataset
 from miss_alignment.models import MissAlignment
+from miss_alignment.data.augmentation import (
+    generate_aligned_and_misaligned_shifts
+)
 
 
 def prep_tilts(
@@ -144,10 +148,10 @@ def center_of_mass(volume: torch.Tensor) -> torch.Tensor:
         Center of mass coordinates [z, y, x]
     """
     device = volume.device
-    volume = torch.abs(volume)
+    volume = volume ** 2
     grid = coordinate_grid(volume.shape[-3:], device=device)
     grid = einops.rearrange(grid, "d h w zyx -> zyx d h w")
-    mass = torch.sum(volume)
+    mass = torch.sum(volume, dim=(-3, -2, -1))
     center_of_mass = torch.sum(grid * volume, dim=(-3, -2, -1)) / mass
     return center_of_mass
 
@@ -178,10 +182,10 @@ def optimize_shifts(
         - Detected translational alignment.
     """
     n_tilts = tilt_rotation_matrices.shape[0]
-    box_size = tilt_image_dfts.shape[-2]
+    box_size = tilt_image_dfts[0].shape[-2]
     image_shape = (box_size, ) * 2
     volume_shape = (box_size, ) * 3
-    device = tilt_image_dfts.device
+    device = tilt_image_dfts[0].device
 
     predicted_shifts = torch.zeros(
         size=(n_tilts, 2),
@@ -198,22 +202,28 @@ def optimize_shifts(
 
     def closure():
         alignment_optimizer.zero_grad()
-        volume = reconstruct(
-            tilt_image_dfts=tilt_image_dfts,
-            predicted_shifts=predicted_shifts,
-            tilt_rotation_matrices=tilt_rotation_matrices,
-            image_shape=image_shape,
-            volume_shape=volume_shape,
-        )
-        volume = torch.real(volume).to(torch.float32)
-        volume = einops.rearrange(volume, 'd h w -> 1 1 d h w')
+        volumes = []
+        for t in tilt_image_dfts:
+            volume = reconstruct(
+                tilt_image_dfts=t,
+                predicted_shifts=predicted_shifts,
+                tilt_rotation_matrices=tilt_rotation_matrices,
+                image_shape=image_shape,
+                volume_shape=volume_shape,
+            )
+            volume = torch.real(volume).to(torch.float32)
+            volumes.append(volume)
 
-        new_com = center_of_mass(volume ** 2)
+        volumes = torch.stack(volumes)
+        volumes = einops.rearrange(volumes, 'b d h w -> b 1 d h w')
+
+        new_com = center_of_mass(volumes)
         distance = torch.sum((new_com - gt_com) ** 2)
         # print(distance)
 
         # Get loss and compute backward pass
-        loss = model(volume) + distance
+        loss = model(volumes) + distance
+        loss = loss.mean()
         loss.backward()
 
         # print(loss.item())
@@ -225,15 +235,15 @@ def optimize_shifts(
 
     predicted_shifts = predicted_shifts.detach()  # center the shifts
     predicted_shifts = predicted_shifts - predicted_shifts.mean(axis=0)
-    volume = reconstruct(
-        tilt_image_dfts=tilt_image_dfts,
-        predicted_shifts=predicted_shifts,
-        tilt_rotation_matrices=tilt_rotation_matrices,
-        image_shape=image_shape,
-        volume_shape=volume_shape,
-    )
+    # volume = reconstruct(
+    #     tilt_image_dfts=tilt_image_dfts,
+    #     predicted_shifts=predicted_shifts,
+    #     tilt_rotation_matrices=tilt_rotation_matrices,
+    #     image_shape=image_shape,
+    #     volume_shape=volume_shape,
+    # )
 
-    return volume, predicted_shifts
+    return predicted_shifts
 
 
 @cli.command(name="optimize_alignment", no_args_is_help=True)
@@ -241,91 +251,96 @@ def optimize_alignment(
         model_checkpoint: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
         test_data_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
         output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
+        nboxes: int = 1,
         seed: int = 45132,
 ) -> None:
     seed_everything(seed, workers=True)
+    torch.set_printoptions(precision=2, sci_mode=False)
 
+    # get model
     model = MissAlignment.load_from_checkpoint(
         model_checkpoint,
         map_location="cpu"
     )
     model.eval()
 
+    # initialize the dataset
     dataset = EMDBDataset(test_data_directory)
+    dataset_size = len(dataset)
 
-    torch.set_printoptions(precision=2, sci_mode=False)
+    # tilt angles used for forward and back projection
+    tilt_angles = R.from_euler(
+        seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+    )
+    rotations = torch.tensor(tilt_angles.as_matrix()).float()
 
+    # for storing results over all examples
     x1, x2 = [], []
 
-    for _ in range(5):
-        test_data = dataset.prepare_test_boxes()
-        for x in test_data:
-            name = x["map_name"]
-            misalignment = x["translations"]
-            misalignment -= misalignment.mean(axis=0)  # ensure shifts are
-            # centered around 0
-            tilt_image_dfts, ground_truth, misaligned = prep_tilts(
-                volume_dft=x["volume"],
-                tilt_rotation_matrices=x["rotations"],
-                tilt_image_shifts=misalignment,
+    for i in range(50):
+        # between 0 and misaligned_std
+        _, misaligned_translations = (
+            generate_aligned_and_misaligned_shifts(
+                rotations.shape[0],
+                dataset.target_size[0] * .25,  # 1/4 max shift of image size
+                outlier_probability=0.
             )
-            # square to put stronger emphasis on density in the volume
-            ground_truth_com = center_of_mass(ground_truth ** 2)
-
-            print(f"Running alignment for {name}")
-            final, shifts = optimize_shifts(
-                model=model.to("cuda:0"),
-                tilt_image_dfts=tilt_image_dfts.to("cuda:0"),
-                tilt_rotation_matrices=x["rotations"].to("cuda:0"),
-                gt_com=ground_truth_com.to("cuda:0"),
+        )
+        misalignment = (
+                misaligned_translations - misaligned_translations.mean(axis=0)
+        )
+        tilts, coms = [], []
+        for idx in [random.randint(0, dataset_size - 1) for _ in range(
+                nboxes)]:
+            tilt, gt, _ = prep_tilts(
+                dataset.volumes[idx][1],
+                rotations,
+                misalignment,
             )
-            final, shifts = final.cpu(), shifts.cpu()
-            print("center of mass distance:", torch.sqrt(torch.sum(
-                (ground_truth_com - center_of_mass(final ** 2)) ** 2
-            )))
-            print("sum of misalignment:",torch.sum(torch.abs(misalignment), dim=0))
-            print("sum of alignment:",torch.sum(torch.abs(misalignment + shifts),
-                                           dim=0))
+            tilts += [tilt]
+            coms += [center_of_mass(gt)]
+        coms = torch.stack(coms)
 
-            x1.append(torch.sum(torch.abs(misalignment), dim=0).tolist())
-            x2.append(torch.sum(torch.abs(misalignment + shifts),
-                                           dim=0).tolist())
+        shifts = optimize_shifts(
+            model=model.to("cuda:0"),
+            tilt_image_dfts=[x.to("cuda:0") for x in tilts],
+            tilt_rotation_matrices=rotations.to("cuda:0"),
+            gt_com=coms.to("cuda:0"),
+        ).to("cpu")
 
-            diff = misalignment + shifts
+        # print("center of mass distance:", torch.sqrt(torch.sum(
+        #     (ground_truth_com - center_of_mass(final ** 2)) ** 2
+        # )))
+        print("sum of misalignment:",torch.sum(torch.abs(misalignment), dim=0))
+        print("sum of alignment:",torch.sum(torch.abs(misalignment + shifts),
+                                       dim=0))
 
-            fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
-                                   figsize=(8, 4))
-            ax[0].plot(misalignment[:, 0], label="misaligned")
-            ax[1].plot(misalignment[:, 1], label="misaligned")
-            ax[0].plot(-shifts[:, 0], label="correction")
-            ax[1].plot(-shifts[:, 1], label="correction")
-            ax[0].plot(diff[:, 0], label="diff")
-            ax[1].plot(diff[:, 1], label="diff")
-            ax[0].legend()
-            ax[1].legend()
-            ax[0].set_title(f"y shifts (abs. diff. "
-                            f"{torch.sum(torch.abs(diff[:, 0])):.2f})")
-            ax[1].set_title(f"x shifts (abs. diff. "
-                            f"{torch.sum(torch.abs(diff[:, 1])):.2f})")
-            ax[0].set_xlabel("tilt image index")
-            ax[1].set_xlabel("tilt image index")
-            ax[0].set_ylim(-6, 6)
-            ax[1].set_ylim(-6, 6)
-            plt.savefig(output_directory / f"{name}_graph.png",
-                        bbox_inches="tight", dpi=300)
+        x1.append(torch.sum(torch.abs(misalignment), dim=0).tolist())
+        x2.append(torch.sum(torch.abs(misalignment + shifts),
+                                       dim=0).tolist())
 
-            np.save(
-                output_directory / f"{name}_ground_truth.npy",
-                ground_truth.cpu().numpy()
-            )
-            np.save(
-                output_directory / f"{name}_misaligned.npy",
-                misaligned.cpu().numpy()
-            )
-            np.save(
-                output_directory / f"{name}_final.npy",
-                final.cpu().numpy()
-            )
+        diff = misalignment + shifts
+
+        fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
+                               figsize=(8, 4))
+        ax[0].plot(misalignment[:, 0], label="misaligned")
+        ax[1].plot(misalignment[:, 1], label="misaligned")
+        ax[0].plot(-shifts[:, 0], label="correction")
+        ax[1].plot(-shifts[:, 1], label="correction")
+        ax[0].plot(diff[:, 0], label="diff")
+        ax[1].plot(diff[:, 1], label="diff")
+        ax[0].legend()
+        ax[1].legend()
+        ax[0].set_title(f"y shifts (abs. diff. "
+                        f"{torch.sum(torch.abs(diff[:, 0])):.2f})")
+        ax[1].set_title(f"x shifts (abs. diff. "
+                        f"{torch.sum(torch.abs(diff[:, 1])):.2f})")
+        ax[0].set_xlabel("tilt image index")
+        ax[1].set_xlabel("tilt image index")
+        ax[0].set_ylim(-6, 6)
+        ax[1].set_ylim(-6, 6)
+        plt.savefig(output_directory / f"{i}_graph.png",
+                    bbox_inches="tight", dpi=300)
 
     ids = list(range(len(x1)))
     fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
