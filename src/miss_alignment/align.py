@@ -253,6 +253,7 @@ def optimize_alignment(
         output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
         nboxes: int = 1,
         seed: int = 45132,
+        device: str = typer.Option("cuda:0", help="Device to run the model on (e.g., 'cuda:0', 'cpu')"),
 ) -> None:
     seed_everything(seed, workers=True)
     torch.set_printoptions(precision=2, sci_mode=False)
@@ -302,10 +303,10 @@ def optimize_alignment(
         coms = torch.stack(coms)
 
         shifts = optimize_shifts(
-            model=model.to("cuda:0"),
-            tilt_image_dfts=[x.to("cuda:0") for x in tilts],
-            tilt_rotation_matrices=rotations.to("cuda:0"),
-            gt_com=coms.to("cuda:0"),
+            model=model.to(device),  # Use the user-specified device
+            tilt_image_dfts=[x.to(device) for x in tilts],  # Use the user-specified device
+            tilt_rotation_matrices=rotations.to(device),  # Use the user-specified device
+            gt_com=coms.to(device),  # Use the user-specified device
         ).to("cpu")
 
         # print("center of mass distance:", torch.sqrt(torch.sum(
