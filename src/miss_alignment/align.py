@@ -3,6 +3,7 @@ from pathlib import Path
 from ._cli import OPTION_PROMPT_KWARGS, cli
 import tqdm
 import random
+import json
 
 import matplotlib.pyplot as plt
 import torch
@@ -27,7 +28,7 @@ def prep_tilts(
         volume_dft: torch.Tensor,
         tilt_rotation_matrices: torch.Tensor,
         tilt_image_shifts: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     size = volume_dft.shape[-3]
     shape = (size, ) * 3
     # random shift not needed for evaluation
@@ -86,7 +87,9 @@ def prep_tilts(
     return (
         tilt_dfts_shifted,
         ground_truth_reconstruction,
-        misaligned_reconstruction
+        misaligned_reconstruction,
+        random_shift,
+        random_rotation
     )
 
 
@@ -162,7 +165,7 @@ def optimize_shifts(
         tilt_rotation_matrices: torch.Tensor,
         gt_com: torch.Tensor,
         start_shifts: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, list]:
     """Find shifts to optimize model score.
 
     Parameters
@@ -176,10 +179,9 @@ def optimize_shifts(
 
     Returns
     -------
-    tuple[torch.Tensor, torch.Tensor]
-        - Reconstruction before optimization.
-        - Reconstruction after optimization
+    tuple[torch.Tensor, list]
         - Detected translational alignment.
+        - List of loss values for each optimization iteration.
     """
     n_tilts = tilt_rotation_matrices.shape[0]
     box_size = tilt_image_dfts[0].shape[-2]
@@ -199,6 +201,9 @@ def optimize_shifts(
         line_search_fn="strong_wolfe",
         # max_iter=10
     )
+
+    # Initialize list to store loss values
+    loss_values = []
 
     def closure():
         alignment_optimizer.zero_grad()
@@ -226,8 +231,9 @@ def optimize_shifts(
         loss = loss.mean()
         loss.backward()
 
-        # print(loss.item())
-        # loss_graph += [loss.item()]
+        # Store the loss value
+        loss_values.append(loss.item())
+
         return loss
 
     for _ in tqdm.tqdm(range(10)):
@@ -243,7 +249,7 @@ def optimize_shifts(
     #     volume_shape=volume_shape,
     # )
 
-    return predicted_shifts
+    return predicted_shifts, loss_values
 
 
 @cli.command(name="optimize_alignment", no_args_is_help=True)
@@ -254,7 +260,28 @@ def optimize_alignment(
         nboxes: int = 1,
         seed: int = 45132,
         device: str = typer.Option("cuda:0", help="Device to run the model on (e.g., 'cuda:0', 'cpu')"),
+        iterations: int = typer.Option(50, help="Number of iterations for optimization alignment"),
 ) -> None:
+    """Optimize alignment of tilt series using a trained model.
+
+    Parameters
+    ----------
+    model_checkpoint : Path
+        Path to the trained model checkpoint.
+    test_data_directory : Path
+        Directory containing test data.
+    output_directory : Path
+        Directory where results will be saved.
+    nboxes : int, optional
+        Number of boxes to use for optimization, by default 1.
+    seed : int, optional
+        Random seed for reproducibility, by default 45132.
+    device : str, optional
+        Device to run the model on (e.g., 'cuda:0', 'cpu'), by default "cuda:0".
+    iterations : int, optional
+        Number of iterations for optimization alignment, by default 50.
+        Controls how many sets of maps are optimized for better statistics.
+    """
     seed_everything(seed, workers=True)
     torch.set_printoptions(precision=2, sci_mode=False)
 
@@ -278,7 +305,12 @@ def optimize_alignment(
     # for storing results over all examples
     x1, x2 = [], []
 
-    for i in range(50):
+    # Create a data structure to store all the required information
+    optimization_report = {
+        "iterations": []
+    }
+
+    for i in range(iterations):
         # between 0 and misaligned_std
         _, misaligned_translations = (
             generate_aligned_and_misaligned_shifts(
@@ -291,23 +323,42 @@ def optimize_alignment(
                 misaligned_translations - misaligned_translations.mean(axis=0)
         )
         tilts, coms = [], []
-        for idx in [random.randint(0, dataset_size - 1) for _ in range(
-                nboxes)]:
-            tilt, gt, _ = prep_tilts(
+
+        # Store map names and indices for the current iteration
+        map_names = []
+        map_indices = [random.randint(0, dataset_size - 1) for _ in range(nboxes)]
+
+        # Store map data for the JSON report
+        map_data = []
+
+        for idx in map_indices:
+            map_name = dataset.volumes[idx][0]  # Get the map name
+            map_names.append(map_name)
+
+            tilt, gt, _, random_shift, random_rotation = prep_tilts(
                 dataset.volumes[idx][1],
                 rotations,
                 misalignment,
             )
             tilts += [tilt]
             coms += [center_of_mass(gt)]
+
+            # Store map data for the JSON report
+            map_data.append({
+                "map_name": map_name,
+                "random_shift": random_shift.tolist(),
+                "random_rotation": random_rotation.tolist()
+            })
         coms = torch.stack(coms)
 
-        shifts = optimize_shifts(
+        # Call optimize_shifts and get both shifts and loss values
+        shifts, loss_values = optimize_shifts(
             model=model.to(device),  # Use the user-specified device
             tilt_image_dfts=[x.to(device) for x in tilts],  # Use the user-specified device
             tilt_rotation_matrices=rotations.to(device),  # Use the user-specified device
             gt_com=coms.to(device),  # Use the user-specified device
-        ).to("cpu")
+        )
+        shifts = shifts.to("cpu")
 
         # print("center of mass distance:", torch.sqrt(torch.sum(
         #     (ground_truth_com - center_of_mass(final ** 2)) ** 2
@@ -321,6 +372,19 @@ def optimize_alignment(
                                        dim=0).tolist())
 
         diff = misalignment + shifts
+
+        # Store all the required information for this iteration
+        iteration_data = {
+            "iteration": i,
+            "map_indices": map_indices,
+            "maps": map_data,  # Include map data with random shifts and rotations
+            "loss_values": loss_values,
+            "misaligned_shifts": misalignment.tolist(),
+            "final_shifts": shifts.tolist(),
+            "sum_misalignment": torch.sum(torch.abs(misalignment), dim=0).tolist(),
+            "sum_alignment": torch.sum(torch.abs(misalignment + shifts), dim=0).tolist()
+        }
+        optimization_report["iterations"].append(iteration_data)
 
         fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
                                figsize=(8, 4))
@@ -359,5 +423,9 @@ def optimize_alignment(
     ax[0].set_ylim(0, 100)
     plt.savefig(output_directory / f"corrections_graph.png",
                 bbox_inches="tight", dpi=300)
+
+    # Save the optimization report as a JSON file
+    with open(output_directory / "optimization_report.json", "w") as f:
+        json.dump(optimization_report, f, indent=2)
 
     return None
