@@ -174,71 +174,74 @@ def generate_shift_trajectory(
     return timesteps, x_positions, y_positions
 
 
-def generate_aligned_and_misaligned_shifts(
+def generate_shifts(
         num_points: int,
         max_shift: float,
         trajectory_probability: float = .5,
+        jitter_probability: float = .5,
         outlier_probability: float = .5,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Generate pairs of aligned and misaligned shifts for trajectory simulation.
 
+    Ensures at least one type of shift (trajectory, jitter, or outlier) is applied.
+
     Parameters
     ----------
     num_points : int
-       Number of points to generate.
+        Number of points to generate.
     max_shift : float
-       Maximum shift magnitude allowed.
+        Maximum shift magnitude allowed.
     trajectory_probability : float, optional
-       Probability of generating trajectory-based shifts, default 0.5.
+        Probability of generating trajectory-based shifts, default 0.5.
+    jitter_probability : float, optional
+        Probability of adding jitter shifts, default 0.5.
     outlier_probability : float, optional
-       Probability of adding outlier shifts, default 0.5.
+        Probability of adding outlier shifts, default 0.5.
 
     Returns
     -------
     tuple[torch.Tensor, torch.Tensor]
-       Aligned and misaligned shift tensors, each of shape (num_points, 2).
+        Aligned and misaligned shift tensors, each of shape (num_points, 2).
     """
+    shifts = torch.zeros((num_points, 2))
+
+    # Determine which shifts to apply
+    apply_trajectory = random.random() <= trajectory_probability
+    apply_jitter = random.random() <= jitter_probability
+    apply_outlier = random.random() <= outlier_probability
+
+    # If none selected, choose one randomly
+    if not (apply_trajectory or apply_jitter or apply_outlier):
+        # Choose one shift type randomly
+        shift_type = random.randint(0, 2)
+        if shift_type == 0:
+            apply_trajectory = True
+        elif shift_type == 1:
+            apply_jitter = True
+        else:  # shift_type == 2
+            apply_outlier = True
+
     ##### Part 1: Trajectories
-    if random.random() > 1. - trajectory_probability:
+    if apply_trajectory:
         _, x_shifts, y_shifts = generate_shift_trajectory(num_points)
         x_shifts = x_shifts * (max_shift * .2)
-        shifts = torch.stack([y_shifts, x_shifts], dim=1)
-    else:
-        shifts = torch.zeros((num_points, 2))
-    misaligned = shifts
-    # trajectories have two situations:
-    # * applied to misaligned and a softer version to aligned
-    # * applied to misaligned and not to aligned
-    if random.random() > .5:  # reduce by factor from 0. to 1.
-        aligned = misaligned * random.random()
-    else:
-        aligned = torch.zeros((num_points, 2))
+        shifts = shifts + torch.stack([y_shifts, x_shifts], dim=1)
 
     ##### Part 2: Jitter
-    # between 0 and fraction of max_shift
-    misaligned_std = random.random() * (max_shift * .15)
-    aligned_std = random.random() * misaligned_std  # between 0 and misaligned
-    # if random.random() > .5:  # 50% chance of no jitter
-    aligned = aligned + torch.normal(
-        mean=0.0,
-        std=float(aligned_std),
-        size=(num_points, 2),  # batch of number of tilts
-    )
-    misaligned = misaligned + torch.normal(  # dont always apply
-        mean=0.0,
-        std=float(misaligned_std),
-        size=(num_points, 2),  # batch of number of tilts
-    )
+    if apply_jitter:
+        std = random.random() * (max_shift * .1)
+        shifts = shifts + torch.normal(
+            mean=0.0,
+            std=float(std),
+            size=(num_points, 2),
+        )
 
     ##### Part 3: Outliers
-    if random.random() > 1. - outlier_probability:
+    if apply_outlier:
         ids = select_random_indices(torch.arange(num_points))
-        # if input is 10A, this is a maximum shift of 150A
         outliers = torch.rand((len(ids), 2)) * (2 * max_shift) - max_shift
-        misaligned[ids] = outliers
-        if random.random() > .5:
-            aligned[ids] = outliers * random.random()
+        shifts[ids] = outliers
 
-    return aligned, misaligned
+    return shifts
 
 

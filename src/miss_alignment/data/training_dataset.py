@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from ttmask import sphere
 
 from .augmentation import (
-    generate_aligned_and_misaligned_shifts, random_contrast, random_cube_mask
+    generate_shifts, random_contrast, random_cube_mask
 )
 
 
@@ -131,24 +131,32 @@ class EMDBDataset(Dataset):
         self, volume_dft: torch.Tensor, matrices: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
 
-        # between 0 and misaligned_std
-        aligned_translations, misaligned_translations = (
-            generate_aligned_and_misaligned_shifts(
-                matrices.shape[0],
-                self.target_size[0] * .25,
-            )
+        # generate two sets of shifts
+        shifts_1 = generate_shifts(
+            matrices.shape[0], self.target_size[0] * .25,
+        )
+        shifts_2 = generate_shifts(
+            matrices.shape[0], self.target_size[0] * .25,
         )
 
         # randomly remove x or y shifts
         die_roll = random.random()
         if die_roll < .25:
             # only x
-            aligned_translations[:, 0] = 0.0
-            misaligned_translations[:, 0] = 0.0
+            shifts_1[:, 0] = 0.0
+            shifts_2[:, 0] = 0.0
         if .25 <= die_roll < .5:
             # only y
-            aligned_translations[:, 1] = 0.0
-            misaligned_translations[:, 1] = 0.0
+            shifts_1[:, 1] = 0.0
+            shifts_2[:, 1] = 0.0
+
+        # set (mis)alignment based on the \sigma of the generated shifts
+        if shifts_1.std() > shifts_2.std():
+            misaligned_translations = shifts_1
+            aligned_translations = shifts_2
+        else:
+            misaligned_translations = shifts_2
+            aligned_translations = shifts_1
 
         aligned, misaligned = self._reconstruct(
             volume_dft,
