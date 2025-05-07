@@ -180,7 +180,7 @@ def generate_shifts(
         trajectory_probability: float = .5,
         jitter_probability: float = .5,
         outlier_probability: float = .5,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """Generate pairs of aligned and misaligned shifts for trajectory simulation.
 
     Ensures at least one type of shift (trajectory, jitter, or outlier) is applied.
@@ -200,8 +200,8 @@ def generate_shifts(
 
     Returns
     -------
-    tuple[torch.Tensor, torch.Tensor]
-        Aligned and misaligned shift tensors, each of shape (num_points, 2).
+    torch.Tensor
+        Shifts tensor of shape (num_points, 2).
     """
     shifts = torch.zeros((num_points, 2))
 

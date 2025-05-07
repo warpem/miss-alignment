@@ -112,12 +112,9 @@ class EMDBDataset(Dataset):
             )
             rotations = torch.tensor(tilt_angles.as_matrix()).float()
             # between 0 and misaligned_std
-            _, misaligned_translations = (
-                generate_aligned_and_misaligned_shifts(
-                    rotations.shape[0],
-                    volume.shape[0] * shift_fraction,
-                    outlier_probability=0.
-                )
+            misaligned_translations = generate_shifts(
+                rotations.shape[0],
+                volume.shape[0] * shift_fraction,
             )
             test_data.append({
                 "map_name": map_name,
