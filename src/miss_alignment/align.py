@@ -20,9 +20,7 @@ from torch_grid_utils import fftfreq_grid, coordinate_grid
 
 from miss_alignment.data import EMDBDataset
 from miss_alignment.models import MissAlignment
-from miss_alignment.data.augmentation import (
-    generate_aligned_and_misaligned_shifts
-)
+from miss_alignment.data.augmentation import generate_shifts
 
 
 def prep_tilts(
@@ -294,7 +292,7 @@ def optimize_alignment(
     for i in range(iterations):
         # between 0 and misaligned_std
         _, misaligned_translations = (
-            generate_aligned_and_misaligned_shifts(
+            generate_shifts(
                 rotations.shape[0],
                 dataset.target_size[0] * .25,  # 1/4 max shift of image size
                 # outlier_probability=0.
