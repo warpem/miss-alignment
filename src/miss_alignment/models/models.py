@@ -56,10 +56,10 @@ class TripletMarginRankingLoss(nn.Module):
         distant = einops.rearrange(distant, 'b -> b 1')
 
         dist_pos = torch.abs(close[..., 0] - close[..., 1])
-        dist_neg = torch.mean(close - distant, dim=-1)
+        dist_neg = torch.min((close - distant) * example_type, dim=-1).values
 
         # Compute triplet loss with margin
-        losses = F.relu(dist_pos - dist_neg + self.margin)
+        losses = F.relu(dist_pos + dist_neg + self.margin)
 
         # Apply reduction
         if self.reduction == 'mean':
