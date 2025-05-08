@@ -99,6 +99,7 @@ class MissAlignment(pl.LightningModule):
 
         # calculate scores and loss
         scores = torch.stack((self(img1), self(img2), self(img3)))
+        scores = einops.rearrange(scores, 'd b 1 -> b d')
         loss = self.criterion(scores, target)
 
         # find back the actual assigned scores to aligned/misaligned volume
