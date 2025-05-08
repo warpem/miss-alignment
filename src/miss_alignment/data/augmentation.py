@@ -3,20 +3,20 @@ import torch
 from torch_cubic_spline_grids import CubicBSplineGrid1d
 
 
-def random_contrast(*images):
+def random_contrast(volume):
     std_change, mean_change = (
         torch.normal(1, 0.1, (1,)), torch.normal(0, 0.1, (1,))
     )
-    return [i * std_change + mean_change for i in images]
+    return volume * std_change + mean_change
 
 
 def random_cube_mask(
-        *volumes: torch.Tensor, p=.3, size_range=(0.1, 0.3)
-) -> list[torch.Tensor]:
+        volume: torch.Tensor, p=.3, size_range=(0.1, 0.3)
+) -> torch.Tensor:
     """Apply the same random cube mask to multiple volumes.
 
     Args:
-        *volumes: 3D volumes of shape [D, H, W] without channel dimension
+        volumes: 3D volumes of shape [D, H, W] without channel dimension
         p: Probability of applying the mask
         size_range: Range for the size of the cube as a fraction of the volume dimensions
 
@@ -25,7 +25,7 @@ def random_cube_mask(
     """
     if random.random() > 1 - p:
         # Get the dimensions of the first volume (assuming all have same dimensions)
-        d, h, w = volumes[0].shape
+        d, h, w = volume.shape
 
         # Determine mask size as fraction of volume dimensions
         mask_fraction = random.uniform(size_range[0], size_range[1])
@@ -39,19 +39,12 @@ def random_cube_mask(
         start_w = random.randint(0, w - mask_w)
 
         # Apply the same mask to all volumes
-        masked_volumes = []
-        for volume in volumes:
-            masked = volume.clone()
-            masked[
-                start_d:start_d + mask_d,
-                start_h:start_h + mask_h,
-                start_w:start_w + mask_w
-            ] = random.random() - .5
-            masked_volumes.append(masked)
-
-        return masked_volumes
-
-    return list(volumes)
+        volume[
+            start_d:start_d + mask_d,
+            start_h:start_h + mask_h,
+            start_w:start_w + mask_w
+        ] = random.random() - .5
+    return volume
 
 
 def select_random_indices(sequence):
