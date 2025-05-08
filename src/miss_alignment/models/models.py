@@ -1,4 +1,5 @@
 import pytorch_lightning as pl
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,9 +47,13 @@ class TripletMarginRankingLoss(nn.Module):
         torch.Tensor
             Computed loss
         """
-        example_type = triplet_indices.sum(dim=-1)
+        example_type = einops.rearrange(
+            triplet_indices.sum(dim=-1), 'b -> b 1'
+        )
         close = embeddings[triplet_indices == example_type]  # (b, 2)
+        close = einops.rearrange(close, '(b n) -> b n', n=2)
         distant = embeddings[triplet_indices != example_type]  # (b, 1)
+        distant = einops.rearrange(distant, 'b -> b 1')
 
         dist_pos = torch.abs(close[..., 0] - close[..., 1])
         dist_neg = torch.mean(close - distant, dim=-1) * example_type
@@ -76,7 +81,7 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.save_hyperparameters()
         self.warmup_epochs = warmup_epochs
-        self.criterion = MarginRankingLoss(margin=margin)
+        self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
