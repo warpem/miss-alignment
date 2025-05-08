@@ -149,23 +149,18 @@ class MissAlignment(pl.LightningModule):
         batch_idx: int,
     ):
         # get the batch data
-        img1, img2, target = batch
+        img1, img2, img3, target = batch
         batch_size = target.shape[0]
 
         # calculate scores and loss
-        score1 = self(img1)
-        score2 = self(img2)
-        loss = self.criterion(score1, score2, target)
+        scores = torch.stack((self(img1), self(img2), self(img3)))
+        loss = self.criterion(scores, target)
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
-        ind = target < 0  # if target==-1 the first input is aligned
-        s_a = torch.mean(  # if target==1 the first input is misaligned
-            torch.cat((score1[ind], score2[torch.logical_not(ind)]))
-        )
-        s_m = torch.mean(
-            torch.cat((score2[ind], score1[torch.logical_not(ind)]))
-        )
+        example_type = target.sum(dim=-1)
+        s_a = torch.mean(scores[example_type == 1])
+        s_m = torch.mean(scores[example_type == -1])
 
         self.log(
             name="val loss",
