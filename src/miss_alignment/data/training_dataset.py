@@ -103,6 +103,9 @@ class EMDBDataset(Dataset):
             example3 = (self._augment(aligned), 1)
         else:
             example3 = (self._augment(misaligned), -1)
+        example1 = einops.rearrange(example1.float(), "d h w -> 1 d h w")
+        example2 = einops.rearrange(example2.float(), "d h w -> 1 d h w")
+        example3 = einops.rearrange(example3.float(), "d h w -> 1 d h w")
         data = [example1, example2, example3]
         random.shuffle(data)
         volumes, targets = zip(*data)
