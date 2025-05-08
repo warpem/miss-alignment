@@ -92,17 +92,21 @@ class EMDBDataset(Dataset):
             seq="Y", angles=np.arange(-51, 54, 3), degrees=True
         )
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
-        aligned, misaligned = self._generate_reconstructions(volume_dft,
-                                                             rotations)
+        aligned, misaligned = self._generate_reconstructions(
+            volume_dft, rotations
+        )
 
-        # explicitly also convert to float, had problems that they were double
-        aligned = einops.rearrange(aligned.float(), "d h w -> 1 d h w")
-        misaligned = einops.rearrange(misaligned.float(), "d h w -> 1 d h w")
-
+        # randomly create either two positive or two negative examples
+        example1 = (self._augment(aligned), 1)
+        example2 = (self._augment(misaligned), -1)
         if random.random() > .5:
-            return aligned, misaligned, torch.tensor((-1.,))
-        else:  # target of 1 means image1 should be ranked higher than image2
-            return misaligned, aligned, torch.tensor((1.,))
+            example3 = (self._augment(aligned), 1)
+        else:
+            example3 = (self._augment(misaligned), -1)
+        data = [example1, example2, example3]
+        random.shuffle(data)
+        volumes, targets = zip(*data)
+        return *volumes, torch.tensor(targets)
 
     def prepare_test_boxes(self, shift_fraction: float = .25):
         test_data = []
@@ -162,30 +166,23 @@ class EMDBDataset(Dataset):
             misaligned_translations
         )
 
-        if self._is_training and random.random() > .5:
-            # set the noise_std => treat as augmentation?
-            noise_std = random.random() * 1.5
-            aligned = aligned + torch.normal(
-                mean=0.0,
-                std=noise_std,
-                size=aligned.shape,
-            )
-            misaligned = misaligned + torch.normal(
-                mean=0.0,
-                std=noise_std,
-                size=aligned.shape,
-            )  # renormalize after applying noise
-
         aligned = self._normalize(aligned)
         misaligned = self._normalize(misaligned)
 
-        if self._is_training:
-            # contrast adjustment
-            aligned, misaligned = random_contrast(aligned, misaligned)
-            # set random cube to 0
-            aligned, misaligned = random_cube_mask(aligned, misaligned)
-
         return aligned, misaligned
+
+    def _augment(self, volume: torch.Tensor) -> torch.Tensor:
+        if self._is_training and random.random() > .5:
+            noise_std = random.random() * 1.5
+            volume = volume + torch.normal(
+                mean=0.0,
+                std=noise_std,
+                size=volume.shape,
+            )
+            volume = self._normalize(volume)
+        volume = random_contrast(volume)
+        volume = random_cube_mask(volume)
+        return volume
 
     def _reconstruct(
         self,

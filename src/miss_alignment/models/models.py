@@ -1,6 +1,7 @@
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import (
     CosineAnnealingWarmRestarts, LinearLR, SequentialLR
 )
@@ -10,47 +11,58 @@ from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
 
 
-class RegularizedMarginRankingLoss(nn.Module):
-    def __init__(self, margin=0.5, lambda_reg=0.1):
-        """
-        Parameters
-        ----------
-        margin : float, optional
-            Margin for ranking, by default 0.1
-        lambda_reg : float, optional
-            L2 regularization strength, by default 0.01
-        """
-        super().__init__()
-        self.margin = margin
-        self.lambda_reg = lambda_reg
-        self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+class TripletMarginRankingLoss(nn.Module):
+    """
+    Triplet Margin Loss with explicit triplet ordering based on indices.
 
-    def forward(self, scores1, scores2, targets):
+    Parameters
+    ----------
+    margin : float, optional
+        Margin for the triplet ranking loss. Default: 1.0
+    reduction : str, optional
+        Specifies the reduction to apply to the output:
+        'none' | 'mean' | 'sum'. Default: 'mean'
+    """
+
+    def __init__(self, margin=1.0, reduction='mean'):
+        super(TripletMarginRankingLoss, self).__init__()
+        self.margin = margin
+        self.reduction = reduction
+
+    def forward(self, embeddings, triplet_indices):
         """
+        Forward pass using triplet indices to organize samples.
+
         Parameters
         ----------
-        scores1 : torch.Tensor
-            Model predictions for first images
-        scores2 : torch.Tensor
-            Model predictions for second images
-        targets : torch.Tensor
-            1 if scores1 should be higher than scores2, -1 if vice versa
+        embeddings : torch.Tensor
+            Tensor of shape (n, embedding_dim)
+        triplet_indices : torch.Tensor
+            Tensor of shape (batch_size, 3) where each row contains indices
+            for [anchor_idx, positive_idx, negative_idx]
 
         Returns
         -------
         torch.Tensor
-            Computed loss value with regularization
+            Computed loss
         """
-        # Apply ranking loss
-        ranking_loss = self.ranking_loss(scores1, scores2, targets)
+        example_type = triplet_indices.sum(dim=-1)
+        close = embeddings[triplet_indices == example_type]  # (b, 2)
+        distant = embeddings[triplet_indices != example_type]  # (b, 1)
 
-        # Add L2 regularization on scores to prevent inflation
-        reg_loss = torch.mean(scores1 ** 2) + torch.mean(scores2 ** 2)
+        dist_pos = torch.abs(close[..., 0] - close[..., 1])
+        dist_neg = torch.mean(close - distant, dim=-1) * example_type
 
-        # Combined loss
-        total_loss = ranking_loss + self.lambda_reg * reg_loss
+        # Compute triplet loss with margin
+        losses = F.relu(dist_pos - dist_neg + self.margin)
 
-        return total_loss
+        # Apply reduction
+        if self.reduction == 'mean':
+            return losses.mean()
+        elif self.reduction == 'sum':
+            return losses.sum()
+        else:  # 'none'
+            return losses
 
 
 class MissAlignment(pl.LightningModule):
@@ -77,23 +89,18 @@ class MissAlignment(pl.LightningModule):
         batch_idx: int,
     ):
         # get the batch data
-        img1, img2, target = batch
+        img1, img2, img3, target = batch
         batch_size = target.shape[0]
 
         # calculate scores and loss
-        score1 = self(img1)
-        score2 = self(img2)
-        loss = self.criterion(score1, score2, target)
+        scores = torch.stack((self(img1), self(img2), self(img3)))
+        loss = self.criterion(scores, target)
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
-        ind = target < 0  # if target==-1 the first input is aligned
-        s_a = torch.mean(  # if target==1 the first input is misaligned
-            torch.cat((score1[ind], score2[torch.logical_not(ind)]))
-        )
-        s_m = torch.mean(
-            torch.cat((score2[ind], score1[torch.logical_not(ind)]))
-        )
+        example_type = target.sum(dim=-1)
+        s_a = torch.mean(scores[example_type == 1])
+        s_m = torch.mean(scores[example_type == -1])
 
         self.log(
             name="train loss",
