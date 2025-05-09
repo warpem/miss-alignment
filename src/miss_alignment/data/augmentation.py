@@ -69,7 +69,7 @@ def select_random_indices(sequence):
         return torch.tensor([], dtype=torch.long)
 
     # Decide how many indices to select (1-4)
-    num_indices = min(random.randint(1, 6), seq_length)
+    num_indices = min(random.randint(1, 5), seq_length)
 
     # Select a starting index
     max_start = seq_length - num_indices
@@ -232,8 +232,8 @@ def generate_shifts(
     ##### Part 3: Outliers
     if apply_outlier:
         ids = select_random_indices(torch.arange(num_points))
-        outliers = torch.rand((len(ids), 2)) * (2 * max_shift) - max_shift
-        shifts[ids] = outliers
+        outliers = torch.rand(2) * (2 * max_shift) - max_shift
+        shifts[ids] = shifts[ids] + outliers
 
     return shifts
 
