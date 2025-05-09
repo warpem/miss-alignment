@@ -291,12 +291,10 @@ def optimize_alignment(
 
     for i in range(iterations):
         # between 0 and misaligned_std
-        _, misaligned_translations = (
-            generate_shifts(
-                rotations.shape[0],
-                dataset.target_size[0] * .25,  # 1/4 max shift of image size
-                # outlier_probability=0.
-            )
+        misaligned_translations = generate_shifts(
+            rotations.shape[0],
+            dataset.target_size[0] * .25,  # 1/4 max shift of image size
+            # outlier_probability=0.
         )
         misalignment = (
                 misaligned_translations - misaligned_translations.mean(axis=0)
