@@ -88,7 +88,7 @@ class EMDBDataset(Dataset):
         # grab box
         _, volume_dft = self.volumes[idx]
 
-        tilt_angles = R.from_euler(
+        tilt_angles = R.from_euler(  # TODO differ tilt range, increment
             seq="Y", angles=np.arange(-51, 54, 3), degrees=True
         )
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
@@ -100,6 +100,7 @@ class EMDBDataset(Dataset):
         example1 = (self._augment(aligned), 1)
         example2 = (self._augment(misaligned), -1)
         if random.random() > .5:
+            # TODO positive could be also be mirrored, rotated !
             example3 = (self._augment(aligned), 1)
         else:
             example3 = (self._augment(misaligned), -1)
