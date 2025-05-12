@@ -199,7 +199,7 @@ class MissAlignment(pl.LightningModule):
                 optimizer,
                 mode='min',
                 factor=0.5,
-                patience=5,
+                patience=2,
             ),
             'monitor': 'val loss',  # Metric to monitor
             'interval': 'epoch',
