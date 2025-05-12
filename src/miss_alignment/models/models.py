@@ -203,7 +203,7 @@ class MissAlignment(pl.LightningModule):
             ),
             'monitor': 'val loss',  # Metric to monitor
             'interval': 'epoch',
-            'frequency': 1
+            'frequency': 5
         }
 
         return [optimizer], [scheduler]
