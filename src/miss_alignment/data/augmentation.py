@@ -80,6 +80,10 @@ def select_random_indices(sequence):
 
     # Select a starting index
     max_start = seq_length - num_indices
+    # if random.random() > .5:  # only do outliers on the last 0 to 5 tilts
+    #     start_idx = 0
+    # else:
+    #     start_idx = max_start
     start_idx = random.randint(0, max(0, max_start))
 
     # Create the connected indices
