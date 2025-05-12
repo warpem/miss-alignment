@@ -74,12 +74,11 @@ class MissAlignment(pl.LightningModule):
     num_classes: int = 1
 
     def __init__(
-            self, learning_rate: float = 1e-04, warmup_epochs=10, margin=.5
+            self, learning_rate: float = 1e-04, margin=.5
     ):
         super().__init__()
         self.learning_rate = learning_rate
         self.save_hyperparameters()
-        self.warmup_epochs = warmup_epochs
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()
 
