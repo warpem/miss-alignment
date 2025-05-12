@@ -256,6 +256,7 @@ class EMDBDataset(Dataset):
             image_shape=self.target_size[-2:],
             shifts=tilt_shifts,
             rfft=True,
+            fftshifted=True,
         )
 
         # reconstruct
