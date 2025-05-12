@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from ttmask import sphere
 
 from .augmentation import (
-    generate_shifts, random_contrast, random_cube_mask
+    generate_shifts, random_contrast, random_cube_mask, random_mirror
 )
 
 
@@ -89,21 +89,45 @@ class EMDBDataset(Dataset):
         _, volume_dft = self.volumes[idx]
 
         tilt_angles = R.from_euler(  # TODO differ tilt range, increment
-            seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+            seq="Y",
+            angles=np.linspace(
+                -random.randint(40, 60),  # min tilt
+                random.randint(40, 60),  # max tilt
+                random.randint(30, 50),  # number of increments
+                endpoint=True,
+            ),
+            degrees=True,
         )
         rotations = torch.tensor(tilt_angles.as_matrix()).float()
-        aligned, misaligned = self._generate_reconstructions(
+        aligned, misaligned, aligned_translations, misaligned_translations = self._generate_reconstructions(
             volume_dft, rotations
         )
 
         # randomly create either two positive or two negative examples
         example1 = (self._augment(aligned), 1)
         example2 = (self._augment(misaligned), -1)
+
+        # Create a third example that also goes through _reconstruct
+        # Generate a new reconstruction with random 3D shift and rotation
         if random.random() > .5:
-            # TODO positive could be also be mirrored, rotated !
-            example3 = (self._augment(aligned), 1)
+            # Create a new reconstruction from aligned volume
+            example3_volume = self._reconstruct(
+                volume_dft,
+                rotations,
+                aligned_translations,
+            )
+            example3_volume = self._normalize(example3_volume)
+            example3 = (self._augment(example3_volume), 1)
         else:
-            example3 = (self._augment(misaligned), -1)
+            # Create a new reconstruction from misaligned volume
+            example3_volume = self._reconstruct(
+                volume_dft,
+                rotations,
+                misaligned_translations,
+            )
+            example3_volume = self._normalize(example3_volume)
+            example3 = (self._augment(example3_volume), -1)
+
         data = [example1, example2, example3]
         random.shuffle(data)
         volumes, targets = zip(*data)
@@ -134,7 +158,7 @@ class EMDBDataset(Dataset):
 
     def _generate_reconstructions(
         self, volume_dft: torch.Tensor, matrices: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
         # generate two sets of shifts
         shifts_1 = generate_shifts(
@@ -146,12 +170,10 @@ class EMDBDataset(Dataset):
 
         # randomly remove x or y shifts
         die_roll = random.random()
-        if die_roll < .25:
-            # only x
+        if die_roll < .25:  # only x
             shifts_1[:, 0] = 0.0
             shifts_2[:, 0] = 0.0
-        if .25 <= die_roll < .5:
-            # only y
+        if .25 <= die_roll < .5:  # only y
             shifts_1[:, 1] = 0.0
             shifts_2[:, 1] = 0.0
 
@@ -163,17 +185,21 @@ class EMDBDataset(Dataset):
             misaligned_translations = shifts_2
             aligned_translations = shifts_1
 
-        aligned, misaligned = self._reconstruct(
+        aligned = self._reconstruct(
             volume_dft,
             matrices,
             aligned_translations,
-            misaligned_translations
+        )
+        misaligned = self._reconstruct(
+            volume_dft,
+            matrices,
+            misaligned_translations,
         )
 
         aligned = self._normalize(aligned)
         misaligned = self._normalize(misaligned)
 
-        return aligned, misaligned
+        return aligned, misaligned, aligned_translations, misaligned_translations
 
     def _augment(self, volume: torch.Tensor) -> torch.Tensor:
         if self._is_training and random.random() > .5:
@@ -186,14 +212,14 @@ class EMDBDataset(Dataset):
             volume = self._normalize(volume)
         volume = random_contrast(volume)
         volume = random_cube_mask(volume)
+        volume = random_mirror(volume)
         return volume
 
     def _reconstruct(
         self,
         volume_dft: torch.Tensor,  # (d, h, w)
         tilt_rotation_matrices: torch.Tensor,  # (b, 3, 3)
-        tilt_shifts_small: torch.Tensor,  # (b, 2)
-        tilt_shifts_large: torch.Tensor,  # (b, 2)
+        tilt_shifts: torch.Tensor,  # (b, 2)
     ):
         # apply random 3d shift
         random_shift = torch.tensor(
@@ -225,32 +251,16 @@ class EMDBDataset(Dataset):
         )
 
         # phase shift to apply translations
-        tilt_dfts_small_shifts = fourier_shift_dft_2d(
+        tilt_dfts = fourier_shift_dft_2d(
             dft=tilt_dfts,
             image_shape=self.target_size[-2:],
-            shifts=tilt_shifts_small,
+            shifts=tilt_shifts,
             rfft=True,
-            fftshifted=True
-        )
-
-        tilt_dfts_large_shifts = fourier_shift_dft_2d(
-            dft=tilt_dfts,
-            image_shape=self.target_size[-2:],
-            shifts=tilt_shifts_large,
-            rfft=True,
-            fftshifted=True
         )
 
         # reconstruct
-        volume_dft_small_shifts, weights = insert_central_slices_rfft_3d(
-            image_rfft=tilt_dfts_small_shifts,
-            volume_shape=self.target_size,
-            rotation_matrices=tilt_rotation_matrices,  # no rotation offset
-            fftfreq_max=0.5
-        )
-
-        volume_dft_large_shifts, weights = insert_central_slices_rfft_3d(
-            image_rfft=tilt_dfts_large_shifts,
+        volume_dft, weights = insert_central_slices_rfft_3d(
+            image_rfft=tilt_dfts,
             volume_shape=self.target_size,
             rotation_matrices=tilt_rotation_matrices,  # no rotation offset
             fftfreq_max=0.5
@@ -258,22 +268,16 @@ class EMDBDataset(Dataset):
 
         # reweight reconstructions
         valid_weights = weights > 1e-3
-        volume_dft_small_shifts[valid_weights] /= weights[valid_weights]
-        volume_dft_large_shifts[valid_weights] /= weights[valid_weights]
+        volume_dft[valid_weights] /= weights[valid_weights]
 
         # back to real space
-        volume_dft_small_shifts = torch.fft.ifftshift(volume_dft_small_shifts, dim=(-3, -2,))  # actual ifftshift
-        volume_dft_small_shifts = torch.fft.irfftn(volume_dft_small_shifts, dim=(-3, -2, -1))
-        volume_dft_small_shifts = torch.fft.ifftshift(volume_dft_small_shifts, dim=(-3, -2, -1))  # center in real space
+        volume_dft = torch.fft.ifftshift(volume_dft, dim=(-3, -2,))  # actual ifftshift
+        volume_dft = torch.fft.irfftn(volume_dft, dim=(-3, -2, -1))
+        volume_dft = torch.fft.ifftshift(volume_dft, dim=(-3, -2, -1))  # center in real space
 
-        volume_dft_large_shifts = torch.fft.ifftshift(volume_dft_large_shifts, dim=(-3, -2,))  # actual ifftshift
-        volume_dft_large_shifts = torch.fft.irfftn(volume_dft_large_shifts, dim=(-3, -2, -1))
-        volume_dft_large_shifts = torch.fft.ifftshift(volume_dft_large_shifts, dim=(-3, -2, -1))  # center in real space
+        volume_dft = volume_dft / self.sinc2
 
-        volume_dft_small_shifts = volume_dft_small_shifts / self.sinc2
-        volume_dft_large_shifts = volume_dft_large_shifts / self.sinc2
-
-        return torch.real(volume_dft_small_shifts), torch.real(volume_dft_large_shifts)
+        return torch.real(volume_dft)
 
     def _preprocess(
         self, volume: torch.Tensor

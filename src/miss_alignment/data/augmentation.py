@@ -47,6 +47,13 @@ def random_cube_mask(
     return volume
 
 
+def random_mirror(volume, p=.5):
+    if random.random() > 1 - p:
+        axis = random.randint(0, 2)
+        volume = torch.flip(volume, [axis,])
+    return volume
+
+
 def select_random_indices(sequence):
     """
     Randomly select 1 to 4 connected indices from a sequence.
