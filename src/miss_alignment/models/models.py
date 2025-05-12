@@ -7,8 +7,7 @@ from torch.optim.lr_scheduler import (
     ReduceLROnPlateau
 )
 
-# from ._resnet import resnet3d_18
-from ._compact import Compact3DConvNet
+from ._resnet import resnet3d_18
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -80,7 +79,7 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.save_hyperparameters()
         self.criterion = TripletMarginRankingLoss(margin=margin)
-        self.net = Compact3DConvNet()
+        self.net = resnet3d_18()  # Compact3DConvNet()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         out = self.net(image)
