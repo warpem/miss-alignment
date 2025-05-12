@@ -4,11 +4,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import (
-    CosineAnnealingWarmRestarts, LinearLR, SequentialLR
+    ReduceLROnPlateau
 )
-from torch.nn import MarginRankingLoss
 
-from ._resnet import resnet3d_18
+# from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
 
 
@@ -193,4 +192,19 @@ class MissAlignment(pl.LightningModule):
             lr=self.learning_rate,
             weight_decay=0.001,
         )
-        return optimizer
+
+        # Add ReduceLROnPlateau scheduler that monitors validation loss
+        scheduler = {
+            'scheduler': ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=0.5,
+                patience=5,
+                verbose=True
+            ),
+            'monitor': 'val loss',  # Metric to monitor
+            'interval': 'epoch',
+            'frequency': 1
+        }
+
+        return [optimizer], [scheduler]
