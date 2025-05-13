@@ -9,6 +9,9 @@ build-backend = "hatchling.build"
 only-include = ["src"]
 sources = ["src"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 # https://peps.python.org/pep-0621/
 [project]
 name = "miss-alignment"
@@ -51,6 +54,7 @@ dependencies = [
     "typer",
     "zenodo-get",
     "matplotlib",
+    "torch-tiltxcorr @ git+https://github.com/McHaillet/torch-tiltxcorr@feat_xcorr_without_stretch",
 ]
 
 [project.urls]

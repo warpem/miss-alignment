@@ -17,6 +17,7 @@ from torch_fourier_slice import (
 )
 from torch_fourier_shift import fourier_shift_dft_2d,  fourier_shift_dft_3d
 from torch_grid_utils import fftfreq_grid, coordinate_grid
+from torch_tiltxcorr import xcorr
 
 from miss_alignment.data import EMDBDataset
 from miss_alignment.models import MissAlignment
@@ -276,13 +277,14 @@ def optimize_alignment(
     dataset_size = len(dataset)
 
     # tilt angles used for forward and back projection
+    tilt_angles_raw = np.arange(-51, 54, 3)
     tilt_angles = R.from_euler(
-        seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+        seq="Y", angles=tilt_angles_raw, degrees=True
     )
     rotations = torch.tensor(tilt_angles.as_matrix()).float()
 
     # for storing results over all examples
-    x1, x2 = [], []
+    x1, x2, x3 = [], [], []
 
     # Create a data structure to store all the required information
     optimization_report = {
@@ -310,16 +312,19 @@ def optimize_alignment(
             random.randint(0, dataset_size - 1) for _ in range(nboxes)
         ]
 
+        xcorr_shifts = torch.zeros((len(tilt_angles_raw), 2))
+
         for idx in map_indices:
             map_name = dataset.volumes[idx][0]  # Get the map name
             map_names.append(map_name)
 
             ground_truth, misaligned, random_shift, random_rotation = (
                 prep_tilts(
-                dataset.volumes[idx][1],
-                rotations,
-                misalignment,
-            ))
+                    dataset.volumes[idx][1],
+                    rotations,
+                    misalignment,
+                )
+            )
             misaligned_tilts += [misaligned]
             ground_truth_tilts += [ground_truth]
 
@@ -329,6 +334,14 @@ def optimize_alignment(
                 "random_shift": random_shift.tolist(),
                 "random_rotation": random_rotation.tolist()
             })
+
+            tilts = torch.fft.ifftshift(misaligned, dim=(-2))
+            tilts = torch.fft.irfftn(tilts, dim=(-2, -1))
+            tilts = torch.fft.ifftshift(tilts, dim=(-2, -1))
+            shifts = xcorr(tilts, tilt_angles_raw, low_pass_cutoff=.5)
+            xcorr_shifts = xcorr_shifts + (shifts - shifts.mean(axis=0))
+
+        xcorr_shifts = xcorr_shifts / nboxes
 
         misaligned_tilts = torch.stack(misaligned_tilts)
         misaligned_tilts = einops.rearrange(
@@ -374,10 +387,14 @@ def optimize_alignment(
         print("sum of misalignment:",torch.sum(torch.abs(misalignment), dim=0))
         print("sum of alignment:",torch.sum(torch.abs(misalignment + shifts),
                                        dim=0))
+        print("sum of xcorr alignment:",torch.sum(torch.abs(misalignment +
+                                                       xcorr_shifts), dim=0))
 
         x1.append(torch.sum(torch.abs(misalignment), dim=0).tolist())
         x2.append(torch.sum(torch.abs(misalignment + shifts),
                                        dim=0).tolist())
+        x3.append(torch.sum(torch.abs(misalignment + xcorr_shifts),
+                            dim=0).tolist())
 
         diff = misalignment + shifts
 
@@ -423,9 +440,11 @@ def optimize_alignment(
     ax[0].set_title("total y shift")
     ax[0].plot(ids, [a[0] for a in x1], "o", alpha=.8, label="misaligned")
     ax[0].plot(ids, [a[0] for a in x2], "o", alpha=.8, label="aligned")
+    ax[0].plot(ids, [a[0] for a in x3], "o", alpha=.8, label="xcorr")
     ax[1].set_title("total x shift")
     ax[1].plot(ids, [a[1] for a in x1], "o", alpha=.8, label="misaligned")
     ax[1].plot(ids, [a[1] for a in x2], "o", alpha=.8, label="aligned")
+    ax[1].plot(ids, [a[1] for a in x3], "o", alpha=.8, label="xcorr")
     ax[1].legend()
     ax[0].set_xlabel("example id")
     ax[1].set_xlabel("example id")
