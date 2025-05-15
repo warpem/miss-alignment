@@ -17,7 +17,7 @@ from torch_fourier_slice import (
 )
 from torch_fourier_shift import fourier_shift_dft_2d,  fourier_shift_dft_3d
 from torch_grid_utils import fftfreq_grid, coordinate_grid
-from torch_tiltxcorr import xcorr
+from torch_tiltxcorr import tiltxcorr_no_stretch
 
 from miss_alignment.data import EMDBDataset
 from miss_alignment.models import MissAlignment
@@ -338,7 +338,7 @@ def optimize_alignment(
             tilts = torch.fft.ifftshift(misaligned, dim=(-2))
             tilts = torch.fft.irfftn(tilts, dim=(-2, -1))
             tilts = torch.fft.ifftshift(tilts, dim=(-2, -1))
-            shifts = xcorr(tilts, tilt_angles_raw, low_pass_cutoff=.5)
+            shifts = tiltxcorr_no_stretch(tilts, tilt_angles_raw, low_pass_cutoff=.5)
             xcorr_shifts = xcorr_shifts + (shifts - shifts.mean(axis=0))
 
         xcorr_shifts = xcorr_shifts / nboxes
