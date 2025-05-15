@@ -13,9 +13,8 @@ from torch_fourier_slice import (
     extract_central_slices_rfft_3d, insert_central_slices_rfft_3d
 )
 from torch_fourier_shift import fourier_shift_dft_2d,  fourier_shift_dft_3d
-from torch_grid_utils import fftfreq_grid
+from torch_grid_utils import fftfreq_grid, sphere
 import torch.nn.functional as F
-from ttmask import sphere
 
 from .augmentation import (
     generate_shifts, random_contrast, random_cube_mask, random_mirror
@@ -290,13 +289,9 @@ class EMDBDataset(Dataset):
 
     def _mask(self, volume: torch.Tensor) -> torch.Tensor:
         mask = sphere(
-            volume.shape[-1],
-            volume.shape[-1] - 5,
-            wall_thickness=0,
-            soft_edge_width=3,
-            pixel_size=1,
-            centering='standard',
-            center=tuple(),
+            volume.shape[-1] - 3,
+            tuple(volume.shape),
+            smoothing_radius=3
         )
         volume = volume * mask
         return volume

@@ -43,9 +43,9 @@ dependencies = [
     "torch-fourier-rescale>=0.1",
     "torch-fourier-slice>=0.2.0",
     "torch-fourier-shift>=0.0.4",
+    "torch-tiltxcorr>=0.0.5",
     "torch-cubic-spline-grids",
-    "torch-grid-utils",
-    "ttmask",
+    "torch-grid-utils>=0.0.5",
     "tqdm>=4.67.1",
     "scipy",
     "lightning",
@@ -54,7 +54,6 @@ dependencies = [
     "typer",
     "zenodo-get",
     "matplotlib",
-    "torch-tiltxcorr @ git+https://github.com/McHaillet/torch-tiltxcorr@feat_xcorr_without_stretch",
 ]
 
 [project.urls]
