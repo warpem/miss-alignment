@@ -14,7 +14,7 @@ from torch_tiltxcorr import tiltxcorr_no_stretch
 
 from miss_alignment.data import EMDBDataset
 from miss_alignment.models import MissAlignment
-from miss_alignment.data.augmentation import generate_shifts
+from miss_alignment.data.shift_generation import generate_shifts
 from miss_alignment.align_backend import (
     prep_tilts,
     batch_reconstruct,

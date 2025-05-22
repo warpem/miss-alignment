@@ -12,7 +12,6 @@ from torch_fourier_shift import fourier_shift_dft_2d,  fourier_shift_dft_3d
 from torch_grid_utils import fftfreq_grid, coordinate_grid
 
 from miss_alignment.data import EMDBDataset
-from miss_alignment.data.augmentation import generate_shifts
 
 
 def prep_tilts(
@@ -226,8 +225,9 @@ def optimize_shifts(
 def get_alignment_optimization_metrics(
         model,
         test_data_directory,
+        rotations,
+        misalignments,  # this defines the number of iterations
         nboxes: int = 8,
-        iterations: int = 50,
 ):
     """Get a metric for the models performance on tilt series alignment.
 
@@ -250,12 +250,8 @@ def get_alignment_optimization_metrics(
     dataset = EMDBDataset(test_data_directory, train=False)
     dataset_size = len(dataset)
 
-    # tilt angles used for forward and back projection
-    tilt_angles_raw = np.arange(-51, 54, 3)
-    tilt_angles = R.from_euler(
-        seq="Y", angles=tilt_angles_raw, degrees=True
-    )
-    rotations = torch.tensor(tilt_angles.as_matrix()).float()
+    n_tilts = rotations.shape[0]
+    n_iterations = len(misalignments)
 
     mean_x_shift_misaligned = 0
     mean_y_shift_misaligned = 0
@@ -263,13 +259,7 @@ def get_alignment_optimization_metrics(
     mean_y_shift_aligned = 0
     ground_truth_loss, aligned_loss, misaligned_loss = 0, 0, 0
 
-    for i in tqdm.tqdm(range(iterations)):
-        # between 0 and misaligned_std
-        misaligned_translations = generate_shifts(
-            rotations.shape[0],
-            dataset.target_size[0] * .25,  # 1/4 max shift of image size
-            # outlier_probability=0.
-        )
+    for i, misaligned_translations in tqdm.tqdm(enumerate(misalignments)):
         misalignment = (
                 misaligned_translations - misaligned_translations.mean(axis=0)
         )
@@ -305,7 +295,7 @@ def get_alignment_optimization_metrics(
         )
         misaligned_reconstruction = batch_reconstruct(
             misaligned_tilts,
-            torch.zeros((len(tilt_angles), 2)),
+            torch.zeros((n_tilts, 2)),
             rotations,
             dataset.target_size[-2:],
             dataset.target_size,
@@ -316,7 +306,7 @@ def get_alignment_optimization_metrics(
         )
         ground_truth_reconstruction = batch_reconstruct(
             ground_truth_tilts,
-            torch.zeros((len(tilt_angles), 2)),
+            torch.zeros((n_tilts, 2)),
             rotations,
             dataset.target_size[-2:],
             dataset.target_size,
@@ -357,14 +347,14 @@ def get_alignment_optimization_metrics(
             ).mean().item()
         )
 
-    mean_x_shift_misaligned /= iterations
-    mean_y_shift_misaligned /= iterations
-    mean_x_shift_aligned /= iterations
-    mean_y_shift_aligned /= iterations
+    mean_x_shift_misaligned /= n_iterations
+    mean_y_shift_misaligned /= n_iterations
+    mean_x_shift_aligned /= n_iterations
+    mean_y_shift_aligned /= n_iterations
 
-    ground_truth_loss /= iterations
-    misaligned_loss /= iterations
-    aligned_loss /= iterations
+    ground_truth_loss /= n_iterations
+    misaligned_loss /= n_iterations
+    aligned_loss /= n_iterations
 
     return {
         "ground_truth_loss": ground_truth_loss,

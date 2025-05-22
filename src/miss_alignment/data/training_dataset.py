@@ -16,8 +16,9 @@ from torch_fourier_shift import fourier_shift_dft_2d,  fourier_shift_dft_3d
 from torch_grid_utils import fftfreq_grid, sphere
 import torch.nn.functional as F
 
+from .shift_generation import generate_shifts
 from .augmentation import (
-    generate_shifts, random_contrast, random_cube_mask, random_mirror
+    random_contrast, random_cube_mask, random_mirror
 )
 
 

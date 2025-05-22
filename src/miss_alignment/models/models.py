@@ -6,10 +6,13 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import (
     ReduceLROnPlateau
 )
+from scipy.spatial.transform import Rotation as R
+import numpy as np
 
 # from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
 from ..align_backend import get_alignment_optimization_metrics
+from miss_alignment.data.shift_generation import generate_shifts
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -24,7 +27,6 @@ class TripletMarginRankingLoss(nn.Module):
         Specifies the reduction to apply to the output:
         'none' | 'mean' | 'sum'. Default: 'mean'
     """
-
     def __init__(self, margin=1.0, reduction='mean'):
         super(TripletMarginRankingLoss, self).__init__()
         self.margin = margin
@@ -90,12 +92,10 @@ class TripletRatioLoss(nn.Module):
     eps : float, optional
         Small value to ensure numerical stability. Default: 1e-6
     """
-
-    def __init__(self, reduction='mean', beta=1.0, eps=1e-6):
+    def __init__(self, reduction='mean', lambda_reg=0.01):
         super(TripletRatioLoss, self).__init__()
         self.reduction = reduction
-        self.beta = beta
-        self.eps = eps
+        self.lambda_reg = lambda_reg
 
     def forward(self, embeddings, triplet_indices):
         """
@@ -126,22 +126,9 @@ class TripletRatioLoss(nn.Module):
         raw_dist_pos = torch.abs(close[..., 0] - close[..., 1])
         raw_dist_neg = torch.min((close - distant) * example_type,
                                  dim=-1).values
+        l2_regularization = self.lambda_reg * raw_dist_neg.pow(2)
 
-        # Apply softplus to ensure positive values while preserving relative magnitudes
-        dist_pos = F.softplus(raw_dist_pos, beta=self.beta) + self.eps
-        dist_neg = F.softplus(raw_dist_neg, beta=self.beta) + self.eps
-
-        # Apply exponential to the processed distances
-        exp_pos = torch.exp(dist_pos)  # e^δ+
-        exp_neg = torch.exp(dist_neg)  # e^δ−
-
-        # Compute denominator
-        denom = exp_pos + exp_neg + self.eps
-
-        # Compute the ratio loss according to the formula
-        term1 = torch.pow(exp_pos / denom, 2)
-        term2 = torch.pow(1 - (exp_neg / denom), 2)
-        losses = term1 + term2
+        losses = raw_dist_pos + raw_dist_neg + l2_regularization
 
         # Apply reduction
         if self.reduction == 'mean':
@@ -169,6 +156,17 @@ class MissAlignment(pl.LightningModule):
         # hard code this for now
         self.optimize_flag = False
         self.test_data_directory = "/home/marten/data/datasets/emdb/test"
+
+        # tilt angles used for forward and back projection
+        tilt_angles = R.from_euler(
+            seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+        )
+        self.rotations = torch.tensor(tilt_angles.as_matrix()).float()
+        self.misalignments = [generate_shifts(
+            self.rotations.shape[0],
+            64 * .25,  # 1/4 max shift of image size
+            # outlier_probability=0.
+        ) for _ in range(20)]
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         out = self.net(image)
@@ -249,9 +247,8 @@ class MissAlignment(pl.LightningModule):
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
-        example_type = target.sum(dim=-1)
-        s_a = torch.mean(scores[example_type == 1])
-        s_m = torch.mean(scores[example_type == -1])
+        s_a = torch.mean(scores[target == 1])
+        s_m = torch.mean(scores[target == -1])
 
         self.log(
             name="val loss",
@@ -277,6 +274,9 @@ class MissAlignment(pl.LightningModule):
             metrics = get_alignment_optimization_metrics(
                 self.net,
                 self.test_data_directory,
+                self.rotations,
+                self.misalignments,
+                nboxes=4,
             )
             for metric_name, metric_value in metrics.items():
                 self.log(
