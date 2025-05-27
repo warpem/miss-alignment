@@ -43,6 +43,7 @@ dependencies = [
     "torch-fourier-rescale>=0.1",
     "torch-fourier-slice>=0.2.0",
     "torch-fourier-shift>=0.0.4",
+    "torch-fourier-filter",
     "torch-tiltxcorr>=0.0.5",
     "torch-cubic-spline-grids",
     "torch-grid-utils>=0.0.5",
