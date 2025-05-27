@@ -340,7 +340,9 @@ class EMDBDataset(Dataset):
         return volume
 
     def _mask(self, volume: torch.Tensor) -> torch.Tensor:
-        mask = sphere(volume.shape[-1] - 3, tuple(volume.shape), smoothing_radius=3)
+        mask = sphere(
+            volume.shape[-1] // 2 - 3, tuple(volume.shape), smoothing_radius=3
+        )
         volume = volume * mask
         return volume
 
