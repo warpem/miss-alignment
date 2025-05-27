@@ -296,10 +296,10 @@ class MissAlignment(pl.LightningModule):
         pass
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
+        optimizer = torch.optim.Adam(
             params=self.parameters(),
             lr=self.learning_rate,
-            weight_decay=1e-4,  # only with AdamW
+            # weight_decay=1e-4,  # only with AdamW
         )
 
         # # Add ReduceLROnPlateau scheduler that monitors validation loss
