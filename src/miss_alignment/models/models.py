@@ -12,7 +12,9 @@ import numpy as np
 # from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
 from ..align_backend import get_alignment_optimization_metrics
-from miss_alignment.data.shift_generation import generate_shifts
+from miss_alignment.data.shift_generation import (
+    generate_shifts, project_shifts_3d_to_2d
+)
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -149,8 +151,8 @@ class MissAlignment(pl.LightningModule):
         super().__init__()
         self.learning_rate = learning_rate
         self.save_hyperparameters()
-        # self.criterion = TripletMarginRankingLoss(margin=margin)
-        self.criterion = TripletRatioLoss()
+        self.criterion = TripletMarginRankingLoss(margin=margin)
+        # self.criterion = TripletRatioLoss()
         self.net = Compact3DConvNet()  # resnet3d_18()
 
         # hard code this for now
@@ -162,10 +164,13 @@ class MissAlignment(pl.LightningModule):
             seq="Y", angles=np.arange(-51, 54, 3), degrees=True
         )
         self.rotations = torch.tensor(tilt_angles.as_matrix()).float()
-        self.misalignments = [generate_shifts(
-            self.rotations.shape[0],
-            64 * .25,  # 1/4 max shift of image size
-            # outlier_probability=0.
+        self.misalignments = [project_shifts_3d_to_2d(
+            generate_shifts(
+                self.rotations.shape[0],
+                64 * .25,  # 1/4 max shift of image size
+                # outlier_probability=0.
+            ),
+            self.rotations,
         ) for _ in range(20)]
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
@@ -294,20 +299,21 @@ class MissAlignment(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             params=self.parameters(),
             lr=self.learning_rate,
-            weight_decay=0.001,
+            weight_decay=1e-4,  # only with AdamW
         )
 
-        # Add ReduceLROnPlateau scheduler that monitors validation loss
-        scheduler = {
-            'scheduler': ReduceLROnPlateau(
-                optimizer,
-                mode='min',
-                factor=0.5,
-                patience=2,
-            ),
-            'monitor': 'val loss',  # Metric to monitor
-            'interval': 'epoch',
-            'frequency': 5
-        }
+        # # Add ReduceLROnPlateau scheduler that monitors validation loss
+        # scheduler = {
+        #     'scheduler': ReduceLROnPlateau(
+        #         optimizer,
+        #         mode='min',
+        #         factor=0.5,
+        #         patience=2,
+        #     ),
+        #     'monitor': 'val loss',  # Metric to monitor
+        #     'interval': 'epoch',
+        #     'frequency': 5
+        # }
+        # return [optimizer], [scheduler]
 
-        return [optimizer], [scheduler]
+        return optimizer

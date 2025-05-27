@@ -1,5 +1,6 @@
 import random
 import torch
+import einops
 from torch_cubic_spline_grids import CubicBSplineGrid1d
 
 
@@ -36,14 +37,15 @@ def select_random_indices(sequence):
     start_idx = random.randint(0, max(0, max_start))
 
     # Create the connected indices
-    selected_indices = torch.arange(start_idx, start_idx + num_indices,
-                                    dtype=torch.long)
+    selected_indices = torch.arange(
+        start_idx, start_idx + num_indices, dtype=torch.long
+    )
 
     return selected_indices
 
 
 def generate_smooth_trajectory(
-        grid_resolution: int = 3
+    grid_resolution: int = 3,
 ) -> tuple[CubicBSplineGrid1d, CubicBSplineGrid1d, CubicBSplineGrid1d]:
     """Generate a smooth trajectory using cubic B-spline interpolation.
 
@@ -75,9 +77,9 @@ def generate_smooth_trajectory(
 
 
 def generate_shift_trajectory(
-        num_points: int,
-        grid_resolution: int = 3,
-        breakpoint_p: float = .5,
+    num_points: int,
+    grid_resolution: int = 3,
+    breakpoint_p: float = 0.5,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Generate a trajectory with an optional shift in direction.
 
@@ -107,11 +109,12 @@ def generate_shift_trajectory(
             - z_positions : torch.Tensor
                 Z-coordinates of the trajectory points.
     """
-    if random.random() > 1. - breakpoint_p:
+    if random.random() > 1.0 - breakpoint_p:
         grid_x1, grid_y1, grid_z1 = generate_smooth_trajectory(grid_resolution)
         grid_x2, grid_y2, grid_z2 = generate_smooth_trajectory(grid_resolution)
         grid_x2.data[..., 0] = grid_x1.data[
-            ..., grid_resolution - 1]  # stitch grids together
+            ..., grid_resolution - 1
+        ]  # stitch grids together
         grid_y2.data[..., 0] = grid_y1.data[..., grid_resolution - 1]
         grid_z2.data[..., 0] = grid_z1.data[..., grid_resolution - 1]
         t1 = random.randint(2, num_points - 2)
@@ -137,11 +140,11 @@ def generate_shift_trajectory(
 
 
 def generate_shifts(
-        num_points: int,
-        max_shift: float,
-        trajectory_probability: float = .5,
-        jitter_probability: float = .5,
-        outlier_probability: float = .5,
+    num_points: int,
+    max_shift: float,
+    trajectory_probability: float = 0.5,
+    jitter_probability: float = 0.5,
+    outlier_probability: float = 0.5,
 ) -> torch.Tensor:
     """Generate pairs of aligned and misaligned shifts for trajectory simulation.
 
@@ -186,14 +189,17 @@ def generate_shifts(
     ##### Part 1: Trajectories
     if apply_trajectory:
         _, x_shifts, y_shifts, z_shifts = generate_shift_trajectory(num_points)
-        x_shifts = x_shifts * (max_shift * .2)
-        y_shifts = y_shifts * (max_shift * .2)
-        z_shifts = z_shifts * (max_shift * .2)
-        shifts = shifts + torch.stack([y_shifts, x_shifts, z_shifts], dim=1)
+        x_shifts = x_shifts * (max_shift * 0.2)
+        y_shifts = y_shifts * (max_shift * 0.2)
+        z_shifts = z_shifts * (max_shift * 0.2)
+        shifts = shifts + torch.stack([z_shifts, y_shifts, x_shifts], dim=1)
+
+        # substract the mean to center the trajectories to the origin in 3D
+        shifts = shifts - einops.reduce(shifts, "n zyx -> 1 zyx", reduction="mean")
 
     ##### Part 2: Jitter
     if apply_jitter:
-        std = random.random() * (max_shift * .1)
+        std = random.random() * (max_shift * 0.1)
         shifts = shifts + torch.normal(
             mean=0.0,
             std=float(std),
@@ -207,3 +213,19 @@ def generate_shifts(
         shifts[ids] = shifts[ids] + outliers
 
     return shifts
+
+
+def project_shifts_3d_to_2d(
+    shifts_3d: torch.Tensor,  # contains (n, zyx) shifts
+    rotation_matrices: torch.Tensor,  # contains (n, 3, 3) but works on
+    # xyz coordinates, hence some weird swapping inside
+) -> torch.Tensor:
+    """Project 3D shifts to 2D."""
+    shifts_3d = torch.flip(shifts_3d, dims=(1,))  # (n, zyx) -> (n, xyz)
+    shifts_3d = einops.rearrange(shifts_3d, "b xyz -> b xyz 1")
+    shifts_3d = rotation_matrices @ shifts_3d
+    shifts_3d = einops.rearrange(shifts_3d, "b xyz 1 -> b xyz")
+    shifts_2d = torch.flip(  # remove z and swap to yx
+        shifts_3d[:, :2], dims=(1,)
+    )  # (n, xyz) -> (n, yx)
+    return shifts_2d

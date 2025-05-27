@@ -51,3 +51,21 @@ def random_mirror(volume, p=.5):
         axis = random.randint(0, 2)
         volume = torch.flip(volume, [axis,])
     return volume
+
+
+def random_edge_mask(
+        volume: torch.Tensor,
+        p: float = 0.5,
+        edge_width: tuple[int, int] = (1, 8),
+        mask_value: float = 0.0
+) -> torch.Tensor:
+    """Randomly mask all edges of a 3D volume for data augmentation."""
+    if random.random() > 1 - p:
+        width = random.randint(edge_width[0], edge_width[1])
+
+        # Mask all edges in one line using slicing tricks
+        volume[..., :width, :, :] = volume[..., -width:, :, :] = \
+            volume[..., :, :width, :] = volume[..., :, -width:, :] = \
+            volume[..., :, :, :width] = volume[..., :, :, -width:] = mask_value
+
+    return volume

@@ -14,24 +14,31 @@ from torch_tiltxcorr import tiltxcorr_no_stretch
 
 from miss_alignment.data import EMDBDataset
 from miss_alignment.models import MissAlignment
-from miss_alignment.data.shift_generation import generate_shifts
+from miss_alignment.data.shift_generation import (
+    generate_shifts,
+    project_shifts_3d_to_2d,
+)
 from miss_alignment.align_backend import (
     prep_tilts,
     batch_reconstruct,
     center_of_mass,
-    optimize_shifts
+    optimize_shifts,
 )
 
 
 @cli.command(name="optimize_alignment", no_args_is_help=True)
 def optimize_alignment(
-        model_checkpoint: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
-        test_data_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
-        output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
-        nboxes: int = 1,
-        seed: int = 45132,
-        device: str = typer.Option("cuda:0", help="Device to run the model on (e.g., 'cuda:0', 'cpu')"),
-        iterations: int = typer.Option(50, help="Number of iterations for optimization alignment"),
+    model_checkpoint: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
+    test_data_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
+    output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
+    nboxes: int = 1,
+    seed: int = 45132,
+    device: str = typer.Option(
+        "cuda:0", help="Device to run the model on (e.g., 'cuda:0', 'cpu')"
+    ),
+    iterations: int = typer.Option(
+        50, help="Number of iterations for optimization alignment"
+    ),
 ) -> None:
     """Optimize alignment of tilt series using a trained model.
 
@@ -57,10 +64,7 @@ def optimize_alignment(
     torch.set_printoptions(precision=2, sci_mode=False)
 
     # get model
-    model = MissAlignment.load_from_checkpoint(
-        model_checkpoint,
-        map_location="cpu"
-    )
+    model = MissAlignment.load_from_checkpoint(model_checkpoint, map_location="cpu")
     model.eval()
 
     # initialize the dataset
@@ -69,39 +73,29 @@ def optimize_alignment(
 
     # tilt angles used for forward and back projection
     tilt_angles_raw = np.arange(-51, 54, 3)
-    tilt_angles = R.from_euler(
-        seq="Y", angles=tilt_angles_raw, degrees=True
-    )
+    tilt_angles = R.from_euler(seq="Y", angles=tilt_angles_raw, degrees=True)
     rotations = torch.tensor(tilt_angles.as_matrix()).float()
 
     # for storing results over all examples
     x1, x2, x3 = [], [], []
 
     # Create a data structure to store all the required information
-    optimization_report = {
-        "iterations": []
-    }
+    optimization_report = {"iterations": []}
 
     for i in range(iterations):
         # between 0 and misaligned_std
         misaligned_translations = generate_shifts(
             rotations.shape[0],
-            dataset.target_size[0] * .25,  # 1/4 max shift of image size
+            dataset.target_size[0] * 0.25,  # 1/4 max shift of image size
             # outlier_probability=0.
         )
-        misalignment = (
-                misaligned_translations - misaligned_translations.mean(axis=0)
-        )
+        misalignment = project_shifts_3d_to_2d(misaligned_translations, rotations)
 
         # Store map data for the JSON report
-        map_data, map_names, ground_truth_tilts, misaligned_tilts = (
-            [], [], [], []
-        )
+        map_data, map_names, ground_truth_tilts, misaligned_tilts = ([], [], [], [])
 
         # Store map names and indices for the current iteration
-        map_indices = [
-            random.randint(0, dataset_size - 1) for _ in range(nboxes)
-        ]
+        map_indices = [random.randint(0, dataset_size - 1) for _ in range(nboxes)]
 
         xcorr_shifts = torch.zeros((len(tilt_angles_raw), 2))
 
@@ -109,35 +103,33 @@ def optimize_alignment(
             map_name = dataset.volumes[idx][0]  # Get the map name
             map_names.append(map_name)
 
-            ground_truth, misaligned, random_shift, random_rotation = (
-                prep_tilts(
-                    dataset.volumes[idx][1],
-                    rotations,
-                    misalignment,
-                )
+            ground_truth, misaligned, random_shift, random_rotation = prep_tilts(
+                dataset.volumes[idx][1],
+                rotations,
+                misalignment,
             )
             misaligned_tilts += [misaligned]
             ground_truth_tilts += [ground_truth]
 
             # Store map data for the JSON report
-            map_data.append({
-                "map_name": map_name,
-                "random_shift": random_shift.tolist(),
-                "random_rotation": random_rotation.tolist()
-            })
+            map_data.append(
+                {
+                    "map_name": map_name,
+                    "random_shift": random_shift.tolist(),
+                    "random_rotation": random_rotation.tolist(),
+                }
+            )
 
             tilts = torch.fft.ifftshift(misaligned, dim=(-2))
             tilts = torch.fft.irfftn(tilts, dim=(-2, -1))
             tilts = torch.fft.ifftshift(tilts, dim=(-2, -1))
-            shifts = tiltxcorr_no_stretch(tilts, tilt_angles_raw, low_pass_cutoff=.5)
+            shifts = tiltxcorr_no_stretch(tilts, tilt_angles_raw, low_pass_cutoff=0.5)
             xcorr_shifts = xcorr_shifts + (shifts - shifts.mean(axis=0))
 
         xcorr_shifts = xcorr_shifts / nboxes
 
         misaligned_tilts = torch.stack(misaligned_tilts)
-        misaligned_tilts = einops.rearrange(
-            misaligned_tilts, "b n h w -> n b h w"
-        )
+        misaligned_tilts = einops.rearrange(misaligned_tilts, "b n h w -> n b h w")
         misaligned_reconstruction = batch_reconstruct(
             misaligned_tilts,
             torch.zeros((len(tilt_angles), 2)),
@@ -146,9 +138,7 @@ def optimize_alignment(
             dataset.target_size,
         )
         ground_truth_tilts = torch.stack(ground_truth_tilts)
-        ground_truth_tilts = einops.rearrange(
-            ground_truth_tilts, "b n h w -> n b h w"
-        )
+        ground_truth_tilts = einops.rearrange(ground_truth_tilts, "b n h w -> n b h w")
         ground_truth_reconstruction = batch_reconstruct(
             ground_truth_tilts,
             torch.zeros((len(tilt_angles), 2)),
@@ -157,16 +147,22 @@ def optimize_alignment(
             dataset.target_size,
         )
 
-        np.save(output_directory / f"{i}_ground_truth.npy",
-                ground_truth_reconstruction.numpy())
+        np.save(
+            output_directory / f"{i}_ground_truth.npy",
+            ground_truth_reconstruction.numpy(),
+        )
 
         coms = center_of_mass(ground_truth_reconstruction)
 
         # Call optimize_shifts and get both shifts and loss values
         volumes, shifts, loss_values = optimize_shifts(
             model=model.to(device),  # Use the user-specified device
-            tilt_image_dfts=misaligned_tilts.to(device),  # Use the user-specified device
-            tilt_rotation_matrices=rotations.to(device),  # Use the user-specified device
+            tilt_image_dfts=misaligned_tilts.to(
+                device
+            ),  # Use the user-specified device
+            tilt_rotation_matrices=rotations.to(
+                device
+            ),  # Use the user-specified device
             gt_com=coms.to(device),  # Use the user-specified device
         )
         shifts = shifts.cpu()
@@ -175,17 +171,23 @@ def optimize_alignment(
         # print("center of mass distance:", torch.sqrt(torch.sum(
         #     (ground_truth_com - center_of_mass(final ** 2)) ** 2
         # )))
-        print("sum of misalignment:",torch.sum(torch.abs(misalignment), dim=0))
-        print("sum of alignment:",torch.sum(torch.abs(misalignment + shifts),
-                                       dim=0))
-        print("sum of xcorr alignment:",torch.sum(torch.abs(misalignment +
-                                                       xcorr_shifts), dim=0))
+        print("sum of misalignment:", torch.sum(torch.abs(misalignment), dim=0))
+        print("sum of alignment:", torch.sum(torch.abs(misalignment + shifts), dim=0))
+        xcorr_diff = torch.sum(
+            torch.abs(
+                (misalignment - misalignment.mean())
+                + (xcorr_shifts - xcorr_shifts.mean())
+            ),
+            dim=0,
+        )
+        print(
+            "sum of xcorr alignment:",
+            xcorr_diff,
+        )
 
         x1.append(torch.sum(torch.abs(misalignment), dim=0).tolist())
-        x2.append(torch.sum(torch.abs(misalignment + shifts),
-                                       dim=0).tolist())
-        x3.append(torch.sum(torch.abs(misalignment + xcorr_shifts),
-                            dim=0).tolist())
+        x2.append(torch.sum(torch.abs(misalignment + shifts), dim=0).tolist())
+        x3.append(xcorr_diff.tolist())
 
         diff = misalignment + shifts
 
@@ -198,12 +200,15 @@ def optimize_alignment(
             "misaligned_shifts": misalignment.tolist(),
             "final_shifts": shifts.tolist(),
             "sum_misalignment": torch.sum(torch.abs(misalignment), dim=0).tolist(),
-            "sum_alignment": torch.sum(torch.abs(misalignment + shifts), dim=0).tolist()
+            "sum_alignment": torch.sum(
+                torch.abs(misalignment + shifts), dim=0
+            ).tolist(),
         }
         optimization_report["iterations"].append(iteration_data)
 
-        fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
-                               figsize=(8, 4))
+        fig, ax = plt.subplots(
+            nrows=1, ncols=2, sharex=True, sharey=True, figsize=(8, 4)
+        )
         ax[0].plot(misalignment[:, 0], label="misaligned")
         ax[1].plot(misalignment[:, 1], label="misaligned")
         ax[0].plot(-shifts[:, 0], label="correction")
@@ -212,37 +217,34 @@ def optimize_alignment(
         ax[1].plot(diff[:, 1], label="diff")
         ax[0].legend()
         ax[1].legend()
-        ax[0].set_title(f"y shifts (abs. diff. "
-                        f"{torch.sum(torch.abs(diff[:, 0])):.2f})")
-        ax[1].set_title(f"x shifts (abs. diff. "
-                        f"{torch.sum(torch.abs(diff[:, 1])):.2f})")
+        ax[0].set_title(f"y shifts (abs. diff. {torch.sum(torch.abs(diff[:, 0])):.2f})")
+        ax[1].set_title(f"x shifts (abs. diff. {torch.sum(torch.abs(diff[:, 1])):.2f})")
         ax[0].set_xlabel("tilt image index")
         ax[1].set_xlabel("tilt image index")
         ax[0].set_ylim(-6, 6)
         ax[1].set_ylim(-6, 6)
-        plt.savefig(output_directory / f"{i}_graph.png",
-                    bbox_inches="tight", dpi=300)
+        plt.savefig(output_directory / f"{i}_graph.png", bbox_inches="tight", dpi=300)
         plt.close()
         np.save(output_directory / f"{i}_volumes.npy", volumes.numpy())
 
     ids = list(range(len(x1)))
-    fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True,
-                           figsize=(8, 4))
+    fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True, figsize=(8, 4))
     ax[0].set_title("total y shift")
-    ax[0].plot(ids, [a[0] for a in x1], "o", alpha=.8, label="misaligned")
-    ax[0].plot(ids, [a[0] for a in x2], "o", alpha=.8, label="aligned")
-    ax[0].plot(ids, [a[0] for a in x3], "o", alpha=.8, label="xcorr")
+    ax[0].plot(ids, [a[0] for a in x1], "o", alpha=0.8, label="misaligned")
+    ax[0].plot(ids, [a[0] for a in x2], "o", alpha=0.8, label="aligned")
+    ax[0].plot(ids, [a[0] for a in x3], "o", alpha=0.8, label="xcorr")
     ax[1].set_title("total x shift")
-    ax[1].plot(ids, [a[1] for a in x1], "o", alpha=.8, label="misaligned")
-    ax[1].plot(ids, [a[1] for a in x2], "o", alpha=.8, label="aligned")
-    ax[1].plot(ids, [a[1] for a in x3], "o", alpha=.8, label="xcorr")
+    ax[1].plot(ids, [a[1] for a in x1], "o", alpha=0.8, label="misaligned")
+    ax[1].plot(ids, [a[1] for a in x2], "o", alpha=0.8, label="aligned")
+    ax[1].plot(ids, [a[1] for a in x3], "o", alpha=0.8, label="xcorr")
     ax[1].legend()
     ax[0].set_xlabel("example id")
     ax[1].set_xlabel("example id")
     ax[0].set_ylabel("sum of shifts")
     ax[0].set_ylim(0, 100)
-    plt.savefig(output_directory / f"corrections_graph.png",
-                bbox_inches="tight", dpi=300)
+    plt.savefig(
+        output_directory / "corrections_graph.png", bbox_inches="tight", dpi=300
+    )
 
     # Save the optimization report as a JSON file
     with open(output_directory / "optimization_report.json", "w") as f:
