@@ -200,7 +200,7 @@ def generate_shifts(
     ##### Part 2: Jitter
     if apply_jitter:
         std = random.random() * (max_shift * 0.1)
-        shifts = shifts + torch.normal(
+        shifts += torch.normal(
             mean=0.0,
             std=float(std),
             size=(num_points, 3),
@@ -211,6 +211,12 @@ def generate_shifts(
         ids = select_random_indices(torch.arange(num_points))
         outliers = torch.rand(3) * (2 * max_shift) - max_shift
         shifts[ids] = shifts[ids] + outliers
+
+    shifts += torch.normal(
+        mean=0.0,
+        std=0.1,
+        size=(num_points, 3),
+    )
 
     return shifts
 
