@@ -178,7 +178,9 @@ def generate_shifts(
     # If none selected, choose one randomly
     if not (apply_trajectory or apply_jitter or apply_outlier):
         # Choose one shift type randomly
-        shift_type = random.randint(0, 2)
+        shift_type = (
+            random.randint(0, 2) if outlier_probability != 0 else (random.randint(0, 1))
+        )
         if shift_type == 0:
             apply_trajectory = True
         elif shift_type == 1:

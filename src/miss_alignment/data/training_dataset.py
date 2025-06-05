@@ -265,6 +265,7 @@ class EMDBDataset(Dataset):
         volume = random_mirror(volume)
         return volume
 
+    @torch.compile
     def _reconstruct(
         self,
         volume_dft: torch.Tensor,  # (d, h, w)

@@ -14,6 +14,14 @@ from torch_grid_utils import fftfreq_grid, coordinate_grid
 from miss_alignment.data import EMDBDataset
 
 
+# extract_central_slices_rfft_3d = torch.compile(extract_central_slices_rfft_3d)
+# insert_central_slices_rfft_3d_multichannel = torch.compile(
+#     insert_central_slices_rfft_3d_multichannel
+# )
+# fourier_shift_dft_2d = torch.compile(fourier_shift_dft_2d)
+# fourier_shift_dft_3d = torch.compile(fourier_shift_dft_3d)
+
+
 def prep_tilts(
     volume_dft: torch.Tensor,
     tilt_rotation_matrices: torch.Tensor,
@@ -134,6 +142,7 @@ def optimize_shifts(
     tilt_image_dfts: torch.Tensor,
     tilt_rotation_matrices: torch.Tensor,
     gt_com: torch.Tensor,
+    initial_shifts: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list]:
     """Find shifts to optimize model score.
 
@@ -172,12 +181,16 @@ def optimize_shifts(
         ** 2
     )
 
-    predicted_shifts = torch.zeros(
-        size=(n_tilts, 2),
-        dtype=torch.float32,
-        device=device,
-        requires_grad=True,
-    )
+    if initial_shifts is None:
+        predicted_shifts = torch.zeros(
+            size=(n_tilts, 2),
+            dtype=torch.float32,
+            device=device,
+            requires_grad=True,
+        )
+    else:
+        predicted_shifts = initial_shifts.clone()
+        predicted_shifts.requires_grad_()
 
     alignment_optimizer = torch.optim.LBFGS(
         [
