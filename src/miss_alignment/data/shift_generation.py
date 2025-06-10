@@ -178,9 +178,7 @@ def generate_shifts(
     # If none selected, choose one randomly
     if not (apply_trajectory or apply_jitter or apply_outlier):
         # Choose one shift type randomly
-        shift_type = (
-            random.randint(0, 2) if outlier_probability != 0 else (random.randint(0, 1))
-        )
+        shift_type = random.randint(0, 2)
         if shift_type == 0:
             apply_trajectory = True
         elif shift_type == 1:
@@ -213,12 +211,6 @@ def generate_shifts(
         ids = select_random_indices(torch.arange(num_points))
         outliers = torch.rand(3) * (2 * max_shift) - max_shift
         shifts[ids] = shifts[ids] + outliers
-
-    shifts += torch.normal(
-        mean=0.0,
-        std=0.1,
-        size=(num_points, 3),
-    )
 
     return shifts
 
