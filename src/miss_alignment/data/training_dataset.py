@@ -416,7 +416,7 @@ class SHRECDataset(Dataset):
                 tilt_axis_angle=data["tilt_axis_angle"],
                 sample_translations=data["sample_translations"],
             )
-            tomogram._pad_factor = 1.0
+            tomogram._pad_factor = 1.5
             self.tomos += [(data["tilt_series"], tomogram)]
 
         if len(self.tomos) == 0:
