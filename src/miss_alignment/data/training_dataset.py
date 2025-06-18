@@ -415,13 +415,15 @@ class SHRECDataset(Dataset):
                 tilt_axis_angle=data["tilt_axis_angle"],
                 sample_translations=data["sample_translations"],
             )
-            tomogram._pad_factor = 2.0
+            tomogram._pad_factor = 1.5
             self.tomos += [(data["tilt_series"], tomogram)]
 
         if len(self.tomos) == 0:
             raise ValueError("No tilt series found in directory")
 
         self.train() if train else self.eval()
+
+        self.inflate = 5000
 
     def train(self):
         self._is_training = True
@@ -430,14 +432,14 @@ class SHRECDataset(Dataset):
         self._is_training = False
 
     def __len__(self):
-        return len(self.tomos) * 1000
+        return len(self.tomos) * self.inflate
 
     def _select_random_location(self):
         return [random.randint(-r, r) for r in self.region]
 
     def __getitem__(self, idx):
         # copy the object so that we can modify alignment parameters
-        tilt_series = copy.deepcopy(self.tomos[idx // 1000][1])
+        tilt_series = copy.deepcopy(self.tomos[idx // self.inflate][1])
         # store original alignment
         sample_translations = tilt_series.sample_translations.clone()
         location = self._select_random_location()

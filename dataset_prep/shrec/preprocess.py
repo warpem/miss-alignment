@@ -39,7 +39,7 @@ if __name__ == "__main__":
     train_folder.mkdir(parents=True, exist_ok=True)
     test_folder = Path("rescaled/test")
     test_folder.mkdir(parents=True, exist_ok=True)
-    reconstruct_and_show = False
+    reconstruct_and_show = True
 
     for i in range(10):
         model_folder = Path(  # downloaded from DataverseNL
@@ -105,6 +105,6 @@ if __name__ == "__main__":
 
             viewer = napari.Viewer()
             viewer.add_image(ground_truth, name="ground_truth")
-            viewer.add_image(volume.numpy(), name="reconstruction")
-            viewer.add_image(xcorr_volume.numpy(), name="reconstruction xcorr")
+            viewer.add_image(volume.numpy() * -1, name="reconstruction")
+            viewer.add_image(xcorr_volume.numpy() * -1, name="reconstruction xcorr")
             napari.run()
