@@ -3,7 +3,7 @@ from pathlib import Path
 from copy import deepcopy
 
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 
 from .training_dataset import EMDBDataset, SHRECDataset
 
@@ -75,16 +75,25 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         """
         if stage == "fit":
             full_dataset = self.prepare_data()
-            if self.dataset_type == "SHREC":
-                tomos = full_dataset.tomos
-                n_samples = len(full_dataset.tomos)
-                split = int(0.8 * n_samples)
-                self.train_dataset = deepcopy(full_dataset)
-                self.train_dataset.tomos = tomos[:split]
-                self.val_dataset = deepcopy(full_dataset)
-                self.val_dataset.tomos = tomos[split:]
-                self.train_dataset.train()
-                self.val_dataset.eval()
+            match self.dataset_type:
+                case "SHREC":
+                    tomos = full_dataset.tomos
+                    n_samples = len(full_dataset.tomos)
+                    split = int(0.8 * n_samples)
+                    self.train_dataset = deepcopy(full_dataset)
+                    self.train_dataset.tomos = tomos[:split]
+                    self.val_dataset = deepcopy(full_dataset)
+                    self.val_dataset.tomos = tomos[split:]
+                    self.train_dataset.train()
+                    self.val_dataset.eval()
+                case "EMDB":
+                    self.train_dataset, self.val_dataset = random_split(
+                        full_dataset,
+                        self.train_val_split,  # generator=self.rng
+                    )
+                    self.val_dataset = deepcopy(self.val_dataset)
+                    self.train_dataset.dataset.train()
+                    self.val_dataset.dataset.eval()
 
     def train_dataloader(self):
         """

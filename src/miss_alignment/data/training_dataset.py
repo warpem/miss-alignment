@@ -177,7 +177,7 @@ class EMDBDataset(Dataset):
             tilt_angles = R.from_euler(
                 seq="Y", angles=np.arange(-51, 54, 3), degrees=True
             )
-            rotations = torch.tensor(tilt_angles.as_matrix()).float()
+            rotations = torch.as_tensor(tilt_angles.as_matrix(), dtype=torch.float32)
             # between 0 and misaligned_std
             misaligned_translations = generate_shifts(
                 rotations.shape[0],
@@ -270,7 +270,6 @@ class EMDBDataset(Dataset):
         volume = random_mirror(volume)
         return volume
 
-    @torch.compile
     def _reconstruct(
         self,
         volume_dft: torch.Tensor,  # (d, h, w)
@@ -291,7 +290,7 @@ class EMDBDataset(Dataset):
         )
 
         # get random rotation offset for slice extraction
-        random_rotation = torch.tensor(R.random().as_matrix(), dtype=torch.float32)
+        random_rotation = torch.as_tensor(R.random().as_matrix(), dtype=torch.float32)
 
         # extract tilt dfts
         tilt_dfts = extract_central_slices_rfft_3d(
@@ -452,10 +451,11 @@ class SHRECDataset(Dataset):
         )
         # these are translations in the image plane, however, we need
         # translation in the forward projection model
-        tilt_series.sample_translations = sample_translations + aligned_translations
+        tilt_series.sample_translations = sample_translations  # +
+        # aligned_translations
         aligned = tilt_series.reconstruct_subvolume(location, self.target_size)
         aligned = self._normalize(aligned)
-        tilt_series.sample_translations = sample_translations + misaligned_translations
+        tilt_series.sample_translations = sample_translations - misaligned_translations
         misaligned = tilt_series.reconstruct_subvolume(location, self.target_size)
         misaligned = self._normalize(misaligned)
 
@@ -470,10 +470,11 @@ class SHRECDataset(Dataset):
         }
 
         # add random tilt offset
-        tilt_series.tilt_angles += random.uniform(-10, +10)
+        # tilt_series.tilt_angles += random.uniform(-10, +10)
         if random.random() > 0.5:
             # Create a new reconstruction from aligned volume
-            tilt_series.sample_translations = sample_translations + aligned_translations
+            tilt_series.sample_translations = sample_translations  # +
+            # aligned_translations
             example3_volume = tilt_series.reconstruct_subvolume(
                 location, self.target_size
             )
@@ -486,7 +487,7 @@ class SHRECDataset(Dataset):
             }
         else:
             tilt_series.sample_translations = (
-                sample_translations + misaligned_translations
+                sample_translations - misaligned_translations
             )
             example3_volume = tilt_series.reconstruct_subvolume(
                 location, self.target_size
@@ -579,7 +580,7 @@ class SHRECDataset(Dataset):
         volume = random_cube_mask(volume)
         volume = self._normalize(volume)
         volume = random_contrast(volume)
-        volume = random_mirror(volume)
+        # volume = random_mirror(volume)
         return volume
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
