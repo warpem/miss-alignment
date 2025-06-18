@@ -59,17 +59,17 @@ def plot_volume_slices(
         vol = volumes[key]
 
         # XY Slice (center of depth)
-        im = axes[i, 0].imshow(np.mean(vol, axis=0), cmap="viridis")
+        im = axes[i, 0].imshow(np.mean(vol, axis=0), cmap="gray", vmin=-0.4, vmax=0.4)
         axes[i, 0].set_title(f"{row_labels[i]} - {col_labels[0]}")
         axes[i, 0].axis("off")
 
         # XZ Slice (center of height)
-        im = axes[i, 1].imshow(np.mean(vol, axis=1), cmap="viridis")
+        im = axes[i, 1].imshow(np.mean(vol, axis=1), cmap="gray", vmin=-0.4, vmax=0.4)
         axes[i, 1].set_title(f"{row_labels[i]} - {col_labels[1]}")
         axes[i, 1].axis("off")
 
         # YZ Slice (center of width)
-        im = axes[i, 2].imshow(np.mean(vol, axis=2), cmap="viridis")
+        im = axes[i, 2].imshow(np.mean(vol, axis=2), cmap="gray", vmin=-0.4, vmax=0.4)
         axes[i, 2].set_title(f"{row_labels[i]} - {col_labels[2]}")
         axes[i, 2].axis("off")
 

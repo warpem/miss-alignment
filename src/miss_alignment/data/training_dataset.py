@@ -416,7 +416,7 @@ class SHRECDataset(Dataset):
                 tilt_axis_angle=data["tilt_axis_angle"],
                 sample_translations=data["sample_translations"],
             )
-            tomogram._pad_factor = 1.5
+            tomogram._pad_factor = 2.0
             self.tomos += [(data["tilt_series"], tomogram)]
 
         if len(self.tomos) == 0:
@@ -439,7 +439,8 @@ class SHRECDataset(Dataset):
     def __getitem__(self, idx):
         # copy the object so that we can modify alignment parameters
         tilt_series = copy.deepcopy(self.tomos[idx // 1000][1])
-        sample_translations = tilt_series.sample_translations  # prev alignment
+        # store original alignment
+        sample_translations = tilt_series.sample_translations.clone()
         location = self._select_random_location()
 
         r0 = Ry(tilt_series.tilt_angles, zyx=False)
@@ -574,7 +575,7 @@ class SHRECDataset(Dataset):
         #         std=noise_std,
         #         size=volume.shape,
         #     )
-        volume = random_edge_mask(volume)
+        volume = random_edge_mask(volume, edge_width=(1, 4))
         volume = random_cube_mask(volume)
         volume = self._normalize(volume)
         volume = random_contrast(volume)
