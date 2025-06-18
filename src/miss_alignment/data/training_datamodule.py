@@ -3,12 +3,12 @@ from pathlib import Path
 from copy import deepcopy
 
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
-from .training_dataset import EMDBDataset
+from .training_dataset import EMDBDataset, SHRECDataset
 
 
-class EMDBDataModule(pl.LightningDataModule):
+class MissAlignmentDataModule(pl.LightningDataModule):
     """
     PyTorch Lightning DataModule for MRC data.
 
@@ -31,6 +31,7 @@ class EMDBDataModule(pl.LightningDataModule):
     def __init__(
         self,
         dataset_directory: PathLike,
+        dataset_type: str,
         batch_size: int = 4,
         target_size: int = 64,
         train_val_split: tuple = (
@@ -41,6 +42,7 @@ class EMDBDataModule(pl.LightningDataModule):
     ):
         super().__init__()
         self.dataset_directory = Path(dataset_directory)
+        self.dataset_type = dataset_type
         self.batch_size = batch_size
         self.target_size = target_size
         self.train_val_split = train_val_split
@@ -52,10 +54,15 @@ class EMDBDataModule(pl.LightningDataModule):
                 "Train, validation, and test split fractions must sum to 1"
             )
 
-        self.train_dataset, self.val_dataset, self.test_dataset = None, None, None
+        self.train_dataset, self.val_dataset = None, None
 
-    def prepare_data(self) -> None:
-        EMDBDataset(self.dataset_directory, self.target_size)
+    def prepare_data(self):
+        if self.dataset_type == "EMDB":
+            return EMDBDataset(self.dataset_directory, self.target_size)
+        elif self.dataset_type == "SHREC":
+            return SHRECDataset(self.dataset_directory, self.target_size)
+        else:
+            raise ValueError(f"Dataset type {self.dataset_type} is not supported.")
 
     def setup(self, stage: str | None = None):
         """
@@ -67,14 +74,17 @@ class EMDBDataModule(pl.LightningDataModule):
             Stage to setup ('fit', 'validate', 'test', or 'predict').
         """
         if stage == "fit":
-            full_dataset = EMDBDataset(self.dataset_directory)
-            self.train_dataset, self.val_dataset = random_split(
-                full_dataset,
-                self.train_val_split,  # generator=self.rng
-            )
-            self.val_dataset = deepcopy(self.val_dataset)
-            self.train_dataset.dataset.train()
-            self.val_dataset.dataset.eval()
+            full_dataset = self.prepare_data()
+            if self.dataset_type == "SHREC":
+                tomos = full_dataset.tomos
+                n_samples = len(full_dataset.tomos)
+                split = int(0.8 * n_samples)
+                self.train_dataset = deepcopy(full_dataset)
+                self.train_dataset.tomos = tomos[:split]
+                self.val_dataset = deepcopy(full_dataset)
+                self.val_dataset.tomos = tomos[split:]
+                self.train_dataset.train()
+                self.val_dataset.eval()
 
     def train_dataloader(self):
         """

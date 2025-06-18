@@ -156,22 +156,22 @@ class MissAlignment(pl.LightningModule):
         self.net = Compact3DConvNet()  # resnet3d_18()
 
         # hard code this for now
-        self.optimize_flag = False
-        self.test_data_directory = "/home/marten/data/datasets/emdb/test"
-
-        # tilt angles used for forward and back projection
-        tilt_angles = R.from_euler(
-            seq="Y", angles=np.arange(-51, 54, 3), degrees=True
-        )
-        self.rotations = torch.tensor(tilt_angles.as_matrix()).float()
-        self.misalignments = [project_shifts_3d_to_2d(
-            generate_shifts(
-                self.rotations.shape[0],
-                64 * .25,  # 1/4 max shift of image size
-                # outlier_probability=0.
-            ),
-            self.rotations,
-        ) for _ in range(20)]
+        # self.optimize_flag = False
+        # self.test_data_directory = "/home/marten/data/datasets/emdb/test"
+        #
+        # # tilt angles used for forward and back projection
+        # tilt_angles = R.from_euler(
+        #     seq="Y", angles=np.arange(-51, 54, 3), degrees=True
+        # )
+        # self.rotations = torch.tensor(tilt_angles.as_matrix()).float()
+        # self.misalignments = [project_shifts_3d_to_2d(
+        #     generate_shifts(
+        #         self.rotations.shape[0],
+        #         64 * .25,  # 1/4 max shift of image size
+        #         # outlier_probability=0.
+        #     ),
+        #     self.rotations,
+        # ) for _ in range(20)]
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         out = self.net(image)
@@ -275,20 +275,20 @@ class MissAlignment(pl.LightningModule):
         )
 
         # run alignment optimization and report the metric back!
-        if self.optimize_flag:
-            metrics = get_alignment_optimization_metrics(
-                self.net,
-                self.test_data_directory,
-                self.rotations,
-                self.misalignments,
-                nboxes=4,
-            )
-            for metric_name, metric_value in metrics.items():
-                self.log(
-                    name=f"val {metric_name}",
-                    value=metric_value,
-                )
-            self.optimize_flag = False
+        # if self.optimize_flag:
+        #     metrics = get_alignment_optimization_metrics(
+        #         self.net,
+        #         self.test_data_directory,
+        #         self.rotations,
+        #         self.misalignments,
+        #         nboxes=4,
+        #     )
+        #     for metric_name, metric_value in metrics.items():
+        #         self.log(
+        #             name=f"val {metric_name}",
+        #             value=metric_value,
+        #         )
+        #     self.optimize_flag = False
 
         return loss
 

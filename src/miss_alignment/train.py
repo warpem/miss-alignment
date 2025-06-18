@@ -5,7 +5,7 @@ import torch
 from pytorch_lightning import Trainer, seed_everything
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
-from .data import EMDBDataModule
+from .data import MissAlignmentDataModule
 from .models import MissAlignment
 
 
@@ -13,6 +13,7 @@ from .models import MissAlignment
 def train_miss_align(
     dataset_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
     output_directory: Path = typer.Option("training", **OPTION_PROMPT_KWARGS),
+    dataset_type: str = "SHREC",
     batch_size: int = 1,
     epochs: int = 100,
     n_workers: int = 1,
@@ -24,8 +25,9 @@ def train_miss_align(
     seed_everything(seed, workers=True)
 
     model = MissAlignment(learning_rate=learning_rate)
-    data_module = EMDBDataModule(
+    data_module = MissAlignmentDataModule(
         dataset_directory,
+        dataset_type=dataset_type,
         batch_size=batch_size,
         num_workers=n_workers,
     )
@@ -39,6 +41,7 @@ def train_miss_align(
         check_val_every_n_epoch=5,
         enable_checkpointing=True,
         deterministic=False,  # setting to True breaks on max_pool_3d
+        num_sanity_val_steps=0,
     )
     trainer.fit(model, datamodule=data_module)
     return None

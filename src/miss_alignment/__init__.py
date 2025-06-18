@@ -14,11 +14,11 @@ __all__ = [
     "cli",
     "download_training_data",
     "train_miss_align",
-    "plot_emdb_dataset"
+    "plot_dataset",
 ]
 
 from ._cli import cli
-from .data import download_training_data, plot_emdb_dataset
+from .data import download_training_data, plot_dataset
 from .train import train_miss_align
 from .gradcam import visualize_attention
 from .align import optimize_alignment
