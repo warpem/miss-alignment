@@ -54,8 +54,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 "Train, validation, and test split fractions must sum to 1"
             )
 
-        self.train_dataset, self.val_dataset, self.test_dataset = (None,
-                                                                   None, None)
+        self.train_dataset, self.val_dataset, self.test_dataset = (None, None, None)
 
     def prepare_data(self):
         if self.dataset_type == "EMDB":
@@ -80,7 +79,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 case "SHREC":
                     tomos = full_dataset.tomos
                     n_samples = len(full_dataset.tomos)
-                    split = int(0.8 * n_samples)
+                    split = int(0.7 * n_samples)
                     self.train_dataset = deepcopy(full_dataset)
                     self.train_dataset.tomos = tomos[:split]
                     self.val_dataset = deepcopy(full_dataset)

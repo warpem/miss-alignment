@@ -453,8 +453,7 @@ class SHRECDataset(Dataset):
         )
         # these are translations in the image plane, however, we need
         # translation in the forward projection model
-        tilt_series.sample_translations = sample_translations  # +
-        # aligned_translations
+        tilt_series.sample_translations = sample_translations + aligned_translations
         aligned = tilt_series.reconstruct_subvolume(location, self.target_size)
         aligned = self._normalize(aligned)
         tilt_series.sample_translations = sample_translations - misaligned_translations
@@ -475,8 +474,7 @@ class SHRECDataset(Dataset):
         # tilt_series.tilt_angles += random.uniform(-10, +10)
         if random.random() > 0.5:
             # Create a new reconstruction from aligned volume
-            tilt_series.sample_translations = sample_translations  # +
-            # aligned_translations
+            tilt_series.sample_translations = sample_translations + aligned_translations
             example3_volume = tilt_series.reconstruct_subvolume(
                 location, self.target_size
             )

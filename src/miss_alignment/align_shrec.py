@@ -168,4 +168,6 @@ def align_shrec(
         viewer.add_image(aligned_reconstruction.detach().numpy(), name="aligned")
         napari.run()
 
+        del initial_reconstruction, aligned_reconstruction
+
     return None
