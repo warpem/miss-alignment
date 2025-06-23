@@ -42,6 +42,7 @@ if __name__ == "__main__":
     reconstruct_and_show = True
 
     for i in range(10):
+        print(f"running shrec model {i}")
         model_folder = Path(  # downloaded from DataverseNL
             f"shrec21_full_dataset_no_mirroring/model_{i}"
         )
@@ -52,6 +53,7 @@ if __name__ == "__main__":
             permissive=True,
         ) as mrc:
             tilt_series = torch.tensor(mrc.data)
+
         tilt_series, _ = fourier_rescale_2d(tilt_series, 5.0, 10.0)
         tilt_series -= einops.reduce(
             tilt_series, "tilt h w -> tilt 1 1", reduction="mean"
@@ -73,7 +75,7 @@ if __name__ == "__main__":
             tilt_series,
             tilt_angles,
             tilt_axis_angle,
-            low_pass_cutoff=0.5,
+            low_pass_cutoff=0.25,
         )
         xcorr_tomogram = Tomogram(
             images=tilt_series,
@@ -82,14 +84,14 @@ if __name__ == "__main__":
             sample_translations=xcorr_shifts,
         )  # invert the shifts because we employ a forward projection model!
 
-        with mrcfile.open(model_folder / "grandmodel.mrc", permissive=True) as mrc:
-            ground_truth = mrc.data
-
         _save_tomo_to_folder(
             xcorr_tomogram, test_folder if i > 6 else train_folder, f"model_{i}"
         )
 
         if reconstruct_and_show:
+            with mrcfile.open(model_folder / "grandmodel.mrc", permissive=True) as mrc:
+                ground_truth = mrc.data
+
             # 180 is the box size of the grand model
             xcorr_volume = xcorr_tomogram.reconstruct_tomogram((180, 512, 512), 128)
 
@@ -102,9 +104,17 @@ if __name__ == "__main__":
 
             # 180 is the box size of the grand model
             volume = tomogram.reconstruct_tomogram((180, 512, 512), 128)
+            mrcfile.write(
+                train_folder / f"model_{i}_reconstruction.mrc",
+                volume.numpy(),
+                voxel_size=10,
+                overwrite=True,
+            )
 
             viewer = napari.Viewer()
-            viewer.add_image(ground_truth, name="ground_truth")
-            viewer.add_image(volume.numpy() * -1, name="reconstruction")
-            viewer.add_image(xcorr_volume.numpy() * -1, name="reconstruction xcorr")
+            viewer.add_image(ground_truth, name="grand model")
+            viewer.add_image(volume.numpy() * -1, name="reconstruction ground_truth")
+            viewer.add_image(
+                xcorr_volume.numpy() * -1, name="reconstruction torch-tiltxcorr"
+            )
             napari.run()
