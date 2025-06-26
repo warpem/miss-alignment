@@ -147,8 +147,8 @@ def align_shrec(
     dc, hc, wc = tomogram_center
 
     position_grid = []
-    ys = np.linspace(32, h - 32, 4) - hc
-    xs = np.linspace(32, w - 32, 4) - wc
+    ys = np.linspace(32, h - 32, 8) - hc
+    xs = np.linspace(32, w - 32, 8) - wc
     for y in ys:
         for x in xs:
             position_grid.append((0, y, x))

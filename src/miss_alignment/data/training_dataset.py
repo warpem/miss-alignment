@@ -423,7 +423,7 @@ class SHRECDataset(Dataset):
 
         self.train() if train else self.eval()
 
-        self.inflate = 5000
+        self.inflate = 1000
 
     def train(self):
         self._is_training = True
@@ -471,7 +471,7 @@ class SHRECDataset(Dataset):
         }
 
         # add random tilt offset
-        # tilt_series.tilt_angles += random.uniform(-10, +10)
+        tilt_series.tilt_angles += random.uniform(-10, +10)
         if random.random() > 0.5:
             # Create a new reconstruction from aligned volume
             tilt_series.sample_translations = sample_translations + aligned_translations
@@ -580,7 +580,7 @@ class SHRECDataset(Dataset):
         volume = random_cube_mask(volume)
         volume = self._normalize(volume)
         volume = random_contrast(volume)
-        # volume = random_mirror(volume)
+        volume = random_mirror(volume)
         return volume
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:

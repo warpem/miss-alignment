@@ -15,6 +15,7 @@ def train_miss_align(
     output_directory: Path = typer.Option("training", **OPTION_PROMPT_KWARGS),
     dataset_type: str = "SHREC",
     batch_size: int = 1,
+    patch_size: int = 64,
     epochs: int = 100,
     n_workers: int = 1,
     learning_rate: float = 1e-5,
@@ -29,6 +30,7 @@ def train_miss_align(
         dataset_directory,
         dataset_type=dataset_type,
         batch_size=batch_size,
+        target_size=patch_size,
         num_workers=n_workers,
     )
 
