@@ -3,18 +3,9 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import (
-    ReduceLROnPlateau
-)
-from scipy.spatial.transform import Rotation as R
-import numpy as np
 
 # from ._resnet import resnet3d_18
 from ._compact import Compact3DConvNet
-from ..align_backend import get_alignment_optimization_metrics
-from miss_alignment.data.shift_generation import (
-    generate_shifts, project_shifts_3d_to_2d
-)
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -29,7 +20,8 @@ class TripletMarginRankingLoss(nn.Module):
         Specifies the reduction to apply to the output:
         'none' | 'mean' | 'sum'. Default: 'mean'
     """
-    def __init__(self, margin=1.0, reduction='mean'):
+
+    def __init__(self, margin=1.0, reduction="mean"):
         super(TripletMarginRankingLoss, self).__init__()
         self.margin = margin
         self.reduction = reduction
@@ -51,13 +43,11 @@ class TripletMarginRankingLoss(nn.Module):
         torch.Tensor
             Computed loss
         """
-        example_type = einops.rearrange(
-            triplet_indices.sum(dim=-1), 'b -> b 1'
-        )
+        example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
         close = embeddings[triplet_indices == example_type]  # (b, 2)
-        close = einops.rearrange(close, '(b n) -> b n', n=2)
+        close = einops.rearrange(close, "(b n) -> b n", n=2)
         distant = embeddings[triplet_indices != example_type]  # (b, 1)
-        distant = einops.rearrange(distant, 'b -> b 1')
+        distant = einops.rearrange(distant, "b -> b 1")
 
         dist_pos = torch.abs(close[..., 0] - close[..., 1])
         dist_neg = torch.min((close - distant) * example_type, dim=-1).values
@@ -66,9 +56,9 @@ class TripletMarginRankingLoss(nn.Module):
         losses = F.relu(dist_pos + dist_neg + self.margin)
 
         # Apply reduction
-        if self.reduction == 'mean':
+        if self.reduction == "mean":
             return losses.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return losses.sum()
         else:  # 'none'
             return losses
@@ -94,7 +84,8 @@ class TripletRatioLoss(nn.Module):
     eps : float, optional
         Small value to ensure numerical stability. Default: 1e-6
     """
-    def __init__(self, reduction='mean', lambda_reg=0.01):
+
+    def __init__(self, reduction="mean", lambda_reg=0.01):
         super(TripletRatioLoss, self).__init__()
         self.reduction = reduction
         self.lambda_reg = lambda_reg
@@ -116,26 +107,23 @@ class TripletRatioLoss(nn.Module):
         torch.Tensor
             Computed loss
         """
-        example_type = einops.rearrange(
-            triplet_indices.sum(dim=-1), 'b -> b 1'
-        )
+        example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
         close = embeddings[triplet_indices == example_type]  # (b, 2)
-        close = einops.rearrange(close, '(b n) -> b n', n=2)
+        close = einops.rearrange(close, "(b n) -> b n", n=2)
         distant = embeddings[triplet_indices != example_type]  # (b, 1)
-        distant = einops.rearrange(distant, 'b -> b 1')
+        distant = einops.rearrange(distant, "b -> b 1")
 
         # Calculate raw distances, preserving sign
         raw_dist_pos = torch.abs(close[..., 0] - close[..., 1])
-        raw_dist_neg = torch.min((close - distant) * example_type,
-                                 dim=-1).values
+        raw_dist_neg = torch.min((close - distant) * example_type, dim=-1).values
         l2_regularization = self.lambda_reg * raw_dist_neg.pow(2)
 
         losses = raw_dist_pos + raw_dist_neg + l2_regularization
 
         # Apply reduction
-        if self.reduction == 'mean':
+        if self.reduction == "mean":
             return losses.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return losses.sum()
         else:  # 'none'
             return losses
@@ -145,9 +133,7 @@ class MissAlignment(pl.LightningModule):
     in_channels: int = 1
     num_classes: int = 1
 
-    def __init__(
-            self, learning_rate: float = 1e-04, margin=.5
-    ):
+    def __init__(self, learning_rate: float = 1e-04, margin=0.5):
         super().__init__()
         self.learning_rate = learning_rate
         self.save_hyperparameters()
@@ -188,7 +174,7 @@ class MissAlignment(pl.LightningModule):
 
         # calculate scores and loss
         scores = torch.stack((self(img1), self(img2), self(img3)))
-        scores = einops.rearrange(scores, 'd b 1 -> b d')
+        scores = einops.rearrange(scores, "d b 1 -> b d")
         loss = self.criterion(scores, target)
 
         # find back the actual assigned scores to aligned/misaligned volume
@@ -222,9 +208,9 @@ class MissAlignment(pl.LightningModule):
             on_epoch=True,
         )
         # Log the learning rate
-        current_lr = self.optimizers().param_groups[0]['lr']
+        current_lr = self.optimizers().param_groups[0]["lr"]
         self.log(
-            name='learning_rate',
+            name="learning_rate",
             value=current_lr,
             batch_size=batch_size,
             prog_bar=True,
@@ -247,7 +233,7 @@ class MissAlignment(pl.LightningModule):
 
         # calculate scores and loss
         scores = torch.stack((self(img1), self(img2), self(img3)))
-        scores = einops.rearrange(scores, 'd b 1 -> b d')
+        scores = einops.rearrange(scores, "d b 1 -> b d")
         loss = self.criterion(scores, target)
 
         # find back the actual assigned scores to aligned/misaligned volume

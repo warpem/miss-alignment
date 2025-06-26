@@ -58,9 +58,9 @@ class MissAlignmentDataModule(pl.LightningDataModule):
 
     def prepare_data(self):
         if self.dataset_type == "EMDB":
-            return EMDBDataset(self.dataset_directory, self.target_size)
+            return EMDBDataset(self.dataset_directory, target_size=self.target_size)
         elif self.dataset_type == "SHREC":
-            return SHRECDataset(self.dataset_directory, self.target_size)
+            return SHRECDataset(self.dataset_directory, target_size=self.target_size)
         else:
             raise ValueError(f"Dataset type {self.dataset_type} is not supported.")
 
