@@ -462,11 +462,11 @@ class SHRECDataset(Dataset):
 
         # augment if training
         example1 = {
-            "volume": self._augment(aligned) if self._is_training else aligned,
+            "volume": self._augment(aligned),
             "target": 1,
         }
         example2 = {
-            "volume": self._augment(misaligned) if self._is_training else misaligned,
+            "volume": self._augment(misaligned),
             "target": -1,
         }
 
@@ -480,9 +480,7 @@ class SHRECDataset(Dataset):
             )
             example3_volume = self._normalize(example3_volume)
             example3 = {
-                "volume": self._augment(example3_volume)
-                if self._is_training
-                else example3_volume,
+                "volume": self._augment(example3_volume),
                 "target": 1,
             }
         else:
@@ -494,9 +492,7 @@ class SHRECDataset(Dataset):
             )
             example3_volume = self._normalize(example3_volume)
             example3 = {
-                "volume": self._augment(example3_volume)
-                if self._is_training
-                else example3_volume,
+                "volume": self._augment(example3_volume),
                 "target": -1,
             }
 
@@ -576,10 +572,11 @@ class SHRECDataset(Dataset):
         #         std=noise_std,
         #         size=volume.shape,
         #     )
-        volume = random_edge_mask(volume, edge_width=(1, 4))
-        volume = random_cube_mask(volume)
-        volume = self._normalize(volume)
-        volume = random_contrast(volume)
+        if self._is_training == True:
+            volume = random_edge_mask(volume, edge_width=(1, 4))
+            volume = random_cube_mask(volume)
+            volume = self._normalize(volume)
+            volume = random_contrast(volume)
         volume = random_mirror(volume)
         return volume
 

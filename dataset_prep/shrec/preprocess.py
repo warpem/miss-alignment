@@ -35,11 +35,11 @@ def _save_tomo_to_folder(data: Tomogram, folder: Path, name: str) -> None:
 
 
 if __name__ == "__main__":
-    train_folder = Path("rescaled/train")
+    train_folder = Path("rescaled/ground_truth/train")
     train_folder.mkdir(parents=True, exist_ok=True)
-    test_folder = Path("rescaled/test")
+    test_folder = Path("rescaled/ground_truth/test")
     test_folder.mkdir(parents=True, exist_ok=True)
-    reconstruct_and_show = True
+    reconstruct_and_show = False
 
     for i in range(10):
         print(f"running shrec model {i}")
@@ -84,8 +84,19 @@ if __name__ == "__main__":
             sample_translations=xcorr_shifts,
         )  # invert the shifts because we employ a forward projection model!
 
+        # _save_tomo_to_folder(
+        #     xcorr_tomogram, test_folder if i > 6 else train_folder, f"model_{i}"
+        # )
+
+        ground_truth_tomogram = Tomogram(
+            images=tilt_series,
+            tilt_angles=tilt_angles,
+            tilt_axis_angle=tilt_axis_angle,
+            sample_translations=shifts,
+        )
+
         _save_tomo_to_folder(
-            xcorr_tomogram, test_folder if i > 6 else train_folder, f"model_{i}"
+            ground_truth_tomogram, test_folder if i > 6 else train_folder, f"model_{i}"
         )
 
         if reconstruct_and_show:
@@ -95,15 +106,8 @@ if __name__ == "__main__":
             # 180 is the box size of the grand model
             xcorr_volume = xcorr_tomogram.reconstruct_tomogram((180, 512, 512), 128)
 
-            tomogram = Tomogram(
-                images=tilt_series,
-                tilt_angles=tilt_angles,
-                tilt_axis_angle=tilt_axis_angle,
-                sample_translations=shifts,
-            )
-
             # 180 is the box size of the grand model
-            volume = tomogram.reconstruct_tomogram((180, 512, 512), 128)
+            volume = ground_truth_tomogram.reconstruct_tomogram((180, 512, 512), 128)
             mrcfile.write(
                 train_folder / f"model_{i}_reconstruction.mrc",
                 volume.numpy(),

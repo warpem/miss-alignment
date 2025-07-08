@@ -19,6 +19,7 @@ def optimize_shifts_shrec(
     model,
     tilt_series,
     positions,
+    patch_size,
 ):
     """Find shifts to optimize model score.
 
@@ -37,7 +38,6 @@ def optimize_shifts_shrec(
         - Detected translational alignment.
         - List of loss values for each optimization iteration.
     """
-    patch_size = 64
     tilt_series.sample_translations.requires_grad_()
 
     alignment_optimizer = torch.optim.LBFGS(
@@ -94,6 +94,7 @@ def align_shrec(
     output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
     nboxes: int = 1,
     seed: int = 45132,
+    patch_size: int = 64,
     device: str = typer.Option(
         "cuda:0", help="Device to run the model on (e.g., 'cuda:0', 'cpu')"
     ),
@@ -146,20 +147,28 @@ def align_shrec(
     tomogram_center = tuple(x // 2 for x in tomogram_shape)
     dc, hc, wc = tomogram_center
 
+    offset = patch_size // 2
+
     position_grid = []
-    ys = np.linspace(32, h - 32, 8) - hc
-    xs = np.linspace(32, w - 32, 8) - wc
+    ys = np.linspace(offset, h - offset, 4) - hc
+    xs = np.linspace(offset, w - offset, 4) - wc
     for y in ys:
         for x in xs:
             position_grid.append((0, y, x))
 
-    for _, tilt_series in tomograms:
-        initial_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 64)
+    for file_name, tilt_series in tomograms:
+        if any([x in file_name for x in ["7", "8", "9"]]):
+            continue
+        print(file_name)
+        initial_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
 
         aligned_tilt_series, loss = optimize_shifts_shrec(
-            model, tilt_series, position_grid
+            model,
+            tilt_series,
+            position_grid,
+            patch_size,
         )
-        aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 64)
+        aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
 
         # print(loss)
 
