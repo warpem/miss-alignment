@@ -107,7 +107,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             shuffle=True,
             drop_last=True,
             num_workers=self.num_workers,
-            # persistent_workers=True,
+            persistent_workers=True,
             pin_memory=True,
         )
 
