@@ -395,6 +395,9 @@ class SHRECDataset(Dataset):
         target_size: int = 64,
         tomogram_dimensions: tuple[int, int, int] = (180, 512, 512),
     ):
+        # kind of important hyperparameter for generating misalignments
+        self.max_shift = 16
+
         self.dataset_directory = Path(directory)
         self.target_size = target_size
         _offset = target_size // 2
@@ -456,9 +459,14 @@ class SHRECDataset(Dataset):
         tilt_series.sample_translations = sample_translations + aligned_translations
         aligned = tilt_series.reconstruct_subvolume(location, self.target_size)
         aligned = self._normalize(aligned)
-        tilt_series.sample_translations = sample_translations - misaligned_translations
+        tilt_series.sample_translations = sample_translations + misaligned_translations
         misaligned = tilt_series.reconstruct_subvolume(location, self.target_size)
         misaligned = self._normalize(misaligned)
+
+        # torch.set_printoptions(precision=3, sci_mode=False)
+        # print(sample_translations)
+        # print(aligned_translations)
+        # print(misaligned_translations)
 
         # augment if training
         example1 = {
@@ -485,7 +493,7 @@ class SHRECDataset(Dataset):
             }
         else:
             tilt_series.sample_translations = (
-                sample_translations - misaligned_translations
+                sample_translations + misaligned_translations
             )
             example3_volume = tilt_series.reconstruct_subvolume(
                 location, self.target_size
@@ -535,10 +543,9 @@ class SHRECDataset(Dataset):
         rotation_matrices,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         n_tilts, _, _ = rotation_matrices.shape
-        max_shift = self.target_size * 0.25
         # generate two sets of shifts, 3d shifts zyx
-        shifts_1 = generate_shifts(n_tilts, max_shift)
-        shifts_2 = generate_shifts(n_tilts, max_shift)
+        shifts_1 = generate_shifts(n_tilts, self.max_shift)
+        shifts_2 = generate_shifts(n_tilts, self.max_shift)
 
         # project the shifts to 2d
         shifts_1 = project_shifts_3d_to_2d(shifts_1, rotation_matrices)

@@ -187,7 +187,7 @@ def plot_dataset(
         batch_size=1,  # Use batch size of 1 for visualization
         target_size=patch_size,
         train_val_split=(0.8, 0.2),  # No test set for this example
-        num_workers=1,  # Use at least 1 for reproducibility
+        num_workers=0,  # Use at least 1 for reproducibility
     )
 
     model = None
