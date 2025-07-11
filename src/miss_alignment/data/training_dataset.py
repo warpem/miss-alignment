@@ -479,28 +479,36 @@ class SHRECDataset(Dataset):
         }
 
         # add random tilt offset
-        tilt_series.tilt_angles += random.uniform(-10, +10)
+        # tilt_series.tilt_angles += random.uniform(-10, +10)
         if random.random() > 0.5:
             # Create a new reconstruction from aligned volume
-            tilt_series.sample_translations = sample_translations + aligned_translations
-            example3_volume = tilt_series.reconstruct_subvolume(
-                location, self.target_size
-            )
-            example3_volume = self._normalize(example3_volume)
+            # tilt_series.sample_translations = sample_translations + aligned_translations
+            # example3_volume = tilt_series.reconstruct_subvolume(
+            #     location, self.target_size
+            # )
+            # example3_volume = self._normalize(example3_volume)
+            # example3 = {
+            #     "volume": self._augment(example3_volume),
+            #     "target": 1,
+            # }
             example3 = {
-                "volume": self._augment(example3_volume),
+                "volume": self._augment(aligned),
                 "target": 1,
             }
         else:
-            tilt_series.sample_translations = (
-                sample_translations + misaligned_translations
-            )
-            example3_volume = tilt_series.reconstruct_subvolume(
-                location, self.target_size
-            )
-            example3_volume = self._normalize(example3_volume)
+            # tilt_series.sample_translations = (
+            #     sample_translations + misaligned_translations
+            # )
+            # example3_volume = tilt_series.reconstruct_subvolume(
+            #     location, self.target_size
+            # )
+            # example3_volume = self._normalize(example3_volume)
+            # example3 = {
+            #     "volume": self._augment(example3_volume),
+            #     "target": -1,
+            # }
             example3 = {
-                "volume": self._augment(example3_volume),
+                "volume": self._augment(misaligned),
                 "target": -1,
             }
 
