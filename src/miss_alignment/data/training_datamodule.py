@@ -34,10 +34,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         dataset_type: str,
         batch_size: int = 4,
         target_size: int = 64,
-        train_val_split: tuple = (
-            0.7,
-            0.3,
-        ),
+        train_data_fraction: float = 0.7,
         num_workers: int = 4,
     ):
         super().__init__()
@@ -45,14 +42,8 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.dataset_type = dataset_type
         self.batch_size = batch_size
         self.target_size = target_size
-        self.train_val_split = train_val_split
+        self.train_data_fraction = train_data_fraction
         self.num_workers = num_workers
-
-        # Verify split fractions sum to 1
-        if sum(train_val_split) != 1.0:
-            raise ValueError(
-                "Train, validation, and test split fractions must sum to 1"
-            )
 
         self.train_dataset, self.val_dataset, self.test_dataset = (None, None, None)
 
@@ -77,15 +68,19 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             full_dataset = self.prepare_data()
             match self.dataset_type:
                 case "SHREC":
-                    tomos = full_dataset.tomos
-                    n_samples = len(full_dataset.tomos)
-                    split = int(0.7 * n_samples)
-                    self.train_dataset = deepcopy(full_dataset)
-                    self.train_dataset.tomos = tomos[:split]
-                    self.val_dataset = deepcopy(full_dataset)
-                    self.val_dataset.tomos = tomos[split:]
-                    self.train_dataset.train()
-                    self.val_dataset.eval()
+                    if self.train_data_fraction == 1.0:
+                        self.train_dataset = full_dataset
+                        self.train_dataset.train()
+                    else:
+                        tomos = full_dataset.tomos
+                        n_samples = len(full_dataset.tomos)
+                        split = int(0.7 * n_samples)
+                        self.train_dataset = deepcopy(full_dataset)
+                        self.train_dataset.tomos = tomos[:split]
+                        self.val_dataset = deepcopy(full_dataset)
+                        self.val_dataset.tomos = tomos[split:]
+                        self.train_dataset.train()
+                        self.val_dataset.eval()
                 case "EMDB":
                     self.train_dataset, self.val_dataset = random_split(
                         full_dataset,
