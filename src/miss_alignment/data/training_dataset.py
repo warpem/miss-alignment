@@ -394,6 +394,7 @@ class SHRECDataset(Dataset):
         train: bool = True,
         target_size: int = 64,
         tomogram_dimensions: tuple[int, int, int] = (180, 512, 512),
+        patches_per_tomogram: int = 1000,
     ):
         # kind of important hyperparameter for generating misalignments
         self.max_shift = 16
@@ -419,14 +420,14 @@ class SHRECDataset(Dataset):
                 sample_translations=data["sample_translations"],
             )
             tomogram._pad_factor = 1.5
-            self.tomos += [(data["tilt_series"], tomogram)]
+            self.tomos += [(path, tomogram)]
 
         if len(self.tomos) == 0:
             raise ValueError("No tilt series found in directory")
 
         self.train() if train else self.eval()
 
-        self.inflate = 1000
+        self.patches_per_tomogram = patches_per_tomogram
 
     def train(self):
         self._is_training = True
@@ -435,20 +436,20 @@ class SHRECDataset(Dataset):
         self._is_training = False
 
     def __len__(self):
-        return len(self.tomos) * self.inflate
+        return len(self.tomos) * self.patches_per_tomogram
 
     def _select_random_location(self):
         return [random.randint(-r, r) for r in self.region]
 
     def __getitem__(self, idx):
         # copy the object so that we can modify alignment parameters
-        tilt_series = copy.deepcopy(self.tomos[idx // self.inflate][1])
+        tilt_series = copy.deepcopy(self.tomos[idx // self.patches_per_tomogram][1])
         # store original alignment
         sample_translations = tilt_series.sample_translations.clone()
         location = self._select_random_location()
 
-        r0 = Ry(tilt_series.tilt_angles, zyx=False)
-        r1 = Rz(tilt_series.tilt_axis_angle, zyx=False)
+        r0 = Ry(tilt_series.tilt_angles, zyx=True)
+        r1 = Rz(tilt_series.tilt_axis_angle, zyx=True)
         rotation_matrices = r1 @ r0
         rotation_matrices = rotation_matrices[..., :3, :3]
         aligned_translations, misaligned_translations = self._generate_translations(

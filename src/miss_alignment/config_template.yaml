@@ -1,0 +1,32 @@
+# Model Training Configuration
+
+# Model parameters
+model:
+  learning_rate: 1e-5
+  margin: 0.5
+  # Uncomment to enable weight decay
+  # weight_decay: 1e-4
+  # Uncomment to enable learning rate scheduler
+  # lr_scheduler:  # warm-up
+  #   mode: "min"
+  #   factor: 0.5
+  #   patience: 2
+  #   monitor: "val loss"
+  #   interval: "epoch"
+  #   frequency: 1
+
+# Data parameters
+data:
+  dataset_type: "SHREC"  # Options: "SHREC", "EMDB"
+  batch_size: 32  # for SHREC these values seems solid:
+  patch_size: 128  # batch size 32 | reconstruction size 128 ^ 3
+  num_workers: 8  # dependent on system -> more is better
+  training_data_fraction: 1.0  # means no validation data
+
+# Training parameters
+training:
+  output_directory: "training"
+  epochs: 100
+  seed: 45132
+  check_val_every_n_epoch: 5
+  precision: "32"  # Options: "32", "16", "bf16"

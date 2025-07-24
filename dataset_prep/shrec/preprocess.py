@@ -1,5 +1,4 @@
 from pathlib import Path
-import pickle
 
 import napari
 import einops
@@ -7,8 +6,9 @@ import mrcfile
 import torch
 from torch_fourier_rescale import fourier_rescale_2d
 from torch_tiltxcorr import tiltxcorr
-
 from torch_tomogram import Tomogram
+
+from miss_alignment.align_shrec import _save_tomo_to_folder
 
 
 def _read_shrec_alignment(file: Path) -> tuple[list]:
@@ -16,22 +16,6 @@ def _read_shrec_alignment(file: Path) -> tuple[list]:
         lines = [x.split() for x in aln.readlines() if not x.startswith("#")]
         data = zip(*[(float(x[0]), float(x[1]), float(x[2])) for x in lines])
     return data
-
-
-def _save_tomo_to_folder(data: Tomogram, folder: Path, name: str) -> None:
-    tilt_series_mrc = name + ".mrc"
-    metadata = name + ".pickle"
-    with mrcfile.new(folder / tilt_series_mrc, overwrite=True) as mrc:
-        mrc.set_data(data.images.numpy())
-        mrc.voxel_size = 10
-    data_dict = {
-        "tilt_series": tilt_series_mrc,
-        "tilt_angles": data.tilt_angles.tolist(),
-        "tilt_axis_angle": data.tilt_axis_angle.tolist(),
-        "sample_translations": data.sample_translations.tolist(),
-    }
-    with open(folder / metadata, "wb") as out:
-        pickle.dump(data_dict, out)
 
 
 if __name__ == "__main__":

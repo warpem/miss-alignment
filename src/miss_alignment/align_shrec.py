@@ -1,18 +1,143 @@
 import typer
 from pathlib import Path
+
 from ._cli import OPTION_PROMPT_KWARGS, cli
 
+import pickle
+import mrcfile
 import torch
 import einops
 import numpy as np
 from pytorch_lightning import seed_everything
-import napari
+from torch_tomogram import Tomogram
+import matplotlib.pyplot as plt
 
+from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from miss_alignment.data import MissAlignmentDataModule
 from miss_alignment.models import MissAlignment
-# from miss_alignment.align_backend import (
-#     center_of_mass,
-# )
+
+
+def _save_tomo_to_folder(data: Tomogram, folder: Path, name: str) -> None:
+    tilt_series_mrc = name + ".mrc"
+    metadata = name + ".pickle"
+    with mrcfile.new(folder / tilt_series_mrc, overwrite=True) as mrc:
+        mrc.set_data(data.images.numpy())
+        mrc.voxel_size = 10
+    data_dict = {
+        "tilt_series": tilt_series_mrc,
+        "tilt_angles": data.tilt_angles.tolist(),
+        "tilt_axis_angle": data.tilt_axis_angle.tolist(),
+        "sample_translations": data.sample_translations.tolist(),
+    }
+    with open(folder / metadata, "wb") as out:
+        pickle.dump(data_dict, out)
+
+
+def calculate_cross_correlation(
+    a: torch.Tensor,
+    b: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Calculate the 3D cross correlation between volumes of the same size.
+
+    The position of the maximum relative to the center of the volume gives a shift.
+    This is the shift that when applied to `b` best aligns it to `a`.
+
+    Parameters
+    ----------
+    a : torch.Tensor
+        First 3D volume with shape (..., D, H, W)
+    b : torch.Tensor
+        Second 3D volume with shape (..., D, H, W)
+
+    Returns
+    -------
+    torch.Tensor
+        3D cross-correlation volume
+    """
+    a = (a - a.mean()) / a.std()
+    b = (b - b.mean()) / b.std()
+    d, h, w = a.shape[-3:]
+    fta = torch.fft.rfftn(a, dim=(-3, -2, -1))
+    ftb = torch.fft.rfftn(b, dim=(-3, -2, -1))
+    result = fta * torch.conj(ftb)
+    result = torch.fft.irfftn(result, dim=(-3, -2, -1), s=(d, h, w))
+    result = torch.fft.ifftshift(result, dim=(-3, -2, -1))
+    result /= d * h * w  # normalize the result
+    return result
+
+
+def get_shift_from_correlation_image(correlation_image: torch.Tensor) -> torch.Tensor:
+    """
+    Extract shift from 3D correlation volume.
+
+    The shift should be applied to img2 to align with img1.
+    Uses parabolic interpolation for sub-voxel accuracy.
+
+    Parameters
+    ----------
+    correlation_image : torch.Tensor
+        3D correlation volume
+
+    Returns
+    -------
+    torch.Tensor
+        3D shift vector [z, y, x]
+    """
+    d, h, w = correlation_image.shape
+    dtype, device = correlation_image.dtype, correlation_image.device
+
+    image_shape = torch.as_tensor(correlation_image.shape, device=device, dtype=dtype)
+    center = torch.divide(image_shape, 2, rounding_mode="floor")
+
+    # Find peak location
+    flat_idx = torch.argmax(correlation_image)
+    peak_z = flat_idx // (h * w)
+    peak_y = (flat_idx % (h * w)) // w
+    peak_x = flat_idx % w
+
+    # Check if peak is on border
+    if (
+        peak_z == 0
+        or peak_z == d - 1
+        or peak_y == 0
+        or peak_y == h - 1
+        or peak_x == 0
+        or peak_x == w - 1
+    ):
+        shift = (
+            torch.tensor([peak_z, peak_y, peak_x], device=device, dtype=dtype) - center
+        )
+        return shift
+
+    # Parabolic interpolation in z direction
+    f_z0 = correlation_image[peak_z - 1, peak_y, peak_x]
+    f_z1 = correlation_image[peak_z, peak_y, peak_x]
+    f_z2 = correlation_image[peak_z + 1, peak_y, peak_x]
+    subpixel_peak_z = peak_z + 0.5 * (f_z0 - f_z2) / (f_z0 - 2 * f_z1 + f_z2)
+
+    # Parabolic interpolation in y direction
+    f_y0 = correlation_image[peak_z, peak_y - 1, peak_x]
+    f_y1 = correlation_image[peak_z, peak_y, peak_x]
+    f_y2 = correlation_image[peak_z, peak_y + 1, peak_x]
+    subpixel_peak_y = peak_y + 0.5 * (f_y0 - f_y2) / (f_y0 - 2 * f_y1 + f_y2)
+
+    # Parabolic interpolation in x direction
+    f_x0 = correlation_image[peak_z, peak_y, peak_x - 1]
+    f_x1 = correlation_image[peak_z, peak_y, peak_x]
+    f_x2 = correlation_image[peak_z, peak_y, peak_x + 1]
+    subpixel_peak_x = peak_x + 0.5 * (f_x0 - f_x2) / (f_x0 - 2 * f_x1 + f_x2)
+
+    subpixel_shift = (
+        torch.tensor(
+            [subpixel_peak_z, subpixel_peak_y, subpixel_peak_x],
+            device=device,
+            dtype=dtype,
+        )
+        - center
+    )
+
+    return subpixel_shift
 
 
 def optimize_shifts_shrec(
@@ -20,6 +145,7 @@ def optimize_shifts_shrec(
     tilt_series,
     positions,
     patch_size,
+    device,
 ):
     """Find shifts to optimize model score.
 
@@ -38,6 +164,8 @@ def optimize_shifts_shrec(
         - Detected translational alignment.
         - List of loss values for each optimization iteration.
     """
+    tilt_series.to(device)
+    model.to(device)
     tilt_series.sample_translations.requires_grad_()
 
     alignment_optimizer = torch.optim.LBFGS(
@@ -56,6 +184,8 @@ def optimize_shifts_shrec(
         volumes = []
         for zyx in positions:
             subtomo = tilt_series.reconstruct_subvolume(zyx, patch_size)
+            mean, std = torch.mean(subtomo), torch.std(subtomo)
+            subtomo = (subtomo - mean) / std
             volumes.append(subtomo)
         volumes = torch.stack(volumes)
 
@@ -76,13 +206,15 @@ def optimize_shifts_shrec(
 
         return loss
 
-    n_iters = 2  # 5 iterations should give convergence
+    n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
         print(f"Optimizing... {x + 1}/{n_iters}")
         alignment_optimizer.step(closure)
 
     # remove gradients
-    tilt_series.sample_translations.detach()
+    tilt_series.sample_translations.detach_()
+    tilt_series.to("cpu")
+    model.to("cpu")
 
     return tilt_series, loss_values
 
@@ -91,6 +223,7 @@ def optimize_shifts_shrec(
 def align_shrec(
     model_checkpoint: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
     test_data_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
+    test_data_ground_truth: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
     output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
     nboxes: int = 1,
     seed: int = 45132,
@@ -113,6 +246,8 @@ def align_shrec(
         Path to the trained model checkpoint.
     test_data_directory : Path
         Directory containing test data.
+    test_data_ground_truth : Path
+        Directory containing the ground truth alignments.
     output_directory : Path
         Directory where results will be saved.
     nboxes : int, optional
@@ -141,7 +276,13 @@ def align_shrec(
         dataset_type="SHREC",
     )
     datamodule.setup(stage="validate")
+    ground_truth = MissAlignmentDataModule(
+        test_data_ground_truth,
+        dataset_type="SHREC",
+    )
+    ground_truth.setup(stage="validate")
     tomograms = datamodule.test_dataset.tomos
+    tomograms_ground_truth = ground_truth.test_dataset.tomos
     tomogram_shape = (180, 512, 512)
     d, h, w = tomogram_shape
     tomogram_center = tuple(x // 2 for x in tomogram_shape)
@@ -156,26 +297,86 @@ def align_shrec(
         for x in xs:
             position_grid.append((0, y, x))
 
-    for file_name, tilt_series in tomograms:
-        if any([x in file_name for x in ["7", "8", "9"]]):
-            continue
+    for test, ground_truth in zip(tomograms, tomograms_ground_truth):
+        file_path, tilt_series = test
+        file_name = file_path.stem
+        _, tilt_series_ground_truth = ground_truth
+        ground_truth_alignment = tilt_series_ground_truth.sample_translations
+        n_tilts, _, _ = tilt_series_ground_truth.images.shape
+
+        ground_truth_reconstruction = tilt_series_ground_truth.reconstruct_tomogram(
+            tomogram_shape, 128
+        )
+
+        # if not any([x in file_name for x in ["2"]]):
+        #     continue
         print(file_name)
+        mean_diff_initial = torch.abs(
+            ground_truth_alignment - tilt_series.sample_translations
+        )
         initial_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
 
-        aligned_tilt_series, loss = optimize_shifts_shrec(
+        _, loss = optimize_shifts_shrec(
             model,
-            tilt_series,
+            tilt_series,  # is modified in-place
             position_grid,
             patch_size,
+            "cpu",
         )
+
         aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
 
-        # print(loss)
+        correlation = calculate_cross_correlation(
+            ground_truth_reconstruction, aligned_reconstruction
+        )
+        shift_3d = get_shift_from_correlation_image(correlation)
+        shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
+        print(shift_3d)
+        shift_3d = shift_3d.repeat(n_tilts, 1)
 
-        viewer = napari.Viewer()
-        viewer.add_image(initial_reconstruction.detach().numpy(), name="initial")
-        viewer.add_image(aligned_reconstruction.detach().numpy(), name="aligned")
-        napari.run()
+        shifts_2d = project_shifts_3d_to_2d(
+            shift_3d, tilt_series.projection_matrices[..., :3, :3]
+        )
+        tilt_series.sample_translations += shifts_2d
+
+        mean_diff_final = torch.abs(
+            ground_truth_alignment - tilt_series.sample_translations
+        )
+
+        fig, ax = plt.subplots(1, 2)
+        ax[0].plot(mean_diff_initial[:, 0], label="initial y")
+        ax[0].plot(mean_diff_final[:, 0], label="final y")
+        ax[1].plot(mean_diff_initial[:, 1], label="initial x")
+        ax[1].plot(mean_diff_final[:, 1], label="final x")
+        ax[0].legend()
+        ax[1].legend()
+
+        plt.savefig(output_directory / f"{file_name}_yx_diff_per_tilt.png")
+
+        print(mean_diff_initial.mean(dim=0))
+        print(mean_diff_final.mean(dim=0))
+
+        aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
+
+        mrcfile.write(
+            output_directory / f"{file_name}_before.mrc",
+            initial_reconstruction.detach().numpy(),
+            voxel_size=10,
+            overwrite=True,
+        )
+        mrcfile.write(
+            output_directory / f"{file_name}_after.mrc",
+            aligned_reconstruction.detach().numpy(),
+            voxel_size=10,
+            overwrite=True,
+        )
+
+        _save_tomo_to_folder(tilt_series, output_directory, file_name)
+
+        # viewer = napari.Viewer()
+        # viewer.add_image(initial_reconstruction.detach().numpy(), name="initial")
+        # viewer.add_image(aligned_reconstruction.detach().numpy(), name="aligned")
+        # napari.run()
 
         del initial_reconstruction, aligned_reconstruction
 

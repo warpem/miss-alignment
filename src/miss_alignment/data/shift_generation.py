@@ -221,11 +221,8 @@ def project_shifts_3d_to_2d(
     # xyz coordinates, hence some weird swapping inside
 ) -> torch.Tensor:
     """Project 3D shifts to 2D."""
-    shifts_3d = torch.flip(shifts_3d, dims=(1,))  # (n, zyx) -> (n, xyz)
-    shifts_3d = einops.rearrange(shifts_3d, "b xyz -> b xyz 1")
+    shifts_3d = einops.rearrange(shifts_3d, "b zyx -> b zyx 1")
     shifts_3d = rotation_matrices @ shifts_3d
-    shifts_3d = einops.rearrange(shifts_3d, "b xyz 1 -> b xyz")
-    shifts_2d = torch.flip(  # remove z and swap to yx
-        shifts_3d[:, :2], dims=(1,)
-    )  # (n, xyz) -> (n, yx)
+    shifts_3d = einops.rearrange(shifts_3d, "b zyx 1 -> b zyx")
+    shifts_2d = shifts_3d[:, 1:]  # (n, zyx) -> (n, yx)
     return shifts_2d
