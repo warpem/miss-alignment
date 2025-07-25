@@ -1,11 +1,10 @@
-from .download import download_training_data
-from .training_datamodule import MissAlignmentDataModule
-from .training_dataset import EMDBDataset
+from .training_datamodule import SHRECDataModule
+from .training_dataset import EMDBDataset, SHRECDataset
 from .plot_data import plot_dataset
 
 __all__ = [
-    "MissAlignmentDataModule",
+    "SHRECDataModule",
     "EMDBDataset",
-    "download_training_data",
+    "SHRECDataset",
     "plot_dataset",
 ]

@@ -268,7 +268,7 @@ def align_shrec(
 
     # get model
     model = MissAlignment.load_from_checkpoint(model_checkpoint, map_location="cpu")
-    model.eval()
+    model.freeze()
 
     # initialize the dataset
     datamodule = MissAlignmentDataModule(

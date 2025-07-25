@@ -31,17 +31,17 @@ class SHRECDataModule(pl.LightningDataModule):
     training_iteration
     shift_generator
     """
+
     def __init__(
         self,
         dataset_directory: PathLike,
         shift_generator: Callable,
-        batch_size: int = 4,
         num_workers: int = 4,
+        batch_size: int = 4,
         target_size: int = 64,
         patches_per_tomogram: int = 1000,
         training_iteration: int = 0,
     ):
-
         super().__init__()
         # data module controls
         self.batch_size = batch_size
@@ -64,16 +64,13 @@ class SHRECDataModule(pl.LightningDataModule):
     def prepare_data(self):
         # this is not done in the setup() because lightning specifically
         # calls this function with a single process to prevent race conditions
-        SHRECDataset(
-            self.dataset_directory, self.shift_generator, download=True
-        )
+        if self.training_iteration == 0:
+            SHRECDataset(self.dataset_directory, self.shift_generator, download=True)
 
-    def setup(self, stage=None):
+    def setup(self, stage: str = "fit"):
         """No stage for setup because this is used just for training."""
-        if stage is not None:
-            raise ValueError(
-                "stage parameter is not supported by MissAlignment"
-            )
+        if stage != "fit":
+            raise ValueError(f"{stage} is not a valid stage")
         self.train_dataset = SHRECDataset(
             self.dataset_directory_at_iteration,
             self.shift_generator,
@@ -83,9 +80,7 @@ class SHRECDataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self):
-        """
-        Return DataLoader for training data.
-        """
+        """Return DataLoader for training data."""
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
@@ -96,14 +91,11 @@ class SHRECDataModule(pl.LightningDataModule):
             pin_memory=True,
         )
 
-    def align_dataset(self, model, reinitialize: bool = True):
-        """
-        Return DataLoader for prediction
-        """
+    def align_dataset(self, model):
+        """Align the tomograms in the dataset with the model."""
         for tilt_series in self.train_dataset.tomograms:
             # run alignment
             # store alignment to next iteration folder
             continue
         # update iteration
-        # store state?
-        # if reinitialize: rerun setup?
+        # update state of the datamodule and dataset to point to new iteration

@@ -394,8 +394,6 @@ class SHRECDataset(Dataset):
 
     # for SHREC we have fixed dimensions as we know the shape of the GT
     tomogram_dimensions = (180, 512, 512)
-    # move shift generation upstream; important hyperparameter
-    max_shift = 16
     # noise probably not needed for SHREC?
     noise_augmentation = False
     zenodo_archive = ""

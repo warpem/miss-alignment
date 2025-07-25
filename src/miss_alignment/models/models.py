@@ -65,7 +65,7 @@ class TripletMarginRankingLoss(nn.Module):
 
 
 class MissAlignment(pl.LightningModule):
-    in_channels: int = 1
+    in_channels: int = 1  # configuration for resnet
     num_classes: int = 1
 
     def __init__(
@@ -75,6 +75,7 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.margin = margin
         self.weight_decay = weight_decay
+        self.warmup_steps = 500
         self.save_hyperparameters()
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
@@ -142,34 +143,6 @@ class MissAlignment(pl.LightningModule):
 
         return loss
 
-    def validation_step(
-        self,
-        batch: dict,
-        batch_idx: int,
-    ):
-        loss, batch_size, score_aligned, score_misaligned = self._common_step(batch)
-
-        self.log(
-            name="val loss",
-            value=loss,
-            batch_size=batch_size,
-            prog_bar=True,
-        )
-        self.log(
-            name="val score aligned",
-            value=score_aligned,
-            batch_size=batch_size,
-            prog_bar=True,
-        )
-        self.log(
-            name="val score misaligned",
-            value=score_misaligned,
-            batch_size=batch_size,
-            prog_bar=True,
-        )
-
-        return loss
-
     def predict_step(self):
         pass
 
@@ -187,6 +160,16 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
+        # Warm-up scheduler (linear warm-up)
+        from torch.optim.lr_scheduler import LinearLR
+
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.1,  # Start at 10% of self.lr
+            end_factor=1.0,  # End at 100% of self.lr
+            total_iters=self.warmup_steps,
+        )
+
         # Check if lr_scheduler is defined in hparams
         if (
             hasattr(self.hparams, "lr_scheduler")
@@ -200,9 +183,9 @@ class MissAlignment(pl.LightningModule):
                     optimizer,
                     mode=scheduler_config.get("mode", "min"),
                     factor=scheduler_config.get("factor", 0.5),
-                    patience=scheduler_config.get("patience", 2),
+                    patience=scheduler_config.get("patience", 10),
                 ),
-                "monitor": scheduler_config.get("monitor", "val loss"),
+                "monitor": scheduler_config.get("monitor", "train loss"),
                 "interval": scheduler_config.get("interval", "epoch"),
                 "frequency": scheduler_config.get("frequency", 1),
             }
