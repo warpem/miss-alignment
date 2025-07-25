@@ -1,96 +1,86 @@
 from os import PathLike
 from pathlib import Path
-from copy import deepcopy
+from collections.abc import Callable
 
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
-from .training_dataset import EMDBDataset, SHRECDataset
+from miss_alignment.data.training_dataset import SHRECDataset
 
 
-class MissAlignmentDataModule(pl.LightningDataModule):
+class SHRECDataModule(pl.LightningDataModule):
     """
-    PyTorch Lightning DataModule for MRC data.
+    Training datamodule assumes the following directory layout:
+
+    dataset_directory/
+    +- iter0/  # this is the initial state
+    ¦  +- model_0.pickle  # stores a Tomogram object as a pickle
+    ¦  +- model_1.pickle
+    ¦  +- ...
+    +- iter1/  # this is where the updated alignments are stored
+    ¦  +- model_0.pickle
+    etc...
 
     Parameters
     ----------
-    dataset_directory : PathLike
-        Directory containing MRC files.
-    rng : torch.Generator
-        Random seed for reproducibility.
-    batch_size : int
-        Batch size for dataloaders.
-    target_size : int or tuple
-        Target size to pad/crop volumes to.
-    train_val_split : tuple
-        Fractions for train, validation, and test splits.
-    num_workers : int
-        Number of workers for DataLoader.
+    dataset_directory
+    batch_size
+    num_workers
+    target_size
+    patches_per_tomogram
+    training_iteration
+    shift_generator
     """
-
     def __init__(
         self,
         dataset_directory: PathLike,
-        dataset_type: str,
+        shift_generator: Callable,
         batch_size: int = 4,
-        target_size: int = 64,
-        train_data_fraction: float = 0.7,
         num_workers: int = 4,
+        target_size: int = 64,
+        patches_per_tomogram: int = 1000,
+        training_iteration: int = 0,
     ):
+
         super().__init__()
-        self.dataset_directory = Path(dataset_directory)
-        self.dataset_type = dataset_type
+        # data module controls
         self.batch_size = batch_size
-        self.target_size = target_size
-        self.train_data_fraction = train_data_fraction
         self.num_workers = num_workers
 
-        self.train_dataset, self.val_dataset, self.test_dataset = (None, None, None)
+        # dataset controls
+        self.dataset_directory = Path(dataset_directory)
+        self.training_iteration = training_iteration
+        self.target_size = target_size
+        self.patches_per_tomogram = patches_per_tomogram
+        # function that generates shifts in 3D
+        self.shift_generator = shift_generator
+
+        self.train_dataset, self.predict_dataset = (None, None)
+
+    @property
+    def dataset_directory_at_iteration(self):
+        return self.dataset_directory / f"iter{self.training_iteration}"
 
     def prepare_data(self):
-        if self.dataset_type == "EMDB":
-            return EMDBDataset(self.dataset_directory, target_size=self.target_size)
-        elif self.dataset_type == "SHREC":
-            return SHRECDataset(self.dataset_directory, target_size=self.target_size)
-        else:
-            raise ValueError(f"Dataset type {self.dataset_type} is not supported.")
+        # this is not done in the setup() because lightning specifically
+        # calls this function with a single process to prevent race conditions
+        SHRECDataset(
+            self.dataset_directory, self.shift_generator, download=True
+        )
 
-    def setup(self, stage: str | None = None):
-        """
-        Setup datasets for training, validation, and testing.
-
-        Parameters
-        ----------
-        stage : str, optional
-            Stage to setup ('fit', 'validate', 'test', or 'predict').
-        """
-        if stage == "fit":
-            full_dataset = self.prepare_data()
-            match self.dataset_type:
-                case "SHREC":
-                    if self.train_data_fraction == 1.0:
-                        self.train_dataset = full_dataset
-                        self.train_dataset.train()
-                    else:
-                        tomos = full_dataset.tomos
-                        n_samples = len(full_dataset.tomos)
-                        split = int(0.7 * n_samples)
-                        self.train_dataset = deepcopy(full_dataset)
-                        self.train_dataset.tomos = tomos[:split]
-                        self.val_dataset = deepcopy(full_dataset)
-                        self.val_dataset.tomos = tomos[split:]
-                        self.train_dataset.train()
-                        self.val_dataset.eval()
-                case "EMDB":
-                    self.train_dataset, self.val_dataset = random_split(
-                        full_dataset,
-                        self.train_val_split,  # generator=self.rng
-                    )
-                    self.val_dataset = deepcopy(self.val_dataset)
-                    self.train_dataset.dataset.train()
-                    self.val_dataset.dataset.eval()
-        if stage == "validate":
-            self.test_dataset = self.prepare_data()
+    def setup(self, stage=None):
+        """No stage for setup because this is used just for training."""
+        if stage is not None:
+            raise ValueError(
+                "stage parameter is not supported by MissAlignment"
+            )
+        self.train_dataset = SHRECDataset(
+            self.dataset_directory_at_iteration,
+            self.shift_generator,
+            target_size=self.target_size,
+            patches_per_tomogram=self.patches_per_tomogram,
+            train=True,
+        )
 
     def train_dataloader(self):
         """
@@ -106,15 +96,14 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             pin_memory=True,
         )
 
-    def val_dataloader(self):
+    def align_dataset(self, model, reinitialize: bool = True):
         """
-        Return DataLoader for validation data.
+        Return DataLoader for prediction
         """
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            drop_last=False,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
+        for tilt_series in self.train_dataset.tomograms:
+            # run alignment
+            # store alignment to next iteration folder
+            continue
+        # update iteration
+        # store state?
+        # if reinitialize: rerun setup?

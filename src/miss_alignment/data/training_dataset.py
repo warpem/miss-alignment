@@ -1,8 +1,12 @@
 from os import PathLike
 from pathlib import Path
-import pickle
+from collections.abc import Callable
+import warnings
 import random
 import copy
+import subprocess
+import shutil
+import os
 
 import einops
 import numpy as np
@@ -18,7 +22,6 @@ from torch_fourier_slice import (
 from torch_fourier_shift import fourier_shift_dft_2d, fourier_shift_dft_3d
 from torch_grid_utils import fftfreq_grid, sphere
 import torch.nn.functional as F
-from torch_tomogram import Tomogram
 from torch_affine_utils.transforms_3d import Ry, Rz
 
 from .shift_generation import generate_shifts, project_shifts_3d_to_2d
@@ -28,6 +31,7 @@ from .augmentation import (
     random_edge_mask,
     random_cube_mask,
 )
+from .io import read_tomogram
 
 
 class EMDBDataset(Dataset):
@@ -388,52 +392,78 @@ class SHRECDataset(Dataset):
         Target size to pad/crop images to. If an integer, same size is used for all dimensions.
     """
 
+    # for SHREC we have fixed dimensions as we know the shape of the GT
+    tomogram_dimensions = (180, 512, 512)
+    # move shift generation upstream; important hyperparameter
+    max_shift = 16
+    # noise probably not needed for SHREC?
+    noise_augmentation = False
+    zenodo_archive = ""
+
     def __init__(
         self,
         directory: PathLike,
-        train: bool = True,
+        shift_generator: Callable,  # make
         target_size: int = 64,
-        tomogram_dimensions: tuple[int, int, int] = (180, 512, 512),
         patches_per_tomogram: int = 1000,
+        train: bool = True,
+        download: bool = True,
     ):
-        # kind of important hyperparameter for generating misalignments
-        self.max_shift = 16
-
         self.dataset_directory = Path(directory)
+        self.generate_shifts = shift_generator
         self.target_size = target_size
         _offset = target_size // 2
-        self.region = [x // 2 - _offset for x in tomogram_dimensions]
+        self.region = [x // 2 - _offset for x in self.tomogram_dimensions]
+        self.patches_per_tomogram = patches_per_tomogram
 
-        metadata = list(self.dataset_directory.glob("*.pickle"))
+        if download:
+            self.dataset_directory.mkdir(exist_ok=True, parents=True)
+            if self.data_directory_is_empty:
+                self._download()
+            else:
+                warnings.warn("dataset directory is non-empty, download is skipped")
+
+        # load the data
         self.tomos = []
-        for path in metadata:
-            with open(path, "rb") as f:
-                data = pickle.load(f)
-            images = mrcfile.read(self.dataset_directory / data["tilt_series"])
-            images = torch.from_numpy(images)
-            images -= einops.reduce(images, "tilt h w -> tilt 1 1", reduction="mean")
-            images /= torch.std(images, dim=(-2, -1), keepdim=True)
-            tomogram = Tomogram(
-                images=images,
-                tilt_angles=data["tilt_angles"],
-                tilt_axis_angle=data["tilt_axis_angle"],
-                sample_translations=data["sample_translations"],
-            )
-            tomogram._pad_factor = 1.5
-            self.tomos += [(path, tomogram)]
+        self._load_data()
 
         if len(self.tomos) == 0:
             raise ValueError("No tilt series found in directory")
 
-        self.train() if train else self.eval()
+        self.train = train
 
-        self.patches_per_tomogram = patches_per_tomogram
+    @property
+    def data_directory_is_empty(self):
+        return len(list(self.dataset_directory.iterdir())) == 0
 
-    def train(self):
-        self._is_training = True
+    def _download(self):
+        subprocess.run(
+            [
+                "zenodo_get",
+                self.zenodo_archive,  # update value
+                "--output-dir",
+                str(self.dataset_directory),
+            ]
+        )
+        zipped_archive = self.dataset_directory / "shrec21.zip"
+        shutil.unpack_archive(
+            zipped_archive,
+            extract_dir=self.dataset_directory,
+        )
+        os.remove(zipped_archive)
 
-    def eval(self):
-        self._is_training = False
+    def _load_data(self):
+        metadata = list(self.dataset_directory.glob("*.pickle"))
+        for path in metadata:
+            tomogram = read_tomogram(metadata)
+            # ensure images are normalized
+            tomogram.images -= einops.reduce(
+                tomogram.images, "tilt h w -> tilt 1 1", reduction="mean"
+            )
+            tomogram.images /= torch.std(tomogram.images, dim=(-2, -1), keepdim=True)
+            # reduce the padding of the reconstruction for speed reasons
+            tomogram._pad_factor = 1.5
+            self.tomos += [(path, tomogram)]
 
     def __len__(self):
         return len(self.tomos) * self.patches_per_tomogram
@@ -521,40 +551,14 @@ class SHRECDataset(Dataset):
             torch.tensor(targets),
         )
 
-    def prepare_test_boxes(self, shift_fraction: float = 0.25):
-        test_data = []
-        for map_name, volume in self.volumes:
-            tilt_angles = R.from_euler(
-                seq="Y", angles=np.arange(-51, 54, 3), degrees=True
-            )
-            rotations = torch.tensor(tilt_angles.as_matrix()).float()
-            # between 0 and misaligned_std
-            misaligned_translations = generate_shifts(
-                rotations.shape[0],
-                volume.shape[0] * shift_fraction,
-            )
-            misaligned_translations = project_shifts_3d_to_2d(
-                misaligned_translations,
-                rotations,
-            )
-            test_data.append(
-                {
-                    "map_name": map_name,
-                    "volume": volume,
-                    "rotations": rotations,
-                    "translations": misaligned_translations,
-                }
-            )
-        return test_data
-
     def _generate_translations(
         self,
         rotation_matrices,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         n_tilts, _, _ = rotation_matrices.shape
         # generate two sets of shifts, 3d shifts zyx
-        shifts_1 = generate_shifts(n_tilts, self.max_shift)
-        shifts_2 = generate_shifts(n_tilts, self.max_shift)
+        shifts_1 = self.generate_shifts(n_tilts, self.max_shift)
+        shifts_2 = self.generate_shifts(n_tilts, self.max_shift)
 
         # project the shifts to 2d
         shifts_1 = project_shifts_3d_to_2d(shifts_1, rotation_matrices)
@@ -581,14 +585,14 @@ class SHRECDataset(Dataset):
         return aligned_translations, misaligned_translations
 
     def _augment(self, volume: torch.Tensor) -> torch.Tensor:
-        # if random.random() > 0.5:  # noise not needed for SHREC?
-        #     noise_std = random.random() * 1.5
-        #     volume = volume + torch.normal(
-        #         mean=0.0,
-        #         std=noise_std,
-        #         size=volume.shape,
-        #     )
-        if self._is_training == True:
+        if self.noise_augmentation and random.random() > 0.5:
+            noise_std = random.random() * 1.5
+            volume = volume + torch.normal(
+                mean=0.0,
+                std=noise_std,
+                size=volume.shape,
+            )
+        if self.train:
             volume = random_edge_mask(volume, edge_width=(1, 4))
             volume = random_cube_mask(volume)
             volume = self._normalize(volume)
