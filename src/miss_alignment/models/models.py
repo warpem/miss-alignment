@@ -205,10 +205,11 @@ class MissAlignment(pl.LightningModule):
                     optimizer,
                     mode=scheduler_config.get("mode", "min"),
                     factor=scheduler_config.get("factor", 0.5),
-                    patience=scheduler_config.get("patience", 10),
+                    patience=scheduler_config.get("patience", 5),
                 ),
                 "monitor": "train loss",
-                "interval": "epoch",  # tracks epochs
+                "interval": scheduler_config.get("monitor", "epoch"),
+                # tracks epochs
                 "frequency": 1,
             }
             return {

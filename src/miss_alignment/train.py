@@ -5,6 +5,7 @@ from functools import partial
 import typer
 import torch
 from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.callbacks import EarlyStopping
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import SHRECDataModule
@@ -14,6 +15,14 @@ from .models import MissAlignment
 data_module_dict = {
     "SHREC": SHRECDataModule,
 }
+
+# Define the early stopping callback
+early_stopping = EarlyStopping(
+    monitor="train loss",  # metric to monitor
+    patience=10,  # epochs with no improvement after which training will stop
+    mode="min",  # mode for min loss; 'max' if maximizing metric
+    min_delta=0.001,  # minimum change to qualify as an improvement
+)
 
 
 @cli.command(name="train", no_args_is_help=True)
@@ -59,6 +68,7 @@ def train_miss_align(
         deterministic=False,  # setting to True breaks on max_pool_3d
         limit_val_batches=0,  # turn on validation steps
         num_sanity_val_steps=0,
+        callbacks=[early_stopping],
     )
 
     # Train the model
@@ -83,8 +93,7 @@ def train_miss_align(
 
         model = MissAlignment()
         model.load_from_checkpoint(
-            model_training_config["checkpoint_path"],
-            **model_params
+            model_training_config["checkpoint_path"], **model_params
         )
 
         trainer.fit(model, datamodule=data_module)
