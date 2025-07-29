@@ -181,7 +181,6 @@ def optimize_shifts_shrec(
         loss.backward()
 
         # Store the loss value
-        print(loss.item())
         loss_values.append(loss.item())
 
         return loss
@@ -234,8 +233,8 @@ def evaluate_tilt_series(
     mean_diff_initial = torch.abs(
         ground_truth_alignment - tilt_series_raw.sample_translations
     )
-    initial_reconstruction = tilt_series_raw.reconstruct_tomogram(tomogram_shape, 128)
 
+    print(f"Aligning {tilt_series_name}...")
     tilt_series, loss = optimize_shifts_shrec(
         model,
         tilt_series_raw,  # is modified in-place
@@ -251,7 +250,6 @@ def evaluate_tilt_series(
     )
     shift_3d = get_shift_from_correlation_image(correlation)
     shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
-    print(shift_3d)
     shift_3d = shift_3d.repeat(n_tilts, 1)
 
     shifts_2d = project_shifts_3d_to_2d(
@@ -273,16 +271,8 @@ def evaluate_tilt_series(
 
     plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
 
-    aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
-
     mrcfile.write(
-        output_directory / f"{tilt_series_name}_before.mrc",
-        initial_reconstruction.detach().numpy(),
-        voxel_size=10,
-        overwrite=True,
-    )
-    mrcfile.write(
-        output_directory / f"{tilt_series_name}_after.mrc",
+        output_directory / f"{tilt_series_name}_reconstruction.mrc",
         aligned_reconstruction.detach().numpy(),
         voxel_size=10,
         overwrite=True,

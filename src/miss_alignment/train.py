@@ -16,23 +16,6 @@ data_module_dict = {
     "SHREC": SHRECDataModule,
 }
 
-# Define the early stopping callback
-early_stopping = EarlyStopping(
-    monitor="loss",  # metric to monitor
-    patience=10,  # epochs with no improvement after which training will stop
-    mode="min",  # mode for min loss; 'max' if maximizing metric
-    min_delta=0.001,  # minimum change to qualify as an improvement
-)
-
-# Monitor validation loss (save when it decreases)
-checkpoint_callback = ModelCheckpoint(
-    monitor="loss",
-    mode="min",  # 'min' for loss, 'max' for accuracy
-    save_top_k=5,  # Keep 5 best checkpoints
-    filename="epoch-{epoch:02d}-loss-{loss:.2f}",
-    save_on_train_epoch_end=True,  # Save after each epoch
-)
-
 
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
@@ -68,6 +51,23 @@ def train_miss_align(
     )
 
     for _ in range(3):  # iterations of MissAlignment to run
+        # Define the early stopping callback
+        early_stopping = EarlyStopping(
+            monitor="loss_epoch",  # metric to monitor
+            patience=10,  # epochs with no improvement after which training will stop
+            mode="min",  # mode for min loss; 'max' if maximizing metric
+            min_delta=0.001,  # minimum change to qualify as an improvement
+        )
+
+        # Monitor validation loss (save when it decreases)
+        checkpoint_callback = ModelCheckpoint(
+            monitor="loss_epoch",
+            mode="min",  # 'min' for loss, 'max' for accuracy
+            save_top_k=5,  # Keep 5 best checkpoints
+            filename="{epoch}--{step}--{loss_epoch:.2f}",
+            save_on_train_epoch_end=True,  # Save after each epoch
+        )
+
         # Set up trainer with parameters from config
         trainer = Trainer(
             accelerator="auto",
@@ -79,7 +79,7 @@ def train_miss_align(
             deterministic=False,  # setting to True breaks on max_pool_3d
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
-            callbacks=[early_stopping],
+            callbacks=[early_stopping, checkpoint_callback],
         )
 
         # Train the model
@@ -109,6 +109,7 @@ def train_miss_align(
 
             trainer.fit(model, datamodule=data_module)
 
+        print(trainer.checkpoint_callback.best_model_path)
         # update the config with the trained model
         model_training_config["model_checkpoint"] = (
             trainer.checkpoint_callback.best_model_path

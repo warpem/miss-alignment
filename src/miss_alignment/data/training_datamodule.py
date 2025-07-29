@@ -97,11 +97,10 @@ class SHRECDataModule(pl.LightningDataModule):
 
     def align_dataset(self, model, patches_per_dim, patch_size, ground_truth_dir):
         """Align the tomograms in the dataset with the model."""
+        output_directory = self.dataset_directory / f"iter{self.training_iteration + 1}"
+        output_directory.mkdir(parents=True, exist_ok=True)
         for file_path, tilt_series in self.train_dataset.tomos:
             tilt_series_name = file_path.stem
-            output_directory = (
-                self.dataset_directory / f"iter{self.training_iteration + 1}"
-            )
             tilt_series_ground_truth = read_tomogram_from_pickle(
                 ground_truth_dir / f"{tilt_series_name}.pickle"
             )
@@ -112,7 +111,7 @@ class SHRECDataModule(pl.LightningDataModule):
                 tilt_series,
                 patches_per_dim,
                 patch_size,
-                (180, 512, 512),
+                (128, 128, 128),  # (180, 512, 512),
                 output_directory,
                 tilt_series_ground_truth=tilt_series_ground_truth,
                 device="cpu",

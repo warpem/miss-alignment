@@ -107,9 +107,8 @@ class MissAlignment(pl.LightningModule):
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
-        example_type = target.sum(dim=-1)
-        score_aligned = torch.mean(scores[example_type == 1])
-        score_misaligned = torch.mean(scores[example_type == -1])
+        score_aligned = torch.mean(scores[target == 1])
+        score_misaligned = torch.mean(scores[target == -1])
 
         return loss, batch_size, score_aligned, score_misaligned
 
@@ -121,25 +120,28 @@ class MissAlignment(pl.LightningModule):
         loss, batch_size, score_aligned, score_misaligned = self._common_step(batch)
 
         self.log(
-            name="loss",
+            name="loss_epoch",
             value=loss,
             batch_size=batch_size,
             prog_bar=True,
-            on_step=True,
+            on_step=False,
+            on_epoch=True,
         )
         self.log(
             name="train_score_aligned",
             value=score_aligned,
             batch_size=batch_size,
             prog_bar=True,
-            on_step=True,
+            on_step=False,
+            on_epoch=True,
         )
         self.log(
             name="train_score_misaligned",
             value=score_misaligned,
             batch_size=batch_size,
             prog_bar=True,
-            on_step=True,
+            on_step=False,
+            on_epoch=True,
         )
 
         # Log the learning rate
@@ -149,7 +151,8 @@ class MissAlignment(pl.LightningModule):
             value=current_lr,
             batch_size=batch_size,
             prog_bar=True,
-            on_step=True,
+            on_step=False,
+            on_epoch=True,
         )
 
         return loss
@@ -206,7 +209,7 @@ class MissAlignment(pl.LightningModule):
                     factor=scheduler_config["factor"],
                     patience=scheduler_config["patience"],
                 ),
-                "monitor": "loss",
+                "monitor": "loss_epoch",
                 "interval": scheduler_config["interval"],
                 # tracks epochs
                 "frequency": 1,
