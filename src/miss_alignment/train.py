@@ -5,7 +5,7 @@ from functools import partial
 import typer
 import torch
 from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import SHRECDataModule
@@ -18,10 +18,19 @@ data_module_dict = {
 
 # Define the early stopping callback
 early_stopping = EarlyStopping(
-    monitor="train loss",  # metric to monitor
+    monitor="loss",  # metric to monitor
     patience=10,  # epochs with no improvement after which training will stop
     mode="min",  # mode for min loss; 'max' if maximizing metric
     min_delta=0.001,  # minimum change to qualify as an improvement
+)
+
+# Monitor validation loss (save when it decreases)
+checkpoint_callback = ModelCheckpoint(
+    monitor="loss",
+    mode="min",  # 'min' for loss, 'max' for accuracy
+    save_top_k=5,  # Keep 5 best checkpoints
+    filename="epoch-{epoch:02d}-loss-{loss:.2f}",
+    save_on_train_epoch_end=False,  # Save after validation
 )
 
 

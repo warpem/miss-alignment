@@ -120,21 +120,21 @@ class MissAlignment(pl.LightningModule):
         loss, batch_size, score_aligned, score_misaligned = self._common_step(batch)
 
         self.log(
-            name="train loss",
+            name="loss",
             value=loss,
             batch_size=batch_size,
             prog_bar=True,
             on_step=True,
         )
         self.log(
-            name="train score aligned",
+            name="train_score_aligned",
             value=score_aligned,
             batch_size=batch_size,
             prog_bar=True,
             on_step=True,
         )
         self.log(
-            name="train score misaligned",
+            name="train_score_misaligned",
             value=score_misaligned,
             batch_size=batch_size,
             prog_bar=True,
@@ -144,7 +144,7 @@ class MissAlignment(pl.LightningModule):
         # Log the learning rate
         current_lr = self.optimizers().param_groups[0]["lr"]
         self.log(
-            name="learning rate",
+            name="learning_rate",
             value=current_lr,
             batch_size=batch_size,
             prog_bar=True,
@@ -207,7 +207,7 @@ class MissAlignment(pl.LightningModule):
                     factor=scheduler_config.get("factor", 0.5),
                     patience=scheduler_config.get("patience", 5),
                 ),
-                "monitor": "train loss",
+                "monitor": "loss",
                 "interval": scheduler_config.get("monitor", "epoch"),
                 # tracks epochs
                 "frequency": 1,
