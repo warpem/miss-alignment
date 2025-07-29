@@ -6,6 +6,8 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
 from miss_alignment.data.training_dataset import SHRECDataset
+from miss_alignment.align_shrec import evaluate_tilt_series
+from miss_alignment.data.io import read_tomogram
 
 
 class SHRECDataModule(pl.LightningDataModule):
@@ -91,11 +93,27 @@ class SHRECDataModule(pl.LightningDataModule):
             pin_memory=True,
         )
 
-    def align_dataset(self, model):
+    def align_dataset(self, model, patches_per_dim, patch_size, ground_truth_dir):
         """Align the tomograms in the dataset with the model."""
-        for tilt_series in self.train_dataset.tomograms:
-            # run alignment
-            # store alignment to next iteration folder
-            continue
-        # update iteration
-        # update state of the datamodule and dataset to point to new iteration
+        for file_path, tilt_series in self.train_dataset.tomograms:
+            tilt_series_name = file_path.stem
+            output_directory = (
+                self.dataset_directory / f"iter{self.training_iteration + 1}"
+            )
+            tilt_series_ground_truth = read_tomogram(
+                ground_truth_dir / f"{tilt_series_name}.pickle"
+            )
+            # results are written to the output_directory
+            evaluate_tilt_series(
+                model,
+                tilt_series_name,
+                tilt_series,
+                patches_per_dim,
+                patch_size,
+                (180, 512, 512),
+                output_directory,
+                tilt_series_ground_truth=tilt_series_ground_truth,
+                device="cpu",
+            )
+        self.training_iteration += 1
+        self.setup(stage="fit")

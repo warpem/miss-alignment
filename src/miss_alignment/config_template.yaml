@@ -42,3 +42,9 @@ shift_generation:
   outlier_max_shift: 20.0  # (10 Å) outlier can maximally go to this value
   high_tilt_outlier_probability: .4
   high_tilt_max_shift: 30.0  # (10 Å) specific strong shifts for high tilt images up to this value
+
+tilt_series_alignment:
+  patches_per_dim: (1, 2, 2)
+  patch_size: 128
+  # tomogram_shape: (180, 512, 512)  # This is known and fixed per tomogram
+  ground_truth_fetch_directory: /path/to/gt/  # directory to fetch ground truth from, name.pickle name should match

@@ -203,12 +203,12 @@ class MissAlignment(pl.LightningModule):
             plateau_scheduler = {
                 "scheduler": ReduceLROnPlateau(
                     optimizer,
-                    mode=scheduler_config.get("mode", "min"),
-                    factor=scheduler_config.get("factor", 0.5),
-                    patience=scheduler_config.get("patience", 5),
+                    mode=scheduler_config["mode"],
+                    factor=scheduler_config["factor"],
+                    patience=scheduler_config["patience"],
                 ),
                 "monitor": "loss",
-                "interval": scheduler_config.get("monitor", "epoch"),
+                "interval": scheduler_config["monitor"],
                 # tracks epochs
                 "frequency": 1,
             }

@@ -30,7 +30,7 @@ checkpoint_callback = ModelCheckpoint(
     mode="min",  # 'min' for loss, 'max' for accuracy
     save_top_k=5,  # Keep 5 best checkpoints
     filename="epoch-{epoch:02d}-loss-{loss:.2f}",
-    save_on_train_epoch_end=False,  # Save after validation
+    save_on_train_epoch_end=True,  # Save after each epoch
 )
 
 
@@ -49,6 +49,7 @@ def train_miss_align(
     model_training_config = config["model_training"]
     data_loading_config = config["data_loading"]
     shift_generation_config = config["shift_generation"]
+    alignment_config = config["tilt_series_alignment"]
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
@@ -66,44 +67,61 @@ def train_miss_align(
         training_iteration=general_config["training_iteration"],
     )
 
-    # Set up trainer with parameters from config
-    trainer = Trainer(
-        accelerator="auto",
-        devices="auto",
-        default_root_dir=model_training_config["output_directory"],
-        max_epochs=model_training_config["epochs"],
-        log_every_n_steps=model_training_config["log_every_n_steps"],
-        enable_checkpointing=True,
-        deterministic=False,  # setting to True breaks on max_pool_3d
-        limit_val_batches=0,  # turn on validation steps
-        num_sanity_val_steps=0,
-        callbacks=[early_stopping],
-    )
+    for _ in range(3):  # iterations of MissAlignment to run
+        # Set up trainer with parameters from config
+        trainer = Trainer(
+            accelerator="auto",
+            devices="auto",
+            default_root_dir=model_training_config["output_directory"],
+            max_epochs=model_training_config["epochs"],
+            log_every_n_steps=model_training_config["log_every_n_steps"],
+            enable_checkpointing=True,
+            deterministic=False,  # setting to True breaks on max_pool_3d
+            limit_val_batches=0,  # turn on validation steps
+            num_sanity_val_steps=0,
+            callbacks=[early_stopping],
+        )
 
-    # Train the model
-    if general_config["resume_training_from_checkpoint"]:
-        model = MissAlignment()
-        trainer.fit(
+        # Train the model
+        if general_config["resume_training_from_checkpoint"]:
+            model = MissAlignment()
+            trainer.fit(
+                model,
+                datamodule=data_module,
+                ckpt_path=model_training_config["checkpoint_path"],
+            )
+        else:
+            # Initialize model with parameters from config
+            model_params = {
+                "learning_rate": model_training_config["learning_rate"],
+                "margin": model_training_config["margin"],
+                "weight_decay": model_training_config["weight_decay"],
+                "warm_up_steps": model_training_config["warm_up_steps"],
+            }
+
+            # Add learning rate scheduler if specified in config
+            if "lr_scheduler" in model_training_config:
+                model_params["lr_scheduler"] = model_training_config["lr_scheduler"]
+
+            model = MissAlignment()
+            model.load_from_checkpoint(
+                model_training_config["checkpoint_path"], **model_params
+            )
+
+            trainer.fit(model, datamodule=data_module)
+
+        # update the config with the trained model
+        model_training_config["checkpoint_path"] = (
+            trainer.checkpoint_callback.best_model_path
+        )
+
+        # run alignment optimization
+        model.freeze()  # freeze model to perform alignments
+        data_module.align_dataset(
             model,
-            datamodule=data_module,
-            ckpt_path=model_training_config["checkpoint_path"],
-        )
-    else:
-        # Initialize model with parameters from config
-        model_params = {
-            "learning_rate": model_training_config["learning_rate"],
-            "margin": model_training_config["margin"],
-            "weight_decay": model_training_config["weight_decay"],
-        }
+            alignment_config["patches_per_dim"],
+            alignment_config["patch_size"],
+            alignment_config["ground_truth_fetch_directory"],
+        )  # data_module will update automatically to point to new files
 
-        # Add learning rate scheduler if specified in config
-        if "lr_scheduler" in model_training_config:
-            model_params["lr_scheduler"] = model_training_config["lr_scheduler"]
-
-        model = MissAlignment()
-        model.load_from_checkpoint(
-            model_training_config["checkpoint_path"], **model_params
-        )
-
-        trainer.fit(model, datamodule=data_module)
     return None

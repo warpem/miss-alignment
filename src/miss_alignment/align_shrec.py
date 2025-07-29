@@ -1,9 +1,9 @@
 import typer
 from pathlib import Path
+from typing import Optional
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 
-import pickle
 import mrcfile
 import torch
 import einops
@@ -14,22 +14,8 @@ import matplotlib.pyplot as plt
 
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from miss_alignment.models import MissAlignment
-
-
-def _save_tomo_to_folder(data: Tomogram, folder: Path, name: str) -> None:
-    tilt_series_mrc = name + ".mrc"
-    metadata = name + ".pickle"
-    with mrcfile.new(folder / tilt_series_mrc, overwrite=True) as mrc:
-        mrc.set_data(data.images.numpy())
-        mrc.voxel_size = 10
-    data_dict = {
-        "tilt_series": tilt_series_mrc,
-        "tilt_angles": data.tilt_angles.tolist(),
-        "tilt_axis_angle": data.tilt_axis_angle.tolist(),
-        "sample_translations": data.sample_translations.tolist(),
-    }
-    with open(folder / metadata, "wb") as out:
-        pickle.dump(data_dict, out)
+from miss_alignment.data import SHRECDataModule
+from miss_alignment.data.io import save_tomogram
 
 
 def calculate_cross_correlation(
@@ -218,6 +204,100 @@ def optimize_shifts_shrec(
     return tilt_series, loss_values
 
 
+def evaluate_tilt_series(
+    model: MissAlignment,
+    tilt_series_name: str,
+    tilt_series_raw: Tomogram,
+    patches_per_dim: tuple[int, int, int],
+    patch_size: int,
+    tomogram_shape: tuple[int, int, int],
+    output_directory: Path,
+    tilt_series_ground_truth: Optional[Tomogram] = None,
+    device: str = "cpu",
+) -> Tomogram:
+    d, h, w = tomogram_shape
+    dc, hc, wc = d // 2, h // 2, w // 2
+
+    offset = patch_size // 2
+
+    position_grid = []
+    zs = np.linspace(offset, d - offset, patches_per_dim[0]) - dc
+    ys = np.linspace(offset, h - offset, patches_per_dim[1]) - hc
+    xs = np.linspace(offset, w - offset, patches_per_dim[2]) - wc
+    for z in zs:
+        for y in ys:
+            for x in xs:
+                position_grid.append((z, y, x))
+
+    ground_truth_alignment = tilt_series_ground_truth.sample_translations
+    n_tilts, _, _ = tilt_series_ground_truth.images.shape
+
+    ground_truth_reconstruction = tilt_series_ground_truth.reconstruct_tomogram(
+        tomogram_shape, 128
+    )
+
+    mean_diff_initial = torch.abs(
+        ground_truth_alignment - tilt_series_raw.sample_translations
+    )
+    initial_reconstruction = tilt_series_raw.reconstruct_tomogram(tomogram_shape, 128)
+
+    tilt_series, loss = optimize_shifts_shrec(
+        model,
+        tilt_series_raw,  # is modified in-place
+        position_grid,
+        patch_size,
+        device,
+    )
+
+    aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
+
+    correlation = calculate_cross_correlation(
+        ground_truth_reconstruction, aligned_reconstruction
+    )
+    shift_3d = get_shift_from_correlation_image(correlation)
+    shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
+    print(shift_3d)
+    shift_3d = shift_3d.repeat(n_tilts, 1)
+
+    shifts_2d = project_shifts_3d_to_2d(
+        shift_3d, tilt_series.projection_matrices[..., :3, :3]
+    )
+    tilt_series.sample_translations += shifts_2d
+
+    mean_diff_final = torch.abs(
+        ground_truth_alignment - tilt_series.sample_translations
+    )
+
+    fig, ax = plt.subplots(1, 2)
+    ax[0].plot(mean_diff_initial[:, 0], label="initial y")
+    ax[0].plot(mean_diff_final[:, 0], label="final y")
+    ax[1].plot(mean_diff_initial[:, 1], label="initial x")
+    ax[1].plot(mean_diff_final[:, 1], label="final x")
+    ax[0].legend()
+    ax[1].legend()
+
+    plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
+
+    aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
+
+    mrcfile.write(
+        output_directory / f"{tilt_series_name}_before.mrc",
+        initial_reconstruction.detach().numpy(),
+        voxel_size=10,
+        overwrite=True,
+    )
+    mrcfile.write(
+        output_directory / f"{tilt_series_name}_after.mrc",
+        aligned_reconstruction.detach().numpy(),
+        voxel_size=10,
+        overwrite=True,
+    )
+
+    save_tomogram(tilt_series, output_directory / f"{tilt_series_name}.pickle")
+
+    return tilt_series
+
+
 @cli.command(name="align_shrec", no_args_is_help=True)
 def align_shrec(
     model_checkpoint: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
@@ -270,113 +350,33 @@ def align_shrec(
     model.freeze()
 
     # initialize the dataset
-    datamodule = MissAlignmentDataModule(
+    datamodule = SHRECDataModule(
         test_data_directory,
         dataset_type="SHREC",
     )
     datamodule.setup(stage="validate")
-    ground_truth = MissAlignmentDataModule(
+    ground_truth = SHRECDataModule(
         test_data_ground_truth,
         dataset_type="SHREC",
     )
     ground_truth.setup(stage="validate")
     tomograms = datamodule.test_dataset.tomos
     tomograms_ground_truth = ground_truth.test_dataset.tomos
-    tomogram_shape = (180, 512, 512)
-    d, h, w = tomogram_shape
-    tomogram_center = tuple(x // 2 for x in tomogram_shape)
-    dc, hc, wc = tomogram_center
-
-    offset = patch_size // 2
-
-    position_grid = []
-    ys = np.linspace(offset, h - offset, 4) - hc
-    xs = np.linspace(offset, w - offset, 4) - wc
-    for y in ys:
-        for x in xs:
-            position_grid.append((0, y, x))
 
     for test, ground_truth in zip(tomograms, tomograms_ground_truth):
         file_path, tilt_series = test
         file_name = file_path.stem
         _, tilt_series_ground_truth = ground_truth
-        ground_truth_alignment = tilt_series_ground_truth.sample_translations
-        n_tilts, _, _ = tilt_series_ground_truth.images.shape
-
-        ground_truth_reconstruction = tilt_series_ground_truth.reconstruct_tomogram(
-            tomogram_shape, 128
-        )
-
-        # if not any([x in file_name for x in ["2"]]):
-        #     continue
-        print(file_name)
-        mean_diff_initial = torch.abs(
-            ground_truth_alignment - tilt_series.sample_translations
-        )
-        initial_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
-
-        _, loss = optimize_shifts_shrec(
+        evaluate_tilt_series(
             model,
-            tilt_series,  # is modified in-place
-            position_grid,
-            patch_size,
-            "cpu",
+            file_name,
+            tilt_series,
+            (1, 4, 4),
+            128,
+            (180, 512, 512),
+            output_directory,
+            tilt_series_ground_truth=tilt_series_ground_truth,
+            device="cpu",
         )
-
-        aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
-
-        correlation = calculate_cross_correlation(
-            ground_truth_reconstruction, aligned_reconstruction
-        )
-        shift_3d = get_shift_from_correlation_image(correlation)
-        shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
-        print(shift_3d)
-        shift_3d = shift_3d.repeat(n_tilts, 1)
-
-        shifts_2d = project_shifts_3d_to_2d(
-            shift_3d, tilt_series.projection_matrices[..., :3, :3]
-        )
-        tilt_series.sample_translations += shifts_2d
-
-        mean_diff_final = torch.abs(
-            ground_truth_alignment - tilt_series.sample_translations
-        )
-
-        fig, ax = plt.subplots(1, 2)
-        ax[0].plot(mean_diff_initial[:, 0], label="initial y")
-        ax[0].plot(mean_diff_final[:, 0], label="final y")
-        ax[1].plot(mean_diff_initial[:, 1], label="initial x")
-        ax[1].plot(mean_diff_final[:, 1], label="final x")
-        ax[0].legend()
-        ax[1].legend()
-
-        plt.savefig(output_directory / f"{file_name}_yx_diff_per_tilt.png")
-
-        print(mean_diff_initial.mean(dim=0))
-        print(mean_diff_final.mean(dim=0))
-
-        aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
-
-        mrcfile.write(
-            output_directory / f"{file_name}_before.mrc",
-            initial_reconstruction.detach().numpy(),
-            voxel_size=10,
-            overwrite=True,
-        )
-        mrcfile.write(
-            output_directory / f"{file_name}_after.mrc",
-            aligned_reconstruction.detach().numpy(),
-            voxel_size=10,
-            overwrite=True,
-        )
-
-        _save_tomo_to_folder(tilt_series, output_directory, file_name)
-
-        # viewer = napari.Viewer()
-        # viewer.add_image(initial_reconstruction.detach().numpy(), name="initial")
-        # viewer.add_image(aligned_reconstruction.detach().numpy(), name="aligned")
-        # napari.run()
-
-        del initial_reconstruction, aligned_reconstruction
 
     return None
