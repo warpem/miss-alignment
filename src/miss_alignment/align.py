@@ -71,7 +71,7 @@ def optimize_alignment(
 
     # get model
     model = MissAlignment.load_from_checkpoint(model_checkpoint, map_location="cpu")
-    model.eval()
+    model.freeze()
 
     # initialize the dataset
     dataset = EMDBDataset(test_data_directory, train=False)

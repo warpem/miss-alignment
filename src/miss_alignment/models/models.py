@@ -3,9 +3,10 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import LinearLR
 
-# from ._resnet import resnet3d_18
-from ._compact import Compact3DConvNet
+# from miss_alignment.models import resnet3d_18
+from miss_alignment.models import Compact3DConvNet
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -33,7 +34,7 @@ class TripletMarginRankingLoss(nn.Module):
         Parameters
         ----------
         embeddings : torch.Tensor
-            Tensor of shape (n, embedding_dim)
+            Tensor of shape (batch_size, 3)
         triplet_indices : torch.Tensor
             Tensor of shape (batch_size, 3) where each row contains indices
             for [anchor_idx, positive_idx, negative_idx]
@@ -69,14 +70,23 @@ class MissAlignment(pl.LightningModule):
     num_classes: int = 1
 
     def __init__(
-        self, learning_rate: float = 1e-04, margin=0.5, weight_decay: float = 0
+        self,
+        learning_rate: float = 1e-04,
+        warmup_steps: int = 500,
+        weight_decay: float = 0,
+        margin: float = 0.5,
+        lr_scheduler: dict | None = None,
     ):
         super().__init__()
-        self.learning_rate = learning_rate
-        self.margin = margin
-        self.weight_decay = weight_decay
-        self.warmup_steps = 500
+
+        # save hyperparams to self.hparams
         self.save_hyperparameters()
+
+        # store for convenience
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.warmup_steps = warmup_steps
+
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
 
@@ -134,7 +144,7 @@ class MissAlignment(pl.LightningModule):
         # Log the learning rate
         current_lr = self.optimizers().param_groups[0]["lr"]
         self.log(
-            name="learning_rate",
+            name="learning rate",
             value=current_lr,
             batch_size=batch_size,
             prog_bar=True,
@@ -147,6 +157,14 @@ class MissAlignment(pl.LightningModule):
         pass
 
     def configure_optimizers(self):
+        """Configure optimizer and learning rate schedulers.
+
+        Returns
+        -------
+        dict or optimizer
+            If lr_scheduler is configured, returns dict with optimizer and schedulers.
+            Otherwise returns optimizer only.
+        """
         # Use AdamW if weight_decay is specified, otherwise use Adam
         if self.weight_decay > 0:
             optimizer = torch.optim.AdamW(
@@ -160,15 +178,19 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
-        # Warm-up scheduler (linear warm-up)
-        from torch.optim.lr_scheduler import LinearLR
-
+        # Warm-up scheduler (linear warm-up) - tracks steps
         warmup_scheduler = LinearLR(
             optimizer,
-            start_factor=0.1,  # Start at 10% of self.lr
+            start_factor=0.001,  # Start at 0.1% of self.lr
             end_factor=1.0,  # End at 100% of self.lr
             total_iters=self.warmup_steps,
         )
+
+        warmup_config = {
+            "scheduler": warmup_scheduler,
+            "interval": "step",  # track steps, not epochs
+            "frequency": 1,
+        }
 
         # Check if lr_scheduler is defined in hparams
         if (
@@ -178,17 +200,21 @@ class MissAlignment(pl.LightningModule):
             from torch.optim.lr_scheduler import ReduceLROnPlateau
 
             scheduler_config = self.hparams.lr_scheduler
-            scheduler = {
+            plateau_scheduler = {
                 "scheduler": ReduceLROnPlateau(
                     optimizer,
                     mode=scheduler_config.get("mode", "min"),
                     factor=scheduler_config.get("factor", 0.5),
                     patience=scheduler_config.get("patience", 10),
                 ),
-                "monitor": scheduler_config.get("monitor", "train loss"),
-                "interval": scheduler_config.get("interval", "epoch"),
-                "frequency": scheduler_config.get("frequency", 1),
+                "monitor": "train loss",
+                "interval": "epoch",  # tracks epochs
+                "frequency": 1,
             }
-            return [optimizer], [scheduler]
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": [warmup_config, plateau_scheduler],
+            }
 
-        return optimizer
+        # Return only warmup scheduler if no plateau scheduler configured
+        return {"optimizer": optimizer, "lr_scheduler": warmup_config}

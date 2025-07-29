@@ -13,7 +13,6 @@ from torch_tomogram import Tomogram
 import matplotlib.pyplot as plt
 
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
-from miss_alignment.data import MissAlignmentDataModule
 from miss_alignment.models import MissAlignment
 
 

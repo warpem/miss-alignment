@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from typing import Dict
 
-from miss_alignment.data import MissAlignmentDataModule
 from miss_alignment.models import MissAlignment
 
 
