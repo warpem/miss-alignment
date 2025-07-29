@@ -31,7 +31,7 @@ from .augmentation import (
     random_edge_mask,
     random_cube_mask,
 )
-from .io import read_tomogram
+from .io import read_tomogram_from_pickle
 
 
 class EMDBDataset(Dataset):
@@ -453,7 +453,7 @@ class SHRECDataset(Dataset):
     def _load_data(self):
         metadata = list(self.dataset_directory.glob("*.pickle"))
         for path in metadata:
-            tomogram = read_tomogram(metadata)
+            tomogram = read_tomogram_from_pickle(metadata)
             # ensure images are normalized
             tomogram.images -= einops.reduce(
                 tomogram.images, "tilt h w -> tilt 1 1", reduction="mean"

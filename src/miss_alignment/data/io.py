@@ -3,10 +3,10 @@ from torch_tomogram import Tomogram
 from pathlib import Path
 
 
-def save_tomogram(data: Tomogram, save_path: Path) -> None:
+def save_tomogram_to_pickle(data: Tomogram, save_path: Path) -> None:
     if save_path.suffix != ".pickle":
         raise ValueError("save_path must end with .pickle")
-    if 'cpu' != str(data.device):
+    if "cpu" != str(data.device):
         raise ValueError("the Tomogram data should be on CPU for saving")
     data_dict = {
         "tilt_series": data.images,
@@ -18,7 +18,7 @@ def save_tomogram(data: Tomogram, save_path: Path) -> None:
         pickle.dump(data_dict, outfile)
 
 
-def read_tomogram(save_path: Path) -> Tomogram:
+def read_tomogram_from_pickle(save_path: Path) -> Tomogram:
     with open(save_path, "rb") as infile:
         data_dict = pickle.load(infile)
     tomogram = Tomogram(

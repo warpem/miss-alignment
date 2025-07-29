@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from miss_alignment.models import MissAlignment
 from miss_alignment.data import SHRECDataModule
-from miss_alignment.data.io import save_tomogram
+from miss_alignment.data.io import save_tomogram_to_pickle
 
 
 def calculate_cross_correlation(
@@ -293,7 +293,9 @@ def evaluate_tilt_series(
         overwrite=True,
     )
 
-    save_tomogram(tilt_series, output_directory / f"{tilt_series_name}.pickle")
+    save_tomogram_to_pickle(
+        tilt_series, output_directory / f"{tilt_series_name}.pickle"
+    )
 
     return tilt_series
 

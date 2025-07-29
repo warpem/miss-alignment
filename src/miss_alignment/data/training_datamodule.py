@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from miss_alignment.data.training_dataset import SHRECDataset
 from miss_alignment.align_shrec import evaluate_tilt_series
-from miss_alignment.data.io import read_tomogram
+from miss_alignment.data.io import read_tomogram_from_pickle
 
 
 class SHRECDataModule(pl.LightningDataModule):
@@ -100,7 +100,7 @@ class SHRECDataModule(pl.LightningDataModule):
             output_directory = (
                 self.dataset_directory / f"iter{self.training_iteration + 1}"
             )
-            tilt_series_ground_truth = read_tomogram(
+            tilt_series_ground_truth = read_tomogram_from_pickle(
                 ground_truth_dir / f"{tilt_series_name}.pickle"
             )
             # results are written to the output_directory

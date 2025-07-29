@@ -8,7 +8,7 @@ from torch_fourier_rescale import fourier_rescale_2d
 from torch_tiltxcorr import tiltxcorr
 from torch_tomogram import Tomogram
 
-from miss_alignment.align_shrec import _save_tomo_to_folder
+from miss_alignment.data.io import save_tomogram_to_pickle
 
 
 def _read_shrec_alignment(file: Path) -> tuple[list]:
@@ -19,10 +19,10 @@ def _read_shrec_alignment(file: Path) -> tuple[list]:
 
 
 if __name__ == "__main__":
-    train_folder = Path("rescaled/ground_truth/train")
-    train_folder.mkdir(parents=True, exist_ok=True)
-    test_folder = Path("rescaled/ground_truth/test")
-    test_folder.mkdir(parents=True, exist_ok=True)
+    ground_truth_folder = Path("rescaled/ground_truth")
+    ground_truth_folder.mkdir(parents=True, exist_ok=True)
+    xcorr_alignment_folder = Path("rescaled/xcorr_alignment/")
+    xcorr_alignment_folder.mkdir(parents=True, exist_ok=True)
     reconstruct_and_show = False
 
     for i in range(10):
@@ -68,9 +68,9 @@ if __name__ == "__main__":
             sample_translations=xcorr_shifts,
         )  # invert the shifts because we employ a forward projection model!
 
-        # _save_tomo_to_folder(
-        #     xcorr_tomogram, test_folder if i > 6 else train_folder, f"model_{i}"
-        # )
+        save_tomogram_to_pickle(
+            xcorr_tomogram, xcorr_alignment_folder / f"model_{i}.pickle"
+        )
 
         ground_truth_tomogram = Tomogram(
             images=tilt_series,
@@ -79,8 +79,8 @@ if __name__ == "__main__":
             sample_translations=shifts,
         )
 
-        _save_tomo_to_folder(
-            ground_truth_tomogram, test_folder if i > 6 else train_folder, f"model_{i}"
+        save_tomogram_to_pickle(
+            ground_truth_tomogram, ground_truth_folder / f"model_{i}.pickle"
         )
 
         if reconstruct_and_show:
@@ -93,7 +93,7 @@ if __name__ == "__main__":
             # 180 is the box size of the grand model
             volume = ground_truth_tomogram.reconstruct_tomogram((180, 512, 512), 128)
             mrcfile.write(
-                train_folder / f"model_{i}_reconstruction.mrc",
+                ground_truth_folder / f"model_{i}_reconstruction.mrc",
                 volume.numpy(),
                 voxel_size=10,
                 overwrite=True,
