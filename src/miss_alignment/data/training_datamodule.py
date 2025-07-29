@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
 from miss_alignment.data.training_dataset import SHRECDataset
-from miss_alignment.align_shrec import evaluate_tilt_series
+from miss_alignment.alignment import evaluate_tilt_series
 from miss_alignment.data.io import read_tomogram_from_pickle
 
 
@@ -67,7 +67,9 @@ class SHRECDataModule(pl.LightningDataModule):
         # this is not done in the setup() because lightning specifically
         # calls this function with a single process to prevent race conditions
         if self.training_iteration == 0:
-            SHRECDataset(self.dataset_directory, self.shift_generator, download=True)
+            SHRECDataset(
+                self.dataset_directory_at_iteration, self.shift_generator, download=True
+            )
 
     def setup(self, stage: str = "fit"):
         """No stage for setup because this is used just for training."""
@@ -95,7 +97,7 @@ class SHRECDataModule(pl.LightningDataModule):
 
     def align_dataset(self, model, patches_per_dim, patch_size, ground_truth_dir):
         """Align the tomograms in the dataset with the model."""
-        for file_path, tilt_series in self.train_dataset.tomograms:
+        for file_path, tilt_series in self.train_dataset.tomos:
             tilt_series_name = file_path.stem
             output_directory = (
                 self.dataset_directory / f"iter{self.training_iteration + 1}"

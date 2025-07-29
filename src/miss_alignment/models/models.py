@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import LinearLR
+from typing import Optional
 
 # from miss_alignment.models import resnet3d_18
 from miss_alignment.models import Compact3DConvNet
@@ -75,7 +76,7 @@ class MissAlignment(pl.LightningModule):
         warmup_steps: int = 500,
         weight_decay: float = 0,
         margin: float = 0.5,
-        lr_scheduler: dict | None = None,
+        lr_scheduler: Optional[dict] = None,
     ):
         super().__init__()
 
@@ -179,15 +180,13 @@ class MissAlignment(pl.LightningModule):
             )
 
         # Warm-up scheduler (linear warm-up) - tracks steps
-        warmup_scheduler = LinearLR(
-            optimizer,
-            start_factor=0.001,  # Start at 0.1% of self.lr
-            end_factor=1.0,  # End at 100% of self.lr
-            total_iters=self.warmup_steps,
-        )
-
-        warmup_config = {
-            "scheduler": warmup_scheduler,
+        warmup_scheduler = {
+            "scheduler": LinearLR(
+                optimizer,
+                start_factor=0.001,  # Start at 0.1% of self.lr
+                end_factor=1.0,  # End at 100% of self.lr
+                total_iters=self.warmup_steps,
+            ),
             "interval": "step",  # track steps, not epochs
             "frequency": 1,
         }
@@ -208,14 +207,11 @@ class MissAlignment(pl.LightningModule):
                     patience=scheduler_config["patience"],
                 ),
                 "monitor": "loss",
-                "interval": scheduler_config["monitor"],
+                "interval": scheduler_config["interval"],
                 # tracks epochs
                 "frequency": 1,
             }
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": [warmup_config, plateau_scheduler],
-            }
+            return [optimizer], [warmup_scheduler, plateau_scheduler]
 
         # Return only warmup scheduler if no plateau scheduler configured
-        return {"optimizer": optimizer, "lr_scheduler": warmup_config}
+        return [optimizer], [warmup_scheduler]

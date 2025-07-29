@@ -64,7 +64,7 @@ def train_miss_align(
         batch_size=data_loading_config["batch_size"],
         target_size=data_loading_config["patch_size"],
         patches_per_tomogram=data_loading_config["patches_per_tomogram"],
-        training_iteration=general_config["training_iteration"],
+        training_iteration=general_config["start_at_iteration"],
     )
 
     for _ in range(3):  # iterations of MissAlignment to run
@@ -73,7 +73,7 @@ def train_miss_align(
             accelerator="auto",
             devices="auto",
             default_root_dir=model_training_config["output_directory"],
-            max_epochs=model_training_config["epochs"],
+            max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=model_training_config["log_every_n_steps"],
             enable_checkpointing=True,
             deterministic=False,  # setting to True breaks on max_pool_3d
@@ -88,30 +88,29 @@ def train_miss_align(
             trainer.fit(
                 model,
                 datamodule=data_module,
-                ckpt_path=model_training_config["checkpoint_path"],
+                ckpt_path=model_training_config["model_checkpoint"],
             )
         else:
             # Initialize model with parameters from config
             model_params = {
                 "learning_rate": model_training_config["learning_rate"],
-                "margin": model_training_config["margin"],
-                "weight_decay": model_training_config["weight_decay"],
-                "warm_up_steps": model_training_config["warm_up_steps"],
+                "margin": model_training_config["loss_margin"],
+                "weight_decay": float(model_training_config["weight_decay"]),
+                "warmup_steps": model_training_config["warmup_steps"],
             }
 
             # Add learning rate scheduler if specified in config
             if "lr_scheduler" in model_training_config:
                 model_params["lr_scheduler"] = model_training_config["lr_scheduler"]
 
-            model = MissAlignment()
-            model.load_from_checkpoint(
-                model_training_config["checkpoint_path"], **model_params
+            model = MissAlignment.load_from_checkpoint(
+                model_training_config["model_checkpoint"], **model_params
             )
 
             trainer.fit(model, datamodule=data_module)
 
         # update the config with the trained model
-        model_training_config["checkpoint_path"] = (
+        model_training_config["model_checkpoint"] = (
             trainer.checkpoint_callback.best_model_path
         )
 
@@ -121,7 +120,7 @@ def train_miss_align(
             model,
             alignment_config["patches_per_dim"],
             alignment_config["patch_size"],
-            alignment_config["ground_truth_fetch_directory"],
+            Path(alignment_config["ground_truth_fetch_directory"]),
         )  # data_module will update automatically to point to new files
 
     return None

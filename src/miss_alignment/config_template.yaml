@@ -10,10 +10,10 @@ model_training:
   model_checkpoint: /path/to/model.ckpt
   output_directory: /path/to/  # here model checkpoints are stored in lightning_log directories
   loss_margin: 0.5
-  initial_learning_rate: 1e-3
-  warm_up_steps: 200
+  learning_rate: 1.0e-3  # needs to be 1.0 for correct reading of sci format
+  warmup_steps: 200
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
-  weight_decay: 1e-4
+  weight_decay: 1.0e-4
   # Comment out to disable learning rate scheduler
   lr_scheduler:
     mode: "min"

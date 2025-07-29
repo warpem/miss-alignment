@@ -453,7 +453,7 @@ class SHRECDataset(Dataset):
     def _load_data(self):
         metadata = list(self.dataset_directory.glob("*.pickle"))
         for path in metadata:
-            tomogram = read_tomogram_from_pickle(metadata)
+            tomogram = read_tomogram_from_pickle(path)
             # ensure images are normalized
             tomogram.images -= einops.reduce(
                 tomogram.images, "tilt h w -> tilt 1 1", reduction="mean"
@@ -555,8 +555,8 @@ class SHRECDataset(Dataset):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         n_tilts, _, _ = rotation_matrices.shape
         # generate two sets of shifts, 3d shifts zyx
-        shifts_1 = self.generate_shifts(n_tilts, self.max_shift)
-        shifts_2 = self.generate_shifts(n_tilts, self.max_shift)
+        shifts_1 = self.generate_shifts(n_tilts)
+        shifts_2 = self.generate_shifts(n_tilts)
 
         # project the shifts to 2d
         shifts_1 = project_shifts_3d_to_2d(shifts_1, rotation_matrices)
