@@ -396,7 +396,7 @@ class SHRECDataset(Dataset):
     tomogram_dimensions = (180, 512, 512)
     # noise probably not needed for SHREC?
     noise_augmentation = False
-    zenodo_archive = ""
+    zenodo_archive = "16574872"
 
     def __init__(
         self,
@@ -443,12 +443,13 @@ class SHRECDataset(Dataset):
                 str(self.dataset_directory),
             ]
         )
-        zipped_archive = self.dataset_directory / "shrec21.zip"
-        shutil.unpack_archive(
-            zipped_archive,
-            extract_dir=self.dataset_directory,
-        )
-        os.remove(zipped_archive)
+        for archive in ("torch_tiltxcorr.zip", "ground_truth.zip"):
+            zipped_archive = self.dataset_directory / archive
+            shutil.unpack_archive(
+                zipped_archive,
+                extract_dir=self.dataset_directory,
+            )
+            os.remove(zipped_archive)
 
     def _load_data(self):
         metadata = list(self.dataset_directory.glob("*.pickle"))
