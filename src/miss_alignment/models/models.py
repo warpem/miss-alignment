@@ -207,7 +207,7 @@ class MissAlignment(pl.LightningModule):
                 mode=scheduler_config["mode"],
                 factor=scheduler_config["factor"],
                 patience=scheduler_config["patience"],
-                cooldown=3,
+                cooldown=3,  # use some cooldown before continuing tracking
             )
 
             scheduler = {
