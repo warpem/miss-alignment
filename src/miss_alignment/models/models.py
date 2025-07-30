@@ -3,7 +3,6 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import LinearLR
 from typing import Optional
 
 # from miss_alignment.models import resnet3d_18
@@ -157,6 +156,17 @@ class MissAlignment(pl.LightningModule):
 
         return loss
 
+    # Learning rate warm-up
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        # update params
+        optimizer.step(closure=optimizer_closure)
+
+        # manually warm up lr without a scheduler
+        if self.trainer.global_step < 200:
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / 200.0)
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr_scale * self.learning_rate
+
     def predict_step(self):
         pass
 
@@ -182,25 +192,25 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
-        # Warm-up scheduler (linear warm-up) - tracks steps
-        warmup = LinearLR(
-            optimizer,
-            start_factor=0.001,  # Start at 0.1% of self.lr
-            end_factor=1.0,  # End at 100% of self.lr
-            total_iters=self.warmup_steps,
-        )
-        warmup_scheduler = {
-            "scheduler": warmup,
-            "interval": "step",  # track steps, not epochs
-            "frequency": 1,
-        }
+        # # Warm-up scheduler (linear warm-up) - tracks steps
+        # warmup = LinearLR(
+        #     optimizer,
+        #     start_factor=0.001,  # Start at 0.1% of self.lr
+        #     end_factor=1.0,  # End at 100% of self.lr
+        #     total_iters=self.warmup_steps,
+        # )
+        # warmup_scheduler = {
+        #     "scheduler": warmup,
+        #     "interval": "step",  # track steps, not epochs
+        #     "frequency": 1,
+        # }
 
         # Check if lr_scheduler is defined in hparams
         if (
             hasattr(self.hparams, "lr_scheduler")
             and self.hparams.lr_scheduler is not None
         ):
-            from torch.optim.lr_scheduler import ReduceLROnPlateau, SequentialLR
+            from torch.optim.lr_scheduler import ReduceLROnPlateau
 
             scheduler_config = self.hparams.lr_scheduler
             plateau = ReduceLROnPlateau(
@@ -209,14 +219,11 @@ class MissAlignment(pl.LightningModule):
                 factor=scheduler_config["factor"],
                 patience=scheduler_config["patience"],
                 cooldown=3,  # use some cooldown before continuing tracking
+                min_lr=1e-6,
             )
 
             scheduler = {
-                "scheduler": SequentialLR(
-                    optimizer,
-                    schedulers=[warmup, plateau],
-                    milestones=[5],  # switch after 5 epochs
-                ),
+                "scheduler": plateau,
                 "monitor": "loss_epoch",
                 "interval": "epoch",
                 # tracks epochs
@@ -225,4 +232,4 @@ class MissAlignment(pl.LightningModule):
             return [optimizer], [scheduler]
 
         # Return only warmup scheduler if no plateau scheduler configured
-        return [optimizer], [warmup_scheduler]
+        return [optimizer]  # , [warmup_scheduler]
