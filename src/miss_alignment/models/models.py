@@ -162,8 +162,8 @@ class MissAlignment(pl.LightningModule):
         optimizer.step(closure=optimizer_closure)
 
         # manually warm up lr without a scheduler
-        if self.trainer.global_step < 200:
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / 200.0)
+        if self.trainer.global_step < self.warmup_steps:
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.warmup_steps)
             for pg in optimizer.param_groups:
                 pg["lr"] = lr_scale * self.learning_rate
 
