@@ -111,7 +111,7 @@ class SHRECDataModule(pl.LightningDataModule):
                 tilt_series,
                 patches_per_dim,
                 patch_size,
-                (128, 128, 128),  # (180, 512, 512),
+                (180, 512, 512),
                 output_directory,
                 tilt_series_ground_truth=tilt_series_ground_truth,
                 device="cpu",

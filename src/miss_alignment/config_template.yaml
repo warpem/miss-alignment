@@ -19,7 +19,6 @@ model_training:
     mode: "min"
     factor: 0.5
     patience: 5
-    interval: "epoch"
   max_epochs_per_iteration: 100  # absolute maximum of stopping
   log_every_n_steps: 50  # this logging might affect the stopping condition
 

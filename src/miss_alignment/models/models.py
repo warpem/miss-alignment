@@ -199,22 +199,29 @@ class MissAlignment(pl.LightningModule):
             hasattr(self.hparams, "lr_scheduler")
             and self.hparams.lr_scheduler is not None
         ):
-            from torch.optim.lr_scheduler import ReduceLROnPlateau
+            from torch.optim.lr_scheduler import ReduceLROnPlateau, SequentialLR
 
             scheduler_config = self.hparams.lr_scheduler
-            plateau_scheduler = {
-                "scheduler": ReduceLROnPlateau(
+            plateau_scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode=scheduler_config["mode"],
+                factor=scheduler_config["factor"],
+                patience=scheduler_config["patience"],
+                cooldown=3,
+            )
+
+            scheduler = {
+                "scheduler": SequentialLR(
                     optimizer,
-                    mode=scheduler_config["mode"],
-                    factor=scheduler_config["factor"],
-                    patience=scheduler_config["patience"],
+                    schedulers=[warmup_scheduler, plateau_scheduler],
+                    milestones=[5],  # switch after 5 epochs
                 ),
                 "monitor": "loss_epoch",
-                "interval": scheduler_config["interval"],
+                "interval": "epoch",
                 # tracks epochs
                 "frequency": 1,
             }
-            return [optimizer], [warmup_scheduler, plateau_scheduler]
+            return [optimizer], [scheduler]
 
         # Return only warmup scheduler if no plateau scheduler configured
         return [optimizer], [warmup_scheduler]
