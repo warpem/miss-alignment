@@ -183,13 +183,14 @@ class MissAlignment(pl.LightningModule):
             )
 
         # Warm-up scheduler (linear warm-up) - tracks steps
+        warmup = LinearLR(
+            optimizer,
+            start_factor=0.001,  # Start at 0.1% of self.lr
+            end_factor=1.0,  # End at 100% of self.lr
+            total_iters=self.warmup_steps,
+        )
         warmup_scheduler = {
-            "scheduler": LinearLR(
-                optimizer,
-                start_factor=0.001,  # Start at 0.1% of self.lr
-                end_factor=1.0,  # End at 100% of self.lr
-                total_iters=self.warmup_steps,
-            ),
+            "scheduler": warmup,
             "interval": "step",  # track steps, not epochs
             "frequency": 1,
         }
@@ -202,7 +203,7 @@ class MissAlignment(pl.LightningModule):
             from torch.optim.lr_scheduler import ReduceLROnPlateau, SequentialLR
 
             scheduler_config = self.hparams.lr_scheduler
-            plateau_scheduler = ReduceLROnPlateau(
+            plateau = ReduceLROnPlateau(
                 optimizer,
                 mode=scheduler_config["mode"],
                 factor=scheduler_config["factor"],
@@ -213,7 +214,7 @@ class MissAlignment(pl.LightningModule):
             scheduler = {
                 "scheduler": SequentialLR(
                     optimizer,
-                    schedulers=[warmup_scheduler, plateau_scheduler],
+                    schedulers=[warmup, plateau],
                     milestones=[5],  # switch after 5 epochs
                 ),
                 "monitor": "loss_epoch",
