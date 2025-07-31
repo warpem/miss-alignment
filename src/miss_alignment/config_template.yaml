@@ -17,10 +17,10 @@ model_training:
   lr_scheduler:
     mode: "min"
     factor: 0.5
-    patience: 5
+    patience: 3
   max_epochs_per_iteration: 100  # absolute maximum of stopping
-  log_every_n_steps: 50  # this logging might affect the stopping condition
-  warmup_steps: 200
+  warmup_steps: 500
+  loss_metric_steps: 1000
 
 data_loading:
   dataset_type: "SHREC"  # Options: "SHREC", "EMDB"
@@ -28,7 +28,7 @@ data_loading:
   download_data: True  # download data from zenodo to folder/iter0 if its empty
   batch_size: 32  # for SHREC these values seems solid:
   patch_size: 128  # batch size 32 | reconstruction size 128 ^ 3
-  patches_per_tomogram: 1000  # number of reconstruction locations to randomly sample
+  patches_per_tomogram: 5000  # number of reconstruction locations to randomly sample
 
 # this configures the shift generation for the contrastive training of MissAlignment 💃
 # all parameters are in units of 10Å (nm) as we assume to work with tilt-series sampled to 10A

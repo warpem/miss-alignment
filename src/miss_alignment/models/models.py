@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+from collections import deque
 
 # from miss_alignment.models import resnet3d_18
 from miss_alignment.models import Compact3DConvNet
@@ -75,6 +76,7 @@ class MissAlignment(pl.LightningModule):
         warmup_steps: int = 500,
         weight_decay: float = 0,
         margin: float = 0.5,
+        loss_metric_steps: int = 1000,
         lr_scheduler: Optional[dict] = None,
     ):
         super().__init__()
@@ -86,6 +88,10 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
+
+        # initialize buffer for loss values
+        self.loss_metric_steps = loss_metric_steps
+        self.loss_buffer = deque(maxlen=loss_metric_steps)
 
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
@@ -118,40 +124,38 @@ class MissAlignment(pl.LightningModule):
     ):
         loss, batch_size, score_aligned, score_misaligned = self._common_step(batch)
 
-        self.log(
-            name="loss_epoch",
-            value=loss,
-            batch_size=batch_size,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-        )
-        self.log(
-            name="train_score_aligned",
-            value=score_aligned,
-            batch_size=batch_size,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-        )
-        self.log(
-            name="train_score_misaligned",
-            value=score_misaligned,
-            batch_size=batch_size,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-        )
+        self.loss_buffer.append(loss.item())
+
+        if len(self.loss_buffer) == self.loss_metric_steps:
+            avg_loss = sum(self.loss_buffer) / self.loss_metric_steps
+            self.loss_buffer.clear()
+
+            # Force immediate logging regardless of log_every_n_steps
+            self.logger.log_metrics(
+                {
+                    "train_loss": avg_loss,
+                    "train_score_aligned": score_aligned,
+                    "train_score_misaligned": score_misaligned,
+                },
+                step=self.global_step,
+            )
+            self.log(  # add it to progress bar, this only works if
+                name="train_loss",  # log_every_n_steps has a frequency
+                value=avg_loss,  # that matches loss_metric_steps
+                prog_bar=True,
+                on_step=True,
+                on_epoch=False,
+                logger=False,
+            )
 
         # Log the learning rate
         current_lr = self.optimizers().param_groups[0]["lr"]
         self.log(
             name="learning_rate",
             value=current_lr,
-            batch_size=batch_size,
             prog_bar=True,
-            on_step=False,
-            on_epoch=True,
+            on_step=True,
+            on_epoch=False,
         )
 
         return loss
@@ -218,16 +222,15 @@ class MissAlignment(pl.LightningModule):
                 mode=scheduler_config["mode"],
                 factor=scheduler_config["factor"],
                 patience=scheduler_config["patience"],
-                cooldown=3,  # use some cooldown before continuing tracking
                 min_lr=1e-6,
             )
 
             scheduler = {
                 "scheduler": plateau,
-                "monitor": "loss_epoch",
-                "interval": "epoch",
-                # tracks epochs
-                "frequency": 1,
+                "monitor": "train_loss",
+                "interval": "step",
+                # tracks n_steps
+                "frequency": self.loss_metric_steps,
             }
             return [optimizer], [scheduler]
 

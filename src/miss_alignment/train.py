@@ -21,6 +21,7 @@ data_module_dict = {
 def train_miss_align(
     config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
     num_workers: int = 8,
+    iterations: int = 3,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
     # Load configuration from YAML file
@@ -50,20 +51,21 @@ def train_miss_align(
         training_iteration=general_config["start_at_iteration"],
     )
 
-    for _ in range(3):  # iterations of MissAlignment to run
+    for _ in range(iterations):  # iterations of MissAlignment to run
         # Define the early stopping callback
         early_stopping = EarlyStopping(
-            monitor="loss_epoch",  # metric to monitor
-            patience=10,  # epochs with no improvement after which training will stop
+            monitor="train_loss",  # metric to monitor
+            patience=3,  # steps with no improvement
             mode="min",  # mode for min loss; 'max' if maximizing metric
             min_delta=0.001,  # minimum change to qualify as an improvement
+            check_on_train_epoch_end=True,
         )
 
         # Monitor validation loss (save when it decreases)
         checkpoint_callback = ModelCheckpoint(
-            monitor="loss_epoch",
+            monitor="train_loss",
             mode="min",  # 'min' for loss, 'max' for accuracy
-            save_top_k=5,  # Keep 5 best checkpoints
+            save_top_k=3,  # Keep 5 best checkpoints
             filename="{epoch}--{step}--{loss_epoch:.2f}",
             save_on_train_epoch_end=True,  # Save after each epoch
         )
@@ -74,7 +76,7 @@ def train_miss_align(
             devices="auto",
             default_root_dir=model_training_config["output_directory"],
             max_epochs=model_training_config["max_epochs_per_iteration"],
-            log_every_n_steps=model_training_config["log_every_n_steps"],
+            log_every_n_steps=50,
             enable_checkpointing=True,
             deterministic=False,  # setting to True breaks on max_pool_3d
             limit_val_batches=0,  # turn on validation steps
@@ -97,6 +99,7 @@ def train_miss_align(
                 "margin": model_training_config["loss_margin"],
                 "weight_decay": float(model_training_config["weight_decay"]),
                 "warmup_steps": model_training_config["warmup_steps"],
+                "loss_metric_steps": model_training_config["loss_metric_steps"],
             }
 
             # Add learning rate scheduler if specified in config
