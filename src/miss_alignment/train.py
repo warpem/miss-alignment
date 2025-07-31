@@ -66,7 +66,7 @@ def train_miss_align(
             monitor="train_loss",
             mode="min",  # 'min' for loss, 'max' for accuracy
             save_top_k=3,  # Keep 5 best checkpoints
-            filename="{epoch}--{step}--{loss_epoch:.2f}",
+            filename="{epoch}--{step}--{train_loss:.2f}",
             save_on_train_epoch_end=True,  # Save after each epoch
         )
 
