@@ -15,7 +15,6 @@ model_training:
   weight_decay: 1.0e-4
   # Comment out to disable learning rate scheduler
   lr_scheduler:
-    mode: "min"
     factor: 0.5
     patience: 3
   max_epochs_per_iteration: 100  # absolute maximum of stopping

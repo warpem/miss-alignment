@@ -219,7 +219,7 @@ class MissAlignment(pl.LightningModule):
             scheduler_config = self.hparams.lr_scheduler
             plateau = ReduceLROnPlateau(
                 optimizer,
-                mode=scheduler_config["mode"],
+                mode="min",
                 factor=scheduler_config["factor"],
                 patience=scheduler_config["patience"],
                 min_lr=1e-6,
