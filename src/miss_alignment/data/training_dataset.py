@@ -7,6 +7,7 @@ import copy
 import subprocess
 import shutil
 import os
+import math
 
 import einops
 import numpy as np
@@ -403,7 +404,7 @@ class SHRECDataset(Dataset):
         directory: PathLike,
         shift_generator: Callable,  # make
         target_size: int = 64,
-        patches_per_tomogram: int = 1000,
+        samples_per_epoch: int = 32000,
         train: bool = True,
         download: bool = True,
     ):
@@ -412,7 +413,6 @@ class SHRECDataset(Dataset):
         self.target_size = target_size
         _offset = target_size // 2
         self.region = [x // 2 - _offset for x in self.tomogram_dimensions]
-        self.patches_per_tomogram = patches_per_tomogram
 
         if download:
             self.dataset_directory.mkdir(exist_ok=True, parents=True)
@@ -428,6 +428,7 @@ class SHRECDataset(Dataset):
         if len(self.tomos) == 0:
             raise ValueError("No tilt series found in directory")
 
+        self.patches_per_tomogram = math.ceil(samples_per_epoch / len(self.tomos))
         self.train = train
 
     @property

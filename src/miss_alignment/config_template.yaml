@@ -30,7 +30,6 @@ data_loading:
   download_data: True  # download data from zenodo to folder/iter0 if its empty
   batch_size: 32  # for SHREC these values seems solid:
   patch_size: 128  # batch size 32 | reconstruction size 128 ^ 3
-  patches_per_tomogram: 5000  # number of reconstruction locations to randomly sample
 
 # this configures the shift generation for the contrastive training of MissAlignment 💃
 # all parameters are in units of 10Å (nm) as we assume to work with tilt-series sampled to 10A

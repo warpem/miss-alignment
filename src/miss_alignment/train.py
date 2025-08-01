@@ -47,7 +47,7 @@ def train_miss_align(
         num_workers=num_workers,
         batch_size=data_loading_config["batch_size"],
         target_size=data_loading_config["patch_size"],
-        patches_per_tomogram=data_loading_config["patches_per_tomogram"],
+        loss_metric_steps=model_training_config["loss_metric_steps"],
         training_iteration=general_config["start_at_iteration"],
     )
 

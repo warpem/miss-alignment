@@ -41,7 +41,7 @@ class SHRECDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         batch_size: int = 4,
         target_size: int = 64,
-        patches_per_tomogram: int = 1000,
+        loss_metric_steps: int = 1000,
         training_iteration: int = 0,
     ):
         super().__init__()
@@ -53,7 +53,7 @@ class SHRECDataModule(pl.LightningDataModule):
         self.dataset_directory = Path(dataset_directory)
         self.training_iteration = training_iteration
         self.target_size = target_size
-        self.patches_per_tomogram = patches_per_tomogram
+        self.samples_per_epoch = loss_metric_steps * batch_size
         # function that generates shifts in 3D
         self.shift_generator = shift_generator
 
@@ -79,7 +79,7 @@ class SHRECDataModule(pl.LightningDataModule):
             self.dataset_directory_at_iteration,
             self.shift_generator,
             target_size=self.target_size,
-            patches_per_tomogram=self.patches_per_tomogram,
+            samples_per_epoch=self.samples_per_epoch,
             train=True,
         )
 
