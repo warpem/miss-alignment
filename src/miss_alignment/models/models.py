@@ -93,6 +93,7 @@ class MissAlignment(pl.LightningModule):
         # initialize buffer for loss values
         self.loss_metric_steps = loss_metric_steps
         self.loss_buffer = deque(maxlen=loss_metric_steps)
+        self.custom_train_loss = None
 
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
@@ -140,6 +141,7 @@ class MissAlignment(pl.LightningModule):
                 },
                 step=self.global_step,
             )
+            self.custom_train_loss = avg_loss
             self.log(  # add it to progress bar, this only works if
                 name="train_loss",  # log_every_n_steps has a frequency
                 value=avg_loss,  # that matches loss_metric_steps
@@ -247,9 +249,12 @@ class MAEarlyStopping(Callback):
         self.wait_count = 0
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        # if the custom loss buffer is empty the metric has just been logged
+        # if the custom loss buffer is empty the metric should have been logged
         if len(pl_module.loss_buffer) == 0:
-            current_score = pl_module.train_loss
+            if pl_module.custom_train_loss is None:
+                raise ValueError("Expected custom_train_loss to be set")
+
+            current_score = pl_module.custom_train_loss
 
             if (
                 self.best_score is None
