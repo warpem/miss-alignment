@@ -242,28 +242,32 @@ class MissAlignment(pl.LightningModule):
 
 
 class MAEarlyStopping(Callback):
-    def __init__(self, patience=4, min_delta=0.0):
+    def __init__(self, patience=4, min_delta=0.0, skip_first_n=0):
         self.patience = patience
         self.min_delta = min_delta
+        self.skip_first_n = skip_first_n
         self.best_score = None
         self.wait_count = 0
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         # if the custom loss buffer is empty the metric should have been logged
         if len(pl_module.loss_buffer) == 0:
-            if pl_module.custom_train_loss is None:
-                raise ValueError("Expected custom_train_loss to be set")
-
-            current_score = pl_module.custom_train_loss
-
-            if (
-                self.best_score is None
-                or current_score > self.best_score + self.min_delta
-            ):
-                self.best_score = current_score
-                self.wait_count = 0
+            if self.skip_first_n > 0:
+                self.skip_first_n -= 1
             else:
-                self.wait_count += 1
+                if pl_module.custom_train_loss is None:
+                    raise ValueError("Expected custom_train_loss to be set")
 
-            if self.wait_count >= self.patience:
-                trainer.should_stop = True
+                current_score = pl_module.custom_train_loss
+
+                if (
+                    self.best_score is None
+                    or current_score > self.best_score + self.min_delta
+                ):
+                    self.best_score = current_score
+                    self.wait_count = 0
+                else:
+                    self.wait_count += 1
+
+                if self.wait_count >= self.patience:
+                    trainer.should_stop = True

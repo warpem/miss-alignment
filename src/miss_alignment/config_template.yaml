@@ -23,6 +23,7 @@ model_training:
   early_stopping:
     patience: 4
     min_delta: 0.001
+    skip_first_n: 4  # skip the first few rounds
 
 data_loading:
   dataset_type: "SHREC"  # Options: "SHREC", "EMDB"

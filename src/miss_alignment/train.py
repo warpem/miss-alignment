@@ -59,6 +59,7 @@ def train_miss_align(
             patience=early_stopping_config["patience"],
             # minimum change to qualify as an improvement
             min_delta=early_stopping_config["min_delta"],
+            skip_first_n=early_stopping_config["skip_first_n"],
         )
 
         # save checkpoints based on training loss performance
