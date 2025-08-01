@@ -13,13 +13,16 @@ model_training:
   learning_rate: 1.0e-3  # needs to be 1.0 for correct reading of sci format
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
   weight_decay: 1.0e-4
+  max_epochs_per_iteration: 100  # absolute maximum of stopping
+  warmup_steps: 500
+  loss_metric_steps: 1000  # interval for averaging loss metric
   # Comment out to disable learning rate scheduler
   lr_scheduler:
     factor: 0.5
     patience: 3
-  max_epochs_per_iteration: 100  # absolute maximum of stopping
-  warmup_steps: 500
-  loss_metric_steps: 1000
+  early_stopping:
+    patience: 4
+    min_delta: 0.001
 
 data_loading:
   dataset_type: "SHREC"  # Options: "SHREC", "EMDB"

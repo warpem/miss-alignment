@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 from collections import deque
+from pytorch_lightning.callbacks import Callback
 
 # from miss_alignment.models import resnet3d_18
 from miss_alignment.models import Compact3DConvNet
@@ -236,3 +237,28 @@ class MissAlignment(pl.LightningModule):
 
         # Return only warmup scheduler if no plateau scheduler configured
         return [optimizer]  # , [warmup_scheduler]
+
+
+class MAEarlyStopping(Callback):
+    def __init__(self, patience=4, min_delta=0.0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_score = None
+        self.wait_count = 0
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # if the custom loss buffer is empty the metric has just been logged
+        if len(pl_module.loss_buffer) == 0:
+            current_score = pl_module.train_loss
+
+            if (
+                self.best_score is None
+                or current_score > self.best_score + self.min_delta
+            ):
+                self.best_score = current_score
+                self.wait_count = 0
+            else:
+                self.wait_count += 1
+
+            if self.wait_count >= self.patience:
+                trainer.should_stop = True

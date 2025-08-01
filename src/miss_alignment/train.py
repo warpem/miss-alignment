@@ -5,12 +5,12 @@ from functools import partial
 import typer
 import torch
 from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import SHRECDataModule
 from .data.shift_generation import generate_shifts
-from .models import MissAlignment
+from .models import MissAlignment, MAEarlyStopping
 
 data_module_dict = {
     "SHREC": SHRECDataModule,
@@ -53,21 +53,20 @@ def train_miss_align(
 
     for _ in range(iterations):  # iterations of MissAlignment to run
         # Define the early stopping callback
-        early_stopping = EarlyStopping(
-            monitor="train_loss",  # metric to monitor
-            patience=3,  # steps with no improvement
-            mode="min",  # mode for min loss; 'max' if maximizing metric
-            min_delta=0.001,  # minimum change to qualify as an improvement
-            check_on_train_epoch_end=True,
+        early_stopping = MAEarlyStopping(
+            # steps with no improvement
+            patience=model_training_config["patience"],
+            # minimum change to qualify as an improvement
+            min_delta=model_training_config["min_delta"],
         )
 
-        # Monitor validation loss (save when it decreases)
+        # save checkpoints based on training loss performance
         checkpoint_callback = ModelCheckpoint(
             monitor="train_loss",
             mode="min",  # 'min' for loss, 'max' for accuracy
             save_top_k=3,  # Keep 5 best checkpoints
             filename="{epoch}--{step}--{train_loss:.2f}",
-            save_on_train_epoch_end=True,  # Save after each epoch
+            every_n_train_steps=model_training_config["loss_metric_steps"],
         )
 
         # Set up trainer with parameters from config

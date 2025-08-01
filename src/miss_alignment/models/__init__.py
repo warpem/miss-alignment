@@ -5,10 +5,11 @@ from ._resnet import (
     resnet3d_50,
 )
 from ._compact import Compact3DConvNet
-from .models import MissAlignment
+from .models import MissAlignment, MAEarlyStopping
 
 __all__ = [
     "MissAlignment",
+    "MAEarlyStopping",
     "Compact3DConvNet",
     "resnet3d_18",
     "resnet3d_34",
