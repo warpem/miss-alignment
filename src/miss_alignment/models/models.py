@@ -262,7 +262,7 @@ class MAEarlyStopping(Callback):
 
                 if (
                     self.best_score is None
-                    or current_score > self.best_score + self.min_delta
+                    or current_score < self.best_score - self.min_delta
                 ):
                     self.best_score = current_score
                     self.wait_count = 0
