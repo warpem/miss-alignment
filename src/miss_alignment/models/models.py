@@ -225,6 +225,7 @@ class MissAlignment(pl.LightningModule):
                 mode="min",
                 factor=scheduler_config["factor"],
                 patience=scheduler_config["patience"],
+                cooldown=scheduler_config["cooldown"],
                 min_lr=1e-6,
             )
 

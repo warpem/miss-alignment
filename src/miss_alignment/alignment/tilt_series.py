@@ -282,4 +282,4 @@ def evaluate_tilt_series(
         tilt_series, output_directory / f"{tilt_series_name}.pickle"
     )
 
-    return tilt_series
+    return tilt_series, loss

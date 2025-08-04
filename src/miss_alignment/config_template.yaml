@@ -19,7 +19,8 @@ model_training:
   # Comment out to disable learning rate scheduler
   lr_scheduler:
     factor: 0.5
-    patience: 3
+    patience: 1
+    cooldown: 2
   early_stopping:
     patience: 4
     min_delta: 0.001
