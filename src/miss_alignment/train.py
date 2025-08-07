@@ -51,7 +51,7 @@ def train_miss_align(
         training_iteration=general_config["start_at_iteration"],
     )
 
-    for _ in range(iterations):  # iterations of MissAlignment to run
+    for x in range(iterations):  # iterations of MissAlignment to run
         # Define the early stopping callback
         early_stopping_config = model_training_config["early_stopping"]
         early_stopping = MAEarlyStopping(
@@ -110,7 +110,11 @@ def train_miss_align(
 
             trainer.fit(model, datamodule=data_module)
 
-        print(trainer.checkpoint_callback.best_model_path)
+        print(
+            f'Best model after '
+            f'training iteration {x}:',
+            trainer.checkpoint_callback.best_model_path
+        )
         # update the config with the trained model
         model_training_config["model_checkpoint"] = (
             trainer.checkpoint_callback.best_model_path
