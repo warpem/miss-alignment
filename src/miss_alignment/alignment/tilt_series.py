@@ -210,18 +210,17 @@ def evaluate_tilt_series(
     device: str = "cpu",
 ) -> Tomogram:
     d, h, w = tomogram_shape
-    dc, hc, wc = d // 2, h // 2, w // 2
+    dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
+    patch_center = patch_size // 2  # patch center
+    pd, ph, pw = patches_per_dim
 
-    offset = patch_size // 2
-
-    position_grid = []
-    zs = np.linspace(offset, d - offset, patches_per_dim[0]) - dc
-    ys = np.linspace(offset, h - offset, patches_per_dim[1]) - hc
-    xs = np.linspace(offset, w - offset, patches_per_dim[2]) - wc
-    for z in zs:
-        for y in ys:
-            for x in xs:
-                position_grid.append((z, y, x))
+    # get the reconstruction positions to optimize over
+    zs = torch.linspace(patch_center, d - patch_center, pd) - dc
+    ys = torch.linspace(patch_center, h - patch_center, ph) - hc
+    xs = torch.linspace(patch_center, w - patch_center, pw) - wc
+    position_grid = (
+        torch.stack(torch.meshgrid(zs, ys, xs, indexing='ij'), dim=-1)
+    )
 
     ground_truth_alignment = tilt_series_ground_truth.sample_translations
     n_tilts, _, _ = tilt_series_ground_truth.images.shape
