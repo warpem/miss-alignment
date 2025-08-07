@@ -55,11 +55,9 @@ def train_miss_align(
         # Define the early stopping callback
         early_stopping_config = model_training_config["early_stopping"]
         early_stopping = MAEarlyStopping(
-            # steps with no improvement
-            patience=early_stopping_config["patience"],
-            # minimum change to qualify as an improvement
-            min_delta=early_stopping_config["min_delta"],
-            skip_first_n=early_stopping_config["skip_first_n"],
+            patience=5,  # steps with no improvement
+            min_delta=0.001,  # minimum change to qualify as an improvement
+            wait_for_scheduler=True,
         )
 
         # save checkpoints based on training loss performance
@@ -102,12 +100,9 @@ def train_miss_align(
                 "warmup_steps": model_training_config["warmup_steps"],
                 "loss_metric_steps": model_training_config[
                     "n_steps_per_cycle"],
-            }
-
-            # Add learning rate scheduler if specified in config
-            if "multistep_lr_scheduler" in model_training_config:
-                model_params["multistep_lr_scheduler"] = model_training_config[
+                "multistep_lr_scheduler": model_training_config[
                     "multistep_lr_scheduler"]
+            }
 
             model = MissAlignment.load_from_checkpoint(
                 model_training_config["model_checkpoint"], **model_params

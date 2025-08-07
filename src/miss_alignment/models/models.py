@@ -3,6 +3,7 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import MultiStepLR
 from typing import Optional
 from collections import deque
 from pytorch_lightning.callbacks import Callback
@@ -199,58 +200,89 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
-        # Check if lr_scheduler is defined in hparams
-        if (
-            hasattr(self.hparams, "multistep_lr_scheduler")
-            and self.hparams.multistep_lr_scheduler is not None
-        ):
-            from torch.optim.lr_scheduler import MultiStepLR
+        scheduler_config = self.hparams.multistep_lr_scheduler
+        multistep = MultiStepLR(
+            milestones=scheduler_config["milestones"],
+            gamma=scheduler_config["gamma"],
+        )
 
-            scheduler_config = self.hparams.multistep_lr_scheduler
-            multistep = MultiStepLR(
-                milestones=scheduler_config["milestones"],
-                gamma=scheduler_config["gamma"],
-            )
+        scheduler = {
+            "scheduler": multistep,
+            "interval": "step",
+            # tracks n_steps
+            "frequency": self.loss_metric_steps,
+        }
 
-            scheduler = {
-                "scheduler": multistep,
-                "interval": "step",
-                # tracks n_steps
-                "frequency": self.loss_metric_steps,
-            }
-            return [optimizer], [scheduler]
-
-        # Return only warmup scheduler if no plateau scheduler configured
-        return [optimizer]
+        return [optimizer], [scheduler]
 
 
 class MAEarlyStopping(Callback):
-    def __init__(self, patience=4, min_delta=0.0, skip_first_n=0):
+    """Early stopping callback that waits until MultiStepLR reaches its lowest point.
+
+    Parameters
+    ----------
+    patience : int, default=4
+        Number of steps to wait after last improvement before stopping.
+    min_delta : float, default=0.0
+        Minimum change to qualify as improvement.
+    wait_for_scheduler : bool, default=True
+        If True, waits for MultiStepLR to complete all milestones before starting.
+    """
+
+    def __init__(self, patience=5, min_delta=0.001, wait_for_scheduler=True):
         self.patience = patience
         self.min_delta = min_delta
-        self.skip_first_n = skip_first_n
+        self.wait_for_scheduler = wait_for_scheduler
         self.best_score = None
         self.wait_count = 0
+        self.scheduler_complete = False
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        # if the custom loss buffer is empty the metric should have been logged
+    def _check_scheduler_complete(self, trainer, pl_module):
+        """Check if MultiStepLR has completed all milestones."""
+        if not self.wait_for_scheduler or self.scheduler_complete:
+            return True
+
+        # Check if module has MultiStepLR configured
+        if not (hasattr(pl_module.hparams, "multistep_lr_scheduler")
+                and pl_module.hparams.multistep_lr_scheduler is not None):
+            # No scheduler configured, can start early stopping immediately
+            self.scheduler_complete = True
+            return True
+
+        scheduler_config = pl_module.hparams.multistep_lr_scheduler
+        milestones = scheduler_config["milestones"]
+
+        # Calculate current step in scheduler terms
+        # The scheduler frequency is loss_metric_steps
+        scheduler_step = trainer.global_step // pl_module.loss_metric_steps
+
+        # Check if we've passed all milestones
+        if scheduler_step >= max(milestones):
+            self.scheduler_complete = True
+            return True
+
+        return False
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch,
+                           batch_idx):
+        """Called at the end of each training batch."""
+        # Only check when custom loss buffer is empty (metric was logged)
         if len(pl_module.loss_buffer) == 0:
-            if self.skip_first_n > 0:
-                self.skip_first_n -= 1
+            # Check if we should start early stopping yet
+            if not self._check_scheduler_complete(trainer, pl_module):
+                return
+
+            if pl_module._temp_train_loss is None:
+                raise ValueError("Expected _temp_train_loss to be set")
+
+            current_score = pl_module._temp_train_loss
+
+            if (self.best_score is None
+                    or current_score < self.best_score - self.min_delta):
+                self.best_score = current_score
+                self.wait_count = 0
             else:
-                if pl_module._temp_train_loss is None:
-                    raise ValueError("Expected custom_train_loss to be set")
+                self.wait_count += 1
 
-                current_score = pl_module._temp_train_loss
-
-                if (
-                    self.best_score is None
-                    or current_score < self.best_score - self.min_delta
-                ):
-                    self.best_score = current_score
-                    self.wait_count = 0
-                else:
-                    self.wait_count += 1
-
-                if self.wait_count >= self.patience:
-                    trainer.should_stop = True
+            if self.wait_count >= self.patience:
+                trainer.should_stop = True
