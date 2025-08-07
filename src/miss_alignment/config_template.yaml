@@ -18,7 +18,7 @@ model_training:
   n_steps_per_cycle: 1000  # one cycle is the rate for the scheduler and early-stopping
   # Comment out to disable learning rate scheduler
   multistep_lr_scheduler:
-    milestones: [10, 10]
+    milestones: [10, 20]
     gamma: 0.1
   early_stopping:  # early stopping only activates at last step
     patience: 4

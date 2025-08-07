@@ -221,7 +221,7 @@ class MissAlignment(pl.LightningModule):
             return [optimizer], [scheduler]
 
         # Return only warmup scheduler if no plateau scheduler configured
-        return [optimizer]  # , [warmup_scheduler]
+        return [optimizer]
 
 
 class MAEarlyStopping(Callback):
