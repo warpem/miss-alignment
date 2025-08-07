@@ -47,7 +47,7 @@ def train_miss_align(
         num_workers=num_workers,
         batch_size=data_loading_config["batch_size"],
         target_size=data_loading_config["patch_size"],
-        loss_metric_steps=model_training_config["loss_metric_steps"],
+        loss_metric_steps=model_training_config["n_steps_per_cycle"],
         training_iteration=general_config["start_at_iteration"],
     )
 
@@ -68,7 +68,7 @@ def train_miss_align(
             mode="min",  # 'min' for loss, 'max' for accuracy
             save_top_k=3,  # Keep 5 best checkpoints
             filename="{epoch}--{step}--{train_loss:.2f}",
-            every_n_train_steps=model_training_config["loss_metric_steps"],
+            every_n_train_steps=model_training_config["n_steps_per_cycle"],
         )
 
         # Set up trainer with parameters from config
@@ -100,12 +100,14 @@ def train_miss_align(
                 "margin": model_training_config["loss_margin"],
                 "weight_decay": float(model_training_config["weight_decay"]),
                 "warmup_steps": model_training_config["warmup_steps"],
-                "loss_metric_steps": model_training_config["loss_metric_steps"],
+                "loss_metric_steps": model_training_config[
+                    "n_steps_per_cycle"],
             }
 
             # Add learning rate scheduler if specified in config
-            if "lr_scheduler" in model_training_config:
-                model_params["lr_scheduler"] = model_training_config["lr_scheduler"]
+            if "multistep_lr_scheduler" in model_training_config:
+                model_params["multistep_lr_scheduler"] = model_training_config[
+                    "multistep_lr_scheduler"]
 
             model = MissAlignment.load_from_checkpoint(
                 model_training_config["model_checkpoint"], **model_params

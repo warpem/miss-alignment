@@ -93,7 +93,7 @@ class MissAlignment(pl.LightningModule):
         # initialize buffer for loss values
         self.loss_metric_steps = loss_metric_steps
         self.loss_buffer = deque(maxlen=loss_metric_steps)
-        self.custom_train_loss = None
+        self._temp_train_loss = None
 
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
@@ -141,7 +141,7 @@ class MissAlignment(pl.LightningModule):
                 },
                 step=self.global_step,
             )
-            self.custom_train_loss = avg_loss
+            self._temp_train_loss = avg_loss
             self.log(  # add it to progress bar, this only works if
                 name="train_loss",  # log_every_n_steps has a frequency
                 value=avg_loss,  # that matches loss_metric_steps
@@ -199,39 +199,21 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
-        # # Warm-up scheduler (linear warm-up) - tracks steps
-        # warmup = LinearLR(
-        #     optimizer,
-        #     start_factor=0.001,  # Start at 0.1% of self.lr
-        #     end_factor=1.0,  # End at 100% of self.lr
-        #     total_iters=self.warmup_steps,
-        # )
-        # warmup_scheduler = {
-        #     "scheduler": warmup,
-        #     "interval": "step",  # track steps, not epochs
-        #     "frequency": 1,
-        # }
-
         # Check if lr_scheduler is defined in hparams
         if (
-            hasattr(self.hparams, "lr_scheduler")
-            and self.hparams.lr_scheduler is not None
+            hasattr(self.hparams, "multistep_lr_scheduler")
+            and self.hparams.multistep_lr_scheduler is not None
         ):
-            from torch.optim.lr_scheduler import ReduceLROnPlateau
+            from torch.optim.lr_scheduler import MultiStepLR
 
-            scheduler_config = self.hparams.lr_scheduler
-            plateau = ReduceLROnPlateau(
-                optimizer,
-                mode="min",
-                factor=scheduler_config["factor"],
-                patience=scheduler_config["patience"],
-                cooldown=scheduler_config["cooldown"],
-                min_lr=1e-6,
+            scheduler_config = self.hparams.multistep_lr_scheduler
+            multistep = MultiStepLR(
+                milestones=scheduler_config["milestones"],
+                gamma=scheduler_config["gamma"],
             )
 
             scheduler = {
-                "scheduler": plateau,
-                "monitor": "train_loss",
+                "scheduler": multistep,
                 "interval": "step",
                 # tracks n_steps
                 "frequency": self.loss_metric_steps,
@@ -256,10 +238,10 @@ class MAEarlyStopping(Callback):
             if self.skip_first_n > 0:
                 self.skip_first_n -= 1
             else:
-                if pl_module.custom_train_loss is None:
+                if pl_module._temp_train_loss is None:
                     raise ValueError("Expected custom_train_loss to be set")
 
-                current_score = pl_module.custom_train_loss
+                current_score = pl_module._temp_train_loss
 
                 if (
                     self.best_score is None
