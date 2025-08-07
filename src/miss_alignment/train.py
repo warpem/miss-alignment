@@ -55,7 +55,7 @@ def train_miss_align(
         # Define the early stopping callback
         early_stopping_config = model_training_config["early_stopping"]
         early_stopping = MAEarlyStopping(
-            patience=5,  # steps with no improvement
+            patience=5,  # cycles with no improvement
             min_delta=0.001,  # minimum change to qualify as an improvement
             wait_for_scheduler=True,
         )
