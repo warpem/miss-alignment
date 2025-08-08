@@ -79,7 +79,7 @@ class MissAlignment(pl.LightningModule):
         weight_decay: float = 0,
         margin: float = 0.5,
         loss_metric_steps: int = 1000,
-        lr_scheduler: Optional[dict] = None,
+        multistep_lr_scheduler: Optional[dict] = None,
     ):
         super().__init__()
 
