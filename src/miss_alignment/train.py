@@ -53,7 +53,6 @@ def train_miss_align(
 
     for x in range(iterations):  # iterations of MissAlignment to run
         # Define the early stopping callback
-        early_stopping_config = model_training_config["early_stopping"]
         early_stopping = MAEarlyStopping(
             patience=5,  # cycles with no improvement
             min_delta=0.001,  # minimum change to qualify as an improvement
