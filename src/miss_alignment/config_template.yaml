@@ -17,7 +17,7 @@ model_training:
   warmup_steps: 500  # number of steps for linear warm-up
   n_steps_per_cycle: 1000  # one cycle is the rate for the scheduler and early-stopping
   multistep_lr_scheduler:
-    milestones: [10, 20]  # number of cycles, where the length of a cycle is n_steps_per_cycle
+    milestones: [15, 30]  # number of cycles, where the length of a cycle is n_steps_per_cycle
     gamma: 0.1
 
 data_loading:
