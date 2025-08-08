@@ -202,6 +202,7 @@ class MissAlignment(pl.LightningModule):
 
         scheduler_config = self.hparams.multistep_lr_scheduler
         multistep = MultiStepLR(
+            optimizer,
             milestones=scheduler_config["milestones"],
             gamma=scheduler_config["gamma"],
         )
