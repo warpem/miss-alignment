@@ -1,5 +1,5 @@
 general:
-  # MissAlignment 💃 iteratively trains models and realigns the tilt-series
+  # MissAlignment iteratively trains models and realigns the tilt-series
   # here you can continue training from a specific iteration
   start_at_iteration: 0
   resume_training_from_checkpoint: False
@@ -27,17 +27,17 @@ data_loading:
   batch_size: 32  # for SHREC these values seems solid:
   patch_size: 128  # batch size 32 | reconstruction size 128 ^ 3
 
-# this configures the shift generation for the contrastive training of MissAlignment 💃
-# all parameters are in units of 10Å (nm) as we assume to work with tilt-series sampled to 10A
+# this configures the shift generation for the contrastive training of MissAlignment
+# all parameters are in units of 10A (nm) as we assume to work with tilt-series sampled to 10A
 shift_generation:
   trajectory_probability: .5   # these make bananas and birds
-  trajectory_max_shift: 10.0  # (10 Å) trajectories fall somewhere between +/- f
+  trajectory_max_shift: 10.0  # (10 A) trajectories fall somewhere between +/- f
   jitter_probability: .5
-  jitter_max_std: 3.0  # (10 Å) maximum standard deviation of a normal distribution
+  jitter_max_std: 3.0  # (10 A) maximum standard deviation of a normal distribution
   outlier_probability: .4
-  outlier_max_shift: 20.0  # (10 Å) outlier can maximally go to this value
+  outlier_max_shift: 20.0  # (10 A) outlier can maximally go to this value
   high_tilt_outlier_probability: .4
-  high_tilt_max_shift: 30.0  # (10 Å) specific strong shifts for high tilt images up to this value
+  high_tilt_max_shift: 30.0  # (10 A) specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
   patches_per_dim: (1, 2, 2)
