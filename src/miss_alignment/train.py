@@ -6,6 +6,7 @@ import typer
 import torch
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import SHRECDataModule
@@ -64,7 +65,7 @@ def train_miss_align(
             monitor="train_loss",
             mode="min",  # 'min' for loss, 'max' for accuracy
             save_top_k=3,  # Keep 5 best checkpoints
-            filename="{epoch}--{step}--{train_loss:.3f}",
+            filename=str(x) + "_{epoch}--{step}--{train_loss:.3f}",
             every_n_train_steps=model_training_config["n_steps_per_cycle"],
         )
 
@@ -80,6 +81,7 @@ def train_miss_align(
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback],
+            plugins=[SLURMEnvironment(auto_requeue=False)],
         )
 
         # Train the model
