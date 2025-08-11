@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import torch
 import einops
 import numpy as np
-from pytorch_lightning import seed_everything
+from lightning.pytorch import seed_everything
 from scipy.spatial.transform import Rotation as R
 from torch_tiltxcorr import tiltxcorr_no_stretch
 

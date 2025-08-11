@@ -4,8 +4,8 @@ import yaml
 from functools import partial
 import typer
 import torch
-from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.pytorch import Trainer, seed_everything
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli

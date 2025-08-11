@@ -2,7 +2,7 @@ from os import PathLike
 from pathlib import Path
 from collections.abc import Callable
 
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 from torch.utils.data import DataLoader
 
 from miss_alignment.data.training_dataset import SHRECDataset

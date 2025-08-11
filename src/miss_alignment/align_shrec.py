@@ -4,7 +4,7 @@ from pathlib import Path
 from ._cli import OPTION_PROMPT_KWARGS, cli
 
 import torch
-from pytorch_lightning import seed_everything
+from lightning.pytorch import seed_everything
 
 from miss_alignment.models import MissAlignment
 from miss_alignment.data import SHRECDataModule

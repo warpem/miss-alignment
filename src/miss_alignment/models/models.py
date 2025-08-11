@@ -1,4 +1,4 @@
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import einops
 import torch
 import torch.nn as nn
@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR
 from typing import Optional
 from collections import deque
-from pytorch_lightning.callbacks import Callback
+from lightning.pytorch.callbacks import Callback
 
 # from miss_alignment.models import resnet3d_18
 from miss_alignment.models import Compact3DConvNet
