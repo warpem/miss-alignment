@@ -92,7 +92,7 @@ class SHRECDataModule(pl.LightningDataModule):
             drop_last=True,
             num_workers=self.num_workers,
             persistent_workers=True,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def align_dataset(self, model, patches_per_dim, patch_size, ground_truth_dir):
