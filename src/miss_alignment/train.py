@@ -50,6 +50,7 @@ def train_miss_align(
         target_size=data_loading_config["patch_size"],
         loss_metric_steps=model_training_config["n_steps_per_cycle"],
         training_iteration=general_config["start_at_iteration"],
+        download_data=general_config["download_data"],
     )
 
     for x in range(iterations):  # iterations of MissAlignment to run
