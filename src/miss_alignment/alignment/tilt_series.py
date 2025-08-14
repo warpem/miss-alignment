@@ -211,13 +211,13 @@ def evaluate_tilt_series(
 ) -> Tomogram:
     d, h, w = tomogram_shape
     dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
-    patch_center = patch_size // 2  # patch center
     pd, ph, pw = patches_per_dim
 
     # get the reconstruction positions to optimize over
-    zs = torch.linspace(patch_center, d - patch_center, pd) - dc
-    ys = torch.linspace(patch_center, h - patch_center, ph) - hc
-    xs = torch.linspace(patch_center, w - patch_center, pw) - wc
+    zs = ((torch.arange(pd) + .5) / pd) * d - dc
+    ys = ((torch.arange(ph) + .5) / ph) * h - hc
+    xs = ((torch.arange(pw) + .5) / pw) * w - wc
+
     position_grid = (
         torch.stack(torch.meshgrid(zs, ys, xs, indexing='ij'), dim=-1)
     )
