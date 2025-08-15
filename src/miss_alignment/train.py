@@ -1,5 +1,9 @@
 from pathlib import Path
 import yaml
+import subprocess
+import shutil
+import os
+import sys
 
 from functools import partial
 import typer
@@ -15,9 +19,28 @@ from .data.io import read_tomogram_from_pickle
 from .models import MissAlignment, MAEarlyStopping
 from .alignment import evaluate_tilt_series
 
-data_module_dict = {
+_data_module_dict = {
     "SHREC": SHRECDataModule,
 }
+_zenodo_archive = "16574872"
+
+
+def _download_to_dir(dataset_directory: Path):
+    subprocess.run(
+        [
+            "zenodo_get",
+            _zenodo_archive,  # update value
+            "--output-dir",
+            str(dataset_directory),
+        ]
+    )
+    for archive in ("torch_tiltxcorr.zip", "ground_truth.zip"):
+        zipped_archive = dataset_directory / archive
+        shutil.unpack_archive(
+            zipped_archive,
+            extract_dir=dataset_directory,
+        )
+        os.remove(zipped_archive)
 
 
 @cli.command(name="train", no_args_is_help=True)
@@ -41,7 +64,10 @@ def train_miss_align(
 
     # track the path to the dataset
     training_directory = Path(data_module_config["training_directory"])
+    training_directory.mkdir(exist_ok=True, parents=True)
     ground_truth_directory = Path(alignment_config["ground_truth_directory"])
+    if general_config['download_data']:
+        _download_to_dir(ground_truth_directory)
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
@@ -92,8 +118,6 @@ def train_miss_align(
             "margin": model_training_config["loss_margin"],
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
-            "loss_metric_steps": model_training_config[
-                "steps_per_epoch"],
             "multistep_lr_scheduler": model_training_config[
                 "multistep_lr_scheduler"]
         }
@@ -102,22 +126,20 @@ def train_miss_align(
             model_training_config["model_checkpoint"], **model_params
         )
 
-        download_data = data_module_config["download_data"] if x == 0 else \
-            False
-
         # Initialize data module with parameters from config
         with SHRECDataModule(
-            training_directory / ('iter' + str(x)),
+            iteration_directory,
             partial(generate_shifts, **shift_generation_config),
             reconstruction_workers=reconstruction_workers,
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
-            download_data=download_data,
         ) as dm:
+            dm.wait_for_pool_to_fill()
+            training_data = dm.train_dataloader()
             # enter datamodule context to start the reconstruction worker pool
-            trainer.fit(model, datamodule=dm)
+            trainer.fit(model, train_dataloaders=training_data)
 
         print(
             f'Best model after '

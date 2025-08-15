@@ -3,6 +3,7 @@
   # here you can continue training from a specific iteration
   start_at_iteration: 0
   seed: 45132
+  download_data: True  # download data from zenodo to folder/iter0 if its empty
 
 model_training:
   # used to initialize model weights
@@ -21,7 +22,6 @@ model_training:
 data_module:
   dataset_type: "SHREC"  # Options: "SHREC", "EMDB"
   training_directory: /data/set/  # path to dataset location
-  download_data: True  # download data from zenodo to folder/iter0 if its empty
   batch_size: 32  # for SHREC these values seems solid:
   patch_size: 96  # batch size 32 | reconstruction size 128 ^ 3
   steps_per_epoch: 1000  # define the epoch size
@@ -42,4 +42,4 @@ tilt_series_alignment:
   patches_per_dim: [1, 2, 2]
   patch_size: 128
   # tomogram_shape: (180, 512, 512)  # This is known and fixed per tomogram
-  ground_truth_fetch_directory: /path/to/gt/  # directory to fetch ground truth from, name.pickle name should match
+  ground_truth_directory: /path/to/gt/  # directory to fetch ground truth from, name.pickle name should match

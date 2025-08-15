@@ -29,12 +29,14 @@ class ReconstructionPoolDataset(Dataset):
     """
     noise_augmentation = False
 
-    def __init__(self, pool_dir: Path, pool_size: int):
+    def __init__(self, pool_dir: Path, pool_size: int, epoch_size: int):
         self.pool_dir = pool_dir
         self.pool_size = pool_size
+        self.epoch_size = epoch_size
 
     def __len__(self) -> int:
-        return self.pool_size
+        # we just set this to define the size of an epoch
+        return self.epoch_size
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor]:
         """
@@ -50,15 +52,16 @@ class ReconstructionPoolDataset(Dataset):
         tuple[torch.Tensor]
             Dictionary containing the reconstruction data
         """
-        file_path = self.pool_dir / f"recon_{idx}.pickle"
+        random_idx = random.randint(0, self.pool_size - 1)
+        file_path = self.pool_dir / f"recon_{random_idx}.pickle"
 
         # This should always succeed due to atomic rename
         with open(file_path, "rb") as infile:
             data_and_labels = pickle.load(infile)
 
-        _, labels = data_and_labels
-        # augment all volumes but skip the labels (last elem of list)
-        volumes = [self._augment(x) for x in data_and_labels[:-1]]
+        volumes, labels = data_and_labels[:-1], data_and_labels[-1]
+        # augment and add empty channel dim to all volumes
+        volumes = [self._augment(x) for x in volumes]
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
 
         return *volumes, labels

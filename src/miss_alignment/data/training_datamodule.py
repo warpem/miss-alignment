@@ -2,22 +2,24 @@
 import tempfile
 import time
 import multiprocessing as mp
-import warnings
-import subprocess
 import os
 import shutil
 from pathlib import Path
 from collections.abc import Callable
 from typing import Optional
+import numpy as np
 
 # deep learning packages
 import lightning.pytorch as pl
 from torch.utils.data import DataLoader
 
-from miss_alignment.alignment import evaluate_tilt_series
-from miss_alignment.data.io import read_tomogram_from_pickle
 from ._reconstruction_worker import reconstruction_worker
 from .training_dataset import ReconstructionPoolDataset
+
+if "MISS_ALIGNMENT_RECON_POOL_SIZE" in os.environ:
+    RECON_POOL_SIZE = int(os.environ["MISS_ALIGNMENT_RECON_POOL_SIZE"])
+else:
+    RECON_POOL_SIZE = 1000
 
 
 class SHRECDataModule(pl.LightningDataModule):
@@ -43,7 +45,7 @@ class SHRECDataModule(pl.LightningDataModule):
     training_iteration
     shift_generator
     """
-    zenodo_archive = "16574872"
+    tomogram_shape = (180, 512, 512)  # currently fixed for shrec
 
     def __init__(
         self,
@@ -54,12 +56,11 @@ class SHRECDataModule(pl.LightningDataModule):
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
         patch_size: int = 64,
-        download_data: bool = False,
     ):
         super().__init__()
         # data module controls
         self.batch_size = batch_size
-        self.pool_size = batch_size * steps_per_epoch
+        self.epoch_size = steps_per_epoch * batch_size
         self.reconstruction_workers = reconstruction_workers
         self.dataloader_workers = dataloader_workers
 
@@ -69,11 +70,11 @@ class SHRECDataModule(pl.LightningDataModule):
 
         # initialize the dataset and pool attributes
         self.dataset_directory = Path(dataset_directory)
-        self.allow_download = download_data
         self.train_dataset = None
         self.pool_dir = None
         self.pool_processes: list = []
         self.stop_event: Optional[mp.Event] = None
+        self.ready_flag: Optional[mp.Event] = None
 
     def __enter__(self):
         """Enter context manager and setup pool."""
@@ -85,88 +86,60 @@ class SHRECDataModule(pl.LightningDataModule):
         self.teardown()
         return False
 
-    @property
-    def data_directory_is_empty(self):
-        return len(list(self.dataset_directory.iterdir())) == 0
-
     def prepare_data(self):
-        # this is not done in the setup() because lightning specifically
-        # calls this function with a single process to prevent race conditions
-        if self.allow_download:
-            self.dataset_directory.mkdir(exist_ok=True, parents=True)
-            if self.data_directory_is_empty:
-                subprocess.run(
-                    [
-                        "zenodo_get",
-                        self.zenodo_archive,  # update value
-                        "--output-dir",
-                        str(self.dataset_directory),
-                    ]
-                )
-                for archive in ("torch_tiltxcorr.zip", "ground_truth.zip"):
-                    zipped_archive = self.dataset_directory / archive
-                    shutil.unpack_archive(
-                        zipped_archive,
-                        extract_dir=self.dataset_directory,
-                    )
-                    os.remove(zipped_archive)
-            else:
-                warnings.warn(
-                    "dataset directory is non-empty, download is skipped"
-                )
+        pass
 
     def setup(self, stage: str = "fit"):
         """No stage for setup because this is used just for training."""
         if stage != "fit":
             raise ValueError(f"{stage} is not a valid stage")
 
+        mp.set_start_method("spawn", force=True)
+
         # Create temporary directory for pool
         self.pool_dir = Path(tempfile.mkdtemp(prefix='recon_pool_'))
         print(f"Created pool directory: {self.pool_dir}")
 
         # Partition indices among workers
-        num_workers = self.reconstruction_workers
-        indices_per_worker = self.pool_size // num_workers
-        partitions = []
-        for i in range(num_workers):
-            start_idx = i * indices_per_worker
-            if i == num_workers - 1:
-                # Last worker gets any remaining indices
-                end_idx = self.pool_size
-            else:
-                end_idx = start_idx + indices_per_worker
-            partitions.append(list(range(start_idx, end_idx)))
+        partitions = np.array_split(range(RECON_POOL_SIZE), self.reconstruction_workers)
 
         # Start worker processes
         self.stop_event = mp.Event()
-        ready_flag = mp.Value('i', 0)
-        source_counter = mp.Value('i', 0)
+        self.ready_flag = mp.Value('i', 0)
+
+        # get a list of all the tilt series pickle files
+        tilt_series_pickles = (
+            [x for x in self.dataset_directory.iterdir() if x.suffix =='.pickle']
+        )
 
         for worker_id, indices in enumerate(partitions):
             p = mp.Process(
                 target=reconstruction_worker,
                 args=(
                     worker_id,
-                    indices,
+                    indices.tolist(),
                     self.pool_dir,
-                    ready_flag,
+                    tilt_series_pickles,
+                    self.tomogram_shape,
+                    self.patch_size,
+                    self.shift_generator,
+                    self.ready_flag,
                     self.stop_event,
-                    source_counter
                 )
             )
             p.start()
             self.pool_processes.append(p)
 
-        # Wait for all workers to complete initial fill
-        print("Waiting for pool to be filled...")
-        while ready_flag.value < num_workers:
-            time.sleep(0.1)
-        print("Pool ready!")
-
         # Create dataset
         self.train_dataset = ReconstructionPoolDataset(
-            self.pool_dir, self.pool_size
+            self.pool_dir, RECON_POOL_SIZE, self.epoch_size
         )
+
+    def wait_for_pool_to_fill(self):
+        print("Waiting for pool to be filled...")
+        while self.ready_flag.value < self.reconstruction_workers:
+            time.sleep(0.1)
+        print("Pool ready!")
 
     def train_dataloader(self):
         """Return DataLoader for training data."""

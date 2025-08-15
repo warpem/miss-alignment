@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 import pickle
 import einops
+import os
 from torch_affine_utils.transforms_3d import Ry, Rz
 
 from miss_alignment.data.io import read_tomogram_from_pickle
@@ -53,9 +54,13 @@ def reconstruction_worker(
     print(
         f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
     )
+    torch.set_num_threads(1)
 
     # Initial fill of assigned pool slots
     for idx in assigned_indices:
+        if stop_event.is_set():
+            print(f'Worker {worker_id} shutting down')
+
         data_and_labels = _create_pool_reconstruction(
             tilt_series_path=random.choice(tilt_series_pickles),
             tomogram_shape=tomogram_shape,
@@ -67,6 +72,8 @@ def reconstruction_worker(
         file_path = pool_dir / f"recon_{idx}.pickle"
         with open(file_path, "wb") as outfile:
             pickle.dump(data_and_labels, outfile)
+        # ensure correct permissions
+        os.chmod(file_path, 0o644)
 
     print(f"Worker {worker_id} completed initial fill")
 
@@ -87,7 +94,7 @@ def reconstruction_worker(
         )
 
         # Atomic replacement using temp file and rename
-        file_path = pool_dir / f"recon_{idx}.npz"
+        file_path = pool_dir / f"recon_{idx}.pickle"
         with tempfile.NamedTemporaryFile(
                 dir=pool_dir,
                 prefix=f"tmp_recon_{idx}_",
@@ -97,6 +104,8 @@ def reconstruction_worker(
             tmp_path = Path(tmp_file.name)
             pickle.dump(data_and_labels, tmp_file)
 
+        # fix permissions
+        os.chmod(tmp_path, 0o644)
         # Atomic rename (replaces existing file)
         tmp_path.rename(file_path)
 
