@@ -56,6 +56,7 @@ class ReconstructionPoolDataset(Dataset):
             data_and_labels = pickle.load(infile)
 
         _, labels = data_and_labels
+        # augment all volumes but skip the labels (last elem of list)
         volumes = [self._augment(x) for x in data_and_labels[:-1]]
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
 
@@ -69,7 +70,7 @@ class ReconstructionPoolDataset(Dataset):
                 std=noise_std,
                 size=volume.shape,
             )
-        volume = random_edge_mask(volume, edge_width=(1, 4))
+        volume = random_edge_mask(volume, edge_width=(1, 5))
         volume = random_cube_mask(volume)
         volume = self._normalize(volume)
         volume = random_contrast(volume)

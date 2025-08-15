@@ -13,7 +13,7 @@ model_training:
   learning_rate: 1.0e-3  # needs to be 1.0 for correct reading of sci format
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
   weight_decay: 1.0e-4
-  max_cycles_per_iteration: 100  # absolute maximum of stopping
+  max_epochs_per_iteration: 100  # absolute maximum of stopping
   warmup_steps: 500  # number of steps for linear warm-up
   multistep_lr_scheduler:
     milestones: [15, 30]  # number of cycles, where the length of a cycle is n_steps_per_cycle

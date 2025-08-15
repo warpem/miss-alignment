@@ -78,7 +78,7 @@ class MissAlignment(pl.LightningModule):
         warmup_steps: int = 500,
         weight_decay: float = 0,
         margin: float = 0.5,
-        loss_metric_steps: int = 1000,
+            # will be saved as a hyperparameter
         multistep_lr_scheduler: Optional[dict] = None,
     ):
         super().__init__()
@@ -90,11 +90,6 @@ class MissAlignment(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
-
-        # initialize buffer for loss values
-        self.loss_metric_steps = loss_metric_steps
-        self.loss_buffer = deque(maxlen=loss_metric_steps)
-        self._temp_train_loss = None
 
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
@@ -125,32 +120,39 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
-        loss, batch_size, score_aligned, score_misaligned = self._common_step(batch)
+        (
+            loss,
+            batch_size,
+            score_aligned,
+            score_misaligned
+        ) = self._common_step(batch)
 
-        self.loss_buffer.append(loss.item())
+        self.log(  # add it to progress bar
+            name="train_loss",
+            value=loss.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
 
-        if len(self.loss_buffer) == self.loss_metric_steps:
-            avg_loss = sum(self.loss_buffer) / self.loss_metric_steps
-            self.loss_buffer.clear()
-
-            # Force immediate logging regardless of log_every_n_steps
-            self.logger.log_metrics(
-                {
-                    "train_loss": avg_loss,
-                    "train_score_aligned": score_aligned,
-                    "train_score_misaligned": score_misaligned,
-                },
-                step=self.global_step,
-            )
-            self._temp_train_loss = avg_loss
-            self.log(  # add it to progress bar, this only works if
-                name="train_loss",  # log_every_n_steps has a frequency
-                value=avg_loss,  # that matches loss_metric_steps
-                prog_bar=True,
-                on_step=True,
-                on_epoch=False,
-                logger=False,
-            )
+        # log actual assigned score of the model
+        self.log(
+            name="train_score_aligned",
+            value=score_aligned.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+        self.log(
+            name="train_score_misaligned",
+            value=score_misaligned.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
 
         # Log the learning rate
         current_lr = self.optimizers().param_groups[0]["lr"]
@@ -209,9 +211,8 @@ class MissAlignment(pl.LightningModule):
 
         scheduler = {
             "scheduler": multistep,
-            "interval": "step",
-            # tracks n_steps
-            "frequency": self.loss_metric_steps,
+            "interval": "epoch",
+            "frequency": 1,
         }
 
         return [optimizer], [scheduler]
@@ -253,37 +254,30 @@ class MAEarlyStopping(Callback):
         scheduler_config = pl_module.hparams.multistep_lr_scheduler
         milestones = scheduler_config["milestones"]
 
-        # Calculate current step in scheduler terms
-        # The scheduler frequency is loss_metric_steps
-        scheduler_step = trainer.global_step // pl_module.loss_metric_steps
-
         # Check if we've passed all milestones
-        if scheduler_step >= max(milestones):
+        if trainer.current_epoch >= max(milestones):
             self.scheduler_complete = True
             return True
 
         return False
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch,
-                           batch_idx):
+    def on_train_epoch_end(self, trainer, pl_module):
         """Called at the end of each training batch."""
-        # Only check when custom loss buffer is empty (metric was logged)
-        if len(pl_module.loss_buffer) == 0:
-            # Check if we should start early stopping yet
-            if not self._check_scheduler_complete(trainer, pl_module):
-                return
+        # Check if we should start early stopping yet
+        if not self._check_scheduler_complete(trainer, pl_module):
+            return
 
-            if pl_module._temp_train_loss is None:
-                raise ValueError("Expected _temp_train_loss to be set")
+        if hasattr(pl_module, 'train_loss'):
+            current_score = pl_module.train_loss
+        else:
+            raise ValueError('Couldn\'t find train_loss in pl_module')
 
-            current_score = pl_module._temp_train_loss
+        if (self.best_score is None
+                or current_score < self.best_score - self.min_delta):
+            self.best_score = current_score
+            self.wait_count = 0
+        else:
+            self.wait_count += 1
 
-            if (self.best_score is None
-                    or current_score < self.best_score - self.min_delta):
-                self.best_score = current_score
-                self.wait_count = 0
-            else:
-                self.wait_count += 1
-
-            if self.wait_count >= self.patience:
-                trainer.should_stop = True
+        if self.wait_count >= self.patience:
+            trainer.should_stop = True

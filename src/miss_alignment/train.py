@@ -62,7 +62,7 @@ def train_miss_align(
             mode="min",  # 'min' for loss, 'max' for accuracy
             save_top_k=3,  # Keep 5 best checkpoints
             filename=str(x) + "_{epoch}--{step}--{train_loss:.3f}",
-            every_n_train_steps=model_training_config["n_steps_per_cycle"],
+            save_on_train_epoch_end=True,
         )
 
         # Set up trainer with parameters from config
