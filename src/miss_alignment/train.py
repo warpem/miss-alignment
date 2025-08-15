@@ -124,6 +124,8 @@ def train_miss_align(
             model_training_config["model_checkpoint"],
         )
         model.freeze()  # freeze model to perform alignments
+
+        # set input and output dirs
         input_directory = training_directory / ('iter' + str(x))
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
