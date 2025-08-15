@@ -119,7 +119,10 @@ def train_miss_align(
             trainer.checkpoint_callback.best_model_path
         )
 
-        # run alignment optimization
+        # load the best model and run alignment optimization
+        model = MissAlignment.load_from_checkpoint(
+            model_training_config["model_checkpoint"],
+        )
         model.freeze()  # freeze model to perform alignments
         input_directory = training_directory / ('iter' + str(x))
         output_directory = training_directory / ('iter' + str(x + 1))
