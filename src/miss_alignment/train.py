@@ -48,7 +48,13 @@ def train_miss_align(
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
-    for x in range(iterations):  # iterations of MissAlignment to run
+    start_iter = general_config['start_at_iteration']
+    end_iter = start_iter + iterations
+
+    for x in range(start_iter, end_iter):  # iterations of MissAlignment
+        iteration_directory = training_directory / ('iter' + str(x))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+
         # Define the early stopping callback
         early_stopping = MAEarlyStopping(
             patience=5,  # cycles with no improvement
@@ -95,6 +101,10 @@ def train_miss_align(
         model = MissAlignment.load_from_checkpoint(
             model_training_config["model_checkpoint"], **model_params
         )
+
+        download_data = data_module_config["download_data"] if x == 0 else \
+            False
+
         # Initialize data module with parameters from config
         with SHRECDataModule(
             training_directory / ('iter' + str(x)),
@@ -104,7 +114,7 @@ def train_miss_align(
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
-            download_data=data_module_config["download_data"],
+            download_data=download_data,
         ) as dm:
             # enter datamodule context to start the reconstruction worker pool
             trainer.fit(model, datamodule=dm)
@@ -126,10 +136,9 @@ def train_miss_align(
         model.freeze()  # freeze model to perform alignments
 
         # set input and output dirs
-        input_directory = training_directory / ('iter' + str(x))
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
-        for file_path in input_directory.iterdir():
+        for file_path in iteration_directory.iterdir():
             if file_path.suffix != '.pickle':
                 continue
             tilt_series = read_tomogram_from_pickle(file_path)

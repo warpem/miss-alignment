@@ -2,7 +2,6 @@
   # MissAlignment iteratively trains models and realigns the tilt-series
   # here you can continue training from a specific iteration
   start_at_iteration: 0
-  resume_training_from_checkpoint: False
   seed: 45132
 
 model_training:
@@ -40,7 +39,7 @@ shift_generation:
   high_tilt_max_shift: 30.0  # (10 A) specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
-  patches_per_dim: (1, 2, 2)
+  patches_per_dim: [1, 2, 2]
   patch_size: 128
   # tomogram_shape: (180, 512, 512)  # This is known and fixed per tomogram
   ground_truth_fetch_directory: /path/to/gt/  # directory to fetch ground truth from, name.pickle name should match

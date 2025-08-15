@@ -21,6 +21,4 @@ __all__ = [
 from ._cli import cli
 from .data import download_training_data, plot_dataset
 from .train import train_miss_align
-from .gradcam import visualize_attention
-from .align import optimize_alignment
 from .align_shrec import align_shrec
