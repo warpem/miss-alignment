@@ -1,11 +1,14 @@
 # standard libraries
-from os import PathLike
-from pathlib import Path
-from collections.abc import Callable
-from typing import Optional
 import tempfile
 import time
 import multiprocessing as mp
+import warnings
+import subprocess
+import os
+import shutil
+from pathlib import Path
+from collections.abc import Callable
+from typing import Optional
 
 # deep learning packages
 import lightning.pytorch as pl
@@ -13,81 +16,8 @@ from torch.utils.data import DataLoader
 
 from miss_alignment.alignment import evaluate_tilt_series
 from miss_alignment.data.io import read_tomogram_from_pickle
-
-
-def reconstruction_worker(
-        worker_id: int,
-        assigned_indices: list,
-        pool_dir: Path,
-        ready_flag: mp.Value,
-        stop_event: mp.Event,
-        source_counter: mp.Value
-):
-    """
-    Worker process that maintains a subset of the reconstruction pool.
-
-    Parameters
-    ----------
-    worker_id : int
-        ID of this worker
-    assigned_indices : list
-        Pool indices assigned to this worker
-    pool_dir : Path
-        Directory to store reconstructions
-    ready_flag : mp.Value
-        Shared flag indicating pool is ready
-    stop_event : mp.Event
-        Event to signal worker shutdown
-    source_counter : mp.Value
-        Shared counter for source IDs
-    """
-    print(
-        f"Worker {worker_id} starting with indices {assigned_indices[:5]}...")
-
-    # Initial fill of assigned pool slots
-    for idx in assigned_indices:
-        with source_counter.get_lock():
-            source_id = source_counter.value
-            source_counter.value += 1
-
-        recon, meta = create_mock_reconstruction(source_id)
-
-        # Write directly first time (no temp file needed)
-        file_path = pool_dir / f"recon_{idx}.npz"
-        np.savez(file_path, reconstruction=recon, metadata=meta)
-
-    print(f"Worker {worker_id} completed initial fill")
-
-    # Signal ready after initial fill
-    with ready_flag.get_lock():
-        ready_flag.value += 1
-
-    # Continuously update pool with new reconstructions
-    while not stop_event.is_set():
-        # Randomly select one of our indices to update
-        idx = random.choice(assigned_indices)
-
-        with source_counter.get_lock():
-            source_id = source_counter.value
-            source_counter.value += 1
-
-        recon, meta = create_mock_reconstruction(source_id)
-
-        # Atomic replacement using temp file and rename
-        file_path = pool_dir / f"recon_{idx}.npz"
-        with tempfile.NamedTemporaryFile(
-                dir=pool_dir,
-                prefix=f"tmp_recon_{idx}_",
-                suffix='.npz',
-                delete=False
-        ) as tmp_file:
-            tmp_path = Path(tmp_file.name)
-            np.savez(tmp_path, reconstruction=recon, metadata=meta)
-
-        # Atomic rename (replaces existing file)
-        tmp_path.rename(file_path)
-
-    print(f"Worker {worker_id} shutting down")
+from ._reconstruction_worker import reconstruction_worker
+from .training_dataset import ReconstructionPoolDataset
 
 
 class SHRECDataModule(pl.LightningDataModule):
@@ -117,7 +47,7 @@ class SHRECDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        dataset_directory: PathLike,
+        dataset_directory: os.PathLike,
         shift_generator: Callable,
         reconstruction_workers: int = 4,
         dataloader_workers: int = 4,
@@ -163,7 +93,6 @@ class SHRECDataModule(pl.LightningDataModule):
         # this is not done in the setup() because lightning specifically
         # calls this function with a single process to prevent race conditions
         if self.allow_download:
-            import warnings, subprocess, os, shutil
             self.dataset_directory.mkdir(exist_ok=True, parents=True)
             if self.data_directory_is_empty:
                 subprocess.run(
@@ -264,7 +193,6 @@ class SHRECDataModule(pl.LightningDataModule):
                     p.join()
 
         if self.pool_dir and self.pool_dir.exists():
-            import shutil
             shutil.rmtree(self.pool_dir)
             print(f"Cleaned up pool directory: {self.pool_dir}")
 
