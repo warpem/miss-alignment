@@ -3,6 +3,7 @@ import random
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 import torch
 import pickle
 import einops
@@ -13,6 +14,7 @@ from miss_alignment.data.io import read_tomogram_from_pickle
 from miss_alignment.data.shift_generation import (
     project_shifts_3d_to_2d
 )
+from ._pool_monitor import SimplePoolMonitor
 
 
 def reconstruction_worker(
@@ -25,6 +27,7 @@ def reconstruction_worker(
         shift_generator: Callable,
         ready_flag: mp.Value,
         stop_event: mp.Event,
+        monitor: Optional[SimplePoolMonitor] = None,
 ):
     """
     Worker process that maintains a subset of the reconstruction pool.
@@ -108,6 +111,10 @@ def reconstruction_worker(
         os.chmod(tmp_path, 0o644)
         # Atomic rename (replaces existing file)
         tmp_path.rename(file_path)
+
+        # Record production
+        if monitor is not None:
+            monitor.record_production()
 
     print(f"Worker {worker_id} shutting down")
 

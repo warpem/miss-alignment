@@ -5,11 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR
 from typing import Optional
-from collections import deque
 from lightning.pytorch.callbacks import Callback
 
 # from miss_alignment.models import resnet3d_18
 from miss_alignment.models import Compact3DConvNet
+from ..data._pool_monitor import SimplePoolMonitor
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -80,6 +80,7 @@ class MissAlignment(pl.LightningModule):
         margin: float = 0.5,
             # will be saved as a hyperparameter
         multistep_lr_scheduler: Optional[dict] = None,
+        monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
 
@@ -94,14 +95,24 @@ class MissAlignment(pl.LightningModule):
         self.criterion = TripletMarginRankingLoss(margin=margin)
         self.net = Compact3DConvNet()  # resnet3d_18()
 
+        self.monitor = monitor
+
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         out = self.net(image)
         return out
 
-    def _common_step(self, batch):
+    def _common_step(self, batch, batch_idx):
         # get the batch data
         img1, img2, img3, target = batch
         batch_size = target.shape[0]
+
+        # Track consumption
+        if self.monitor is not None:
+            self.monitor.record_consumption(batch_size)
+
+            # Print occasionally
+            if batch_idx % 50 == 0 and batch_idx > 0:
+                self.monitor.print_stats()
 
         # calculate scores and loss
         scores = torch.stack((self(img1), self(img2), self(img3)))
@@ -125,7 +136,7 @@ class MissAlignment(pl.LightningModule):
             batch_size,
             score_aligned,
             score_misaligned
-        ) = self._common_step(batch)
+        ) = self._common_step(batch, batch_idx)
 
         self.log(  # add it to progress bar
             name="train_loss",

@@ -18,6 +18,7 @@ from .data.shift_generation import generate_shifts
 from .data.io import read_tomogram_from_pickle
 from .models import MissAlignment, MAEarlyStopping
 from .alignment import evaluate_tilt_series
+from .data._pool_monitor import SimplePoolMonitor
 
 _data_module_dict = {
     "SHREC": SHRECDataModule,
@@ -112,6 +113,9 @@ def train_miss_align(
             plugins=[SLURMEnvironment(auto_requeue=False)],
         )
 
+        # initialize the monitor for production consumption rate
+        monitor = SimplePoolMonitor()
+
         # Initialize model with parameters from config
         model_params = {
             "learning_rate": model_training_config["learning_rate"],
@@ -119,7 +123,8 @@ def train_miss_align(
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
             "multistep_lr_scheduler": model_training_config[
-                "multistep_lr_scheduler"]
+                "multistep_lr_scheduler"],
+            "monitor": monitor,
         }
 
         model = MissAlignment.load_from_checkpoint(
@@ -135,6 +140,7 @@ def train_miss_align(
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
+            monitor=monitor,
         ) as dm:
             dm.wait_for_pool_to_fill()
             training_data = dm.train_dataloader()

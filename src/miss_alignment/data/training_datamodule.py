@@ -1,6 +1,5 @@
 # standard libraries
 import tempfile
-import time
 import multiprocessing as mp
 import os
 import shutil
@@ -8,12 +7,14 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Optional
 import numpy as np
+import time
 
 # deep learning packages
 import lightning.pytorch as pl
 from torch.utils.data import DataLoader
 
 from ._reconstruction_worker import reconstruction_worker
+from ._pool_monitor import SimplePoolMonitor
 from .training_dataset import ReconstructionPoolDataset
 
 if "MISS_ALIGNMENT_RECON_POOL_SIZE" in os.environ:
@@ -56,6 +57,7 @@ class SHRECDataModule(pl.LightningDataModule):
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
         patch_size: int = 64,
+        monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
         # data module controls
@@ -75,6 +77,9 @@ class SHRECDataModule(pl.LightningDataModule):
         self.pool_processes: list = []
         self.stop_event: Optional[mp.Event] = None
         self.ready_flag: Optional[mp.Event] = None
+
+        # timing production and consumption rates
+        self.monitor = monitor
 
     def __enter__(self):
         """Enter context manager and setup pool."""
@@ -125,6 +130,7 @@ class SHRECDataModule(pl.LightningDataModule):
                     self.shift_generator,
                     self.ready_flag,
                     self.stop_event,
+                    self.monitor
                 )
             )
             p.start()
@@ -168,5 +174,20 @@ class SHRECDataModule(pl.LightningDataModule):
         if self.pool_dir and self.pool_dir.exists():
             shutil.rmtree(self.pool_dir)
             print(f"Cleaned up pool directory: {self.pool_dir}")
-
         print("Cleanup complete")
+
+        if self.monitor is not None:
+            # Print final statistics
+            print("\n" + "=" * 50)
+            print("FINAL STATISTICS")
+            print("=" * 50)
+
+            final_stats = self.monitor.get_rates(window_seconds=float('inf'))
+            print(f"Total produced: {final_stats['total_produced']}")
+            print(f"Total consumed: {final_stats['total_consumed']}")
+            print(f"Runtime: {final_stats['uptime']:.1f}s")
+
+            avg_prod = final_stats['total_produced'] / final_stats['uptime']
+            avg_cons = final_stats['total_consumed'] / final_stats['uptime']
+            print(f"Average production rate: {avg_prod:.2f} files/sec")
+            print(f"Average consumption rate: {avg_cons:.2f} files/sec")
