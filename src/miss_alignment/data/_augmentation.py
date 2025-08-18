@@ -46,10 +46,19 @@ def random_cube_mask(
     return volume
 
 
-def random_mirror(volume, p=.5):
-    if random.random() > 1 - p:
-        axis = random.randint(0, 2)
-        volume = torch.flip(volume, [axis,])
+def random_mirror(volume):
+    # Randomly decide which axes to flip (0=no flip, 1=flip)
+    flip_dims = [random.choice([True, False]) for _ in range(3)]
+
+    # Apply flips to the last 3 dimensions
+    dims_to_flip = []
+    for i, should_flip in enumerate(flip_dims):
+        if should_flip:
+            dims_to_flip.append(-(3 - i))  # -3, -2, -1 for D, H, W
+
+    if dims_to_flip:
+        volume = torch.flip(volume, dims_to_flip)
+
     return volume
 
 
