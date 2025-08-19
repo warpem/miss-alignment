@@ -57,7 +57,7 @@ def reconstruction_worker(
     print(
         f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
     )
-    torch.set_num_threads(1)
+    # torch.set_num_threads(1)
 
     # Initial fill of assigned pool slots
     for idx in assigned_indices:
