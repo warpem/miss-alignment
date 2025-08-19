@@ -278,8 +278,10 @@ class MAEarlyStopping(Callback):
         if not self._check_scheduler_complete(trainer, pl_module):
             return
 
-        if hasattr(pl_module, 'train_loss'):
-            current_score = pl_module.train_loss
+        logged_metrics = trainer.logged_metrics
+
+        if 'train_loss' in logged_metrics:
+            current_score = logged_metrics['train_loss']
         else:
             raise ValueError('Couldn\'t find train_loss in pl_module')
 
