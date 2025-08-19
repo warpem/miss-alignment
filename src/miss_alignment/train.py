@@ -3,7 +3,6 @@ import yaml
 import subprocess
 import shutil
 import os
-import sys
 
 from functools import partial
 import typer
@@ -67,9 +66,15 @@ def train_miss_align(
     # track the path to the dataset
     training_directory = Path(data_module_config["training_directory"])
     training_directory.mkdir(exist_ok=True, parents=True)
-    ground_truth_directory = Path(alignment_config["ground_truth_directory"])
+    ground_truth_directory = (
+        Path(alignment_config["ground_truth_directory"])
+        if alignment_config["ground_truth_directory"] is not None
+        else None
+    )
     if general_config['download_data']:
         _download_to_dir(ground_truth_directory)
+    #TODO we would like to estimate the sample thickness
+    TOMOGRAM_SHAPE = general_config["tomogram_shape"]
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
@@ -143,6 +148,7 @@ def train_miss_align(
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
+            tomogram_shape=TOMOGRAM_SHAPE,
             steps_per_epoch=data_module_config["steps_per_epoch"],
             monitor=monitor,
         ) as dm:
@@ -175,8 +181,11 @@ def train_miss_align(
                 continue
             tilt_series = read_tomogram_from_pickle(file_path)
             tilt_series_name = file_path.stem
-            tilt_series_ground_truth = read_tomogram_from_pickle(
-                ground_truth_directory / f"{tilt_series_name}.pickle"
+            tilt_series_ground_truth = (
+                read_tomogram_from_pickle(
+                    ground_truth_directory / f"{tilt_series_name}.pickle"
+                ) if ground_truth_directory is not None
+                else None
             )
             # results are written to the output_directory
             evaluate_tilt_series(
@@ -185,10 +194,10 @@ def train_miss_align(
                 tilt_series,
                 alignment_config["patches_per_dim"],
                 alignment_config["patch_size"],
-                (180, 512, 512),
+                TOMOGRAM_SHAPE,
                 output_directory,
-                tilt_series_ground_truth=tilt_series_ground_truth,
                 device="cuda" if torch.cuda.is_available() else "cpu",
+                tilt_series_ground_truth=tilt_series_ground_truth,
             )
 
     return None

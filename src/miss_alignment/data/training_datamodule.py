@@ -46,8 +46,6 @@ class SHRECDataModule(pl.LightningDataModule):
     training_iteration
     shift_generator
     """
-    tomogram_shape = (180, 512, 512)  # currently fixed for shrec
-
     def __init__(
         self,
         dataset_directory: os.PathLike,
@@ -57,6 +55,7 @@ class SHRECDataModule(pl.LightningDataModule):
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
         patch_size: int = 64,
+        tomogram_shape: tuple[int, int, int] = (180, 512, 512),
         monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
@@ -67,6 +66,7 @@ class SHRECDataModule(pl.LightningDataModule):
         self.dataloader_workers = dataloader_workers
 
         # reconstruction controls
+        self.tomogram_shape = tomogram_shape
         self.patch_size = patch_size
         self.shift_generator = shift_generator
 

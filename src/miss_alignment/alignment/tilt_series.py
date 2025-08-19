@@ -120,7 +120,7 @@ def get_shift_from_correlation_image(correlation_image: torch.Tensor) -> torch.T
     return subpixel_shift
 
 
-def optimize_shifts_shrec(
+def optimize_shifts(
     model,
     tilt_series,
     positions,
@@ -169,9 +169,6 @@ def optimize_shifts_shrec(
             volumes.append(subtomo)
         volumes = torch.stack(volumes)
 
-        # new_com = center_of_mass(volumes)
-        # distance = torch.sum((new_com - gt_com) ** 2)
-
         # change channel to batch dimension
         volumes = einops.rearrange(volumes, "c d h w -> c 1 d h w")
 
@@ -208,7 +205,7 @@ def evaluate_tilt_series(
     output_directory: Path,
     tilt_series_ground_truth: Optional[Tomogram] = None,
     device: str = "cpu",
-) -> Tomogram:
+) -> tuple[Tomogram, list[float]]:
     d, h, w = tomogram_shape
     dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
     pd, ph, pw = patches_per_dim
@@ -222,53 +219,56 @@ def evaluate_tilt_series(
         torch.stack(torch.meshgrid(zs, ys, xs, indexing='ij'), dim=-1)
     )
 
-    ground_truth_alignment = tilt_series_ground_truth.sample_translations
-    n_tilts, _, _ = tilt_series_ground_truth.images.shape
-
-    ground_truth_reconstruction = tilt_series_ground_truth.reconstruct_tomogram(
-        tomogram_shape, 128
-    )
-
-    mean_diff_initial = torch.abs(
-        ground_truth_alignment - tilt_series_raw.sample_translations
-    )
-
     print(f"Aligning {tilt_series_name}...")
-    tilt_series, loss = optimize_shifts_shrec(
+    tilt_series, loss = optimize_shifts(
         model,
         tilt_series_raw,  # is modified in-place
         position_grid,
         patch_size,
         device,
     )
-
-    aligned_reconstruction = tilt_series.reconstruct_tomogram(tomogram_shape, 128)
-
-    correlation = calculate_cross_correlation(
-        ground_truth_reconstruction, aligned_reconstruction
-    )
-    shift_3d = get_shift_from_correlation_image(correlation)
-    shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
-    shift_3d = shift_3d.repeat(n_tilts, 1)
-
-    shifts_2d = project_shifts_3d_to_2d(
-        shift_3d, tilt_series.projection_matrices[..., :3, :3]
-    )
-    tilt_series.sample_translations += shifts_2d
-
-    mean_diff_final = torch.abs(
-        ground_truth_alignment - tilt_series.sample_translations
+    aligned_reconstruction = tilt_series.reconstruct_tomogram(
+        tomogram_shape, 128
     )
 
-    fig, ax = plt.subplots(1, 2)
-    ax[0].plot(mean_diff_initial[:, 0], label="initial y")
-    ax[0].plot(mean_diff_final[:, 0], label="final y")
-    ax[1].plot(mean_diff_initial[:, 1], label="initial x")
-    ax[1].plot(mean_diff_final[:, 1], label="final x")
-    ax[0].legend()
-    ax[1].legend()
+    if tilt_series_ground_truth is not None:
+        print(f"Centering alignment relative to ground truth...")
+        ground_truth_alignment = tilt_series_ground_truth.sample_translations
+        n_tilts, _, _ = tilt_series_ground_truth.images.shape
 
-    plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
+        ground_truth_reconstruction = tilt_series_ground_truth.reconstruct_tomogram(
+            tomogram_shape, 128
+        )
+
+        mean_diff_initial = torch.abs(
+            ground_truth_alignment - tilt_series_raw.sample_translations
+        )
+
+        correlation = calculate_cross_correlation(
+            ground_truth_reconstruction, aligned_reconstruction
+        )
+        shift_3d = get_shift_from_correlation_image(correlation)
+        shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
+        shift_3d = shift_3d.repeat(n_tilts, 1)
+
+        shifts_2d = project_shifts_3d_to_2d(
+            shift_3d, tilt_series.projection_matrices[..., :3, :3]
+        )
+        tilt_series.sample_translations += shifts_2d
+
+        mean_diff_final = torch.abs(
+            ground_truth_alignment - tilt_series.sample_translations
+        )
+
+        fig, ax = plt.subplots(1, 2)
+        ax[0].plot(mean_diff_initial[:, 0], label="initial y")
+        ax[0].plot(mean_diff_final[:, 0], label="final y")
+        ax[1].plot(mean_diff_initial[:, 1], label="initial x")
+        ax[1].plot(mean_diff_final[:, 1], label="final x")
+        ax[0].legend()
+        ax[1].legend()
+
+        plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
 
     mrcfile.write(
         output_directory / f"{tilt_series_name}_reconstruction.mrc",
