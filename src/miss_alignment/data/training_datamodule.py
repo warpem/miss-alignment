@@ -181,13 +181,4 @@ class SHRECDataModule(pl.LightningDataModule):
             print("\n" + "=" * 50)
             print("FINAL STATISTICS")
             print("=" * 50)
-
-            final_stats = self.monitor.get_rates(window_seconds=float('inf'))
-            print(f"Total produced: {final_stats['total_produced']}")
-            print(f"Total consumed: {final_stats['total_consumed']}")
-            print(f"Runtime: {final_stats['uptime']:.1f}s")
-
-            avg_prod = final_stats['total_produced'] / final_stats['uptime']
-            avg_cons = final_stats['total_consumed'] / final_stats['uptime']
-            print(f"Average production rate: {avg_prod:.2f} files/sec")
-            print(f"Average consumption rate: {avg_cons:.2f} files/sec")
+            self.monitor.print_stats()
