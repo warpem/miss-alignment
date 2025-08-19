@@ -50,6 +50,7 @@ def train_miss_align(
     reconstruction_workers: int = 4,
     dataloader_workers: int = 4,
     iterations: int = 3,
+    monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
     # Load configuration from YAML file
@@ -114,7 +115,10 @@ def train_miss_align(
         )
 
         # initialize the monitor for production consumption rate
-        monitor = SimplePoolMonitor()
+        if monitor_production_and_consumption:
+            monitor = SimplePoolMonitor()
+        else:
+            monitor = None
 
         # Initialize model with parameters from config
         model_params = {
