@@ -84,9 +84,9 @@ def train_miss_align(
     start_iter = general_config['start_at_iteration']
     end_iter = start_iter + iterations
     if not isinstance(model_training_config['learning_rate'], list):
-        learning_rates = [general_config["learning_rate"],] * iterations
+        learning_rates = [model_training_config["learning_rate"],] * iterations
     else:
-        learning_rates = general_config["learning_rate"]
+        learning_rates = model_training_config["learning_rate"]
 
     for x, lr in zip(range(start_iter, end_iter), learning_rates):
         iteration_directory = training_directory / ('iter' + str(x))
