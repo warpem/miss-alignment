@@ -18,7 +18,7 @@ def save_tomogram_to_pickle(data: Tomogram, save_path: Path) -> None:
     with open(save_path, "wb") as outfile:
         pickle.dump(data_dict, outfile)
 
-
+@functools.lru_cache
 def read_tomogram_from_pickle(save_path: Path) -> Tomogram:
     with open(save_path, "rb") as infile:
         data_dict = pickle.load(infile)
