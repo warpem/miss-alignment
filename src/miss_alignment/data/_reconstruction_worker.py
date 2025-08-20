@@ -8,7 +8,6 @@ import torch
 import pickle
 import einops
 import os
-from copy import deepcopy
 from torch_affine_utils.transforms_3d import Ry, Rz
 
 from miss_alignment.data.io import read_tomogram_from_pickle
@@ -126,8 +125,8 @@ def _create_pool_reconstruction(
         patch_size: int,
         shift_generator: Callable,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    # load from cached read, use deepcopy so that we dont modify the cache
-    tilt_series = deepcopy(read_tomogram_from_pickle(tilt_series_path))
+    # load tilt_series from disk
+    tilt_series = read_tomogram_from_pickle(tilt_series_path)
     tilt_series.images -= einops.reduce(
         tilt_series.images, "tilt h w -> tilt 1 1", reduction="mean"
     )

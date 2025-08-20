@@ -77,6 +77,7 @@ def train_miss_align(
     TOMOGRAM_SHAPE = general_config["tomogram_shape"]
 
     # Set up training environment
+    torch.set_float32_matmul_precision("medium")
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
@@ -105,7 +106,6 @@ def train_miss_align(
 
         # Set up trainer with parameters from config
         trainer = Trainer(
-            precision="16-mixed",  # should be good for tensor cores
             accelerator="auto",
             devices="auto",
             default_root_dir=model_training_config["output_directory"],
