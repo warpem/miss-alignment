@@ -83,8 +83,12 @@ def train_miss_align(
 
     start_iter = general_config['start_at_iteration']
     end_iter = start_iter + iterations
+    if not isinstance(model_training_config['learning_rate'], list):
+        learning_rates = [general_config["learning_rate"],] * iterations
+    else:
+        learning_rates = general_config["learning_rate"]
 
-    for x in range(start_iter, end_iter):  # iterations of MissAlignment
+    for x, lr in zip(range(start_iter, end_iter), learning_rates):
         iteration_directory = training_directory / ('iter' + str(x))
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
@@ -127,7 +131,7 @@ def train_miss_align(
 
         # Initialize model with parameters from config
         model_params = {
-            "learning_rate": model_training_config["learning_rate"],
+            "learning_rate": lr,
             "margin": model_training_config["loss_margin"],
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
