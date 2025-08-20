@@ -198,7 +198,7 @@ def optimize_shifts(
 def evaluate_tilt_series(
     model: MissAlignment,
     tilt_series_name: str,
-    tilt_series_raw: Tomogram,
+    tilt_series: Tomogram,
     patches_per_dim: tuple[int, int, int],
     patch_size: int,
     tomogram_shape: tuple[int, int, int],
@@ -218,11 +218,12 @@ def evaluate_tilt_series(
     position_grid = (
         torch.stack(torch.meshgrid(zs, ys, xs, indexing='ij'), dim=-1)
     )
+    initial_translations = tilt_series.sample_translations.clone()
 
     print(f"Aligning {tilt_series_name}...")
     tilt_series, loss = optimize_shifts(
         model,
-        tilt_series_raw,  # is modified in-place
+        tilt_series,  # is modified in-place
         position_grid,
         patch_size,
         device,
@@ -241,7 +242,7 @@ def evaluate_tilt_series(
         )
 
         mean_diff_initial = torch.abs(
-            ground_truth_alignment - tilt_series_raw.sample_translations
+            ground_truth_alignment - initial_translations
         )
 
         correlation = calculate_cross_correlation(
