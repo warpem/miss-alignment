@@ -1,6 +1,7 @@
 import multiprocessing as mp
 import random
 import tempfile
+import itertools
 from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
@@ -84,10 +85,13 @@ def reconstruction_worker(
     with ready_flag.get_lock():
         ready_flag.value += 1
 
+    # Create cyclic iterator outside the loop
+    idx_cycle = itertools.cycle(assigned_indices)
+
     # Continuously update pool with new reconstructions
     while not stop_event.is_set():
         # Randomly select one of our indices to update
-        idx = random.choice(assigned_indices)
+        idx = next(idx_cycle)
 
         data_and_labels = _create_pool_reconstruction(
             tilt_series_path=random.choice(tilt_series_pickles),
