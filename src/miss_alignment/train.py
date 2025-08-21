@@ -200,7 +200,7 @@ def train_miss_align(
                 alignment_config["patch_size"],
                 TOMOGRAM_SHAPE,
                 output_directory,
-                device="cuda" if torch.cuda.is_available() else "cpu",
+                device="cpu",  # force to CPU for dimitry's projectors
                 tilt_series_ground_truth=tilt_series_ground_truth,
             )
 
