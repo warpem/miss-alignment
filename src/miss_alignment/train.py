@@ -52,7 +52,7 @@ def train_miss_align(
     monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
-    max_threads = torch.get_num_thread()
+    max_threads = torch.get_num_threads()
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
