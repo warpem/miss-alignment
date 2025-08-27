@@ -129,7 +129,7 @@ def _create_pool_reconstruction(
         tomogram_shape: tuple[int, int, int],
         patch_size: int,
         shift_generator: Callable,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> list[tuple[torch.Tensor, int]]:
     # load tilt_series from disk
     tilt_series = read_tomogram_from_pickle(tilt_series_path)
     tilt_series.images -= einops.reduce(
@@ -175,7 +175,8 @@ def _create_pool_reconstruction(
     examples = [(aligned, 1), (misaligned, -1)]
 
     # make a triplet example randomly mimick 1 or 2
-    examples += [(aligned, 1) if random.random() > 0.5 else (misaligned, -1)]
+    examples += [(aligned.clone(), 1) if random.random() > 0.5 else (
+        misaligned.clone(), -1)]
 
     # TODO add logic here to give additional rotation to the triplet
     # tilt_series.tilt_angles += random.uniform(-10, +10)
@@ -183,19 +184,18 @@ def _create_pool_reconstruction(
     # tilt_series.sample_translations = sample_translations + aligned_translations
     # example3_volume = tilt_series.reconstruct_subvolume(
     #     location, self.target_size
+    # )huffle(examples)
+    # volumes, labels = zip(*examples)
+    # return (
+    #     *volumes,
+    #     torch.tensor(labels),
     # )
     # example3_volume = self._normalize(example3_volume)
     # example3 = {
     #     "volume": self._augment(example3_volume),
     #     "target": 1,
     # }
-
-    random.shuffle(examples)
-    volumes, labels = zip(*examples)
-    return (
-        *volumes,
-        torch.tensor(labels),
-    )
+    return examples
 
 
 def _generate_translations(

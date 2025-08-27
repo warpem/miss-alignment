@@ -49,7 +49,7 @@ class ReconstructionPoolDataset(Dataset):
 
         Returns
         -------
-        tuple[torch.Tensor]
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
             Dictionary containing the reconstruction data
         """
         random_idx = random.randint(0, self.pool_size - 1)
@@ -57,9 +57,14 @@ class ReconstructionPoolDataset(Dataset):
 
         # This should always succeed due to atomic rename
         with open(file_path, "rb") as infile:
-            data_and_labels = pickle.load(infile)
+            examples = pickle.load(infile)
 
-        volumes, labels = data_and_labels[:-1], data_and_labels[-1]
+        # shuffle the triplet
+        random.shuffle(examples)
+        volumes, labels = zip(*examples)
+        labels = torch.tensor(labels)
+
+        # volumes, labels = data_and_labels[:-1], data_and_labels[-1]
         # augment and add empty channel dim to all volumes
         volumes = self._augment(volumes)
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
