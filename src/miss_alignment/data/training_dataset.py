@@ -61,7 +61,7 @@ class ReconstructionPoolDataset(Dataset):
 
         volumes, labels = data_and_labels[:-1], data_and_labels[-1]
         # augment and add empty channel dim to all volumes
-        volumes = [self._augment(x) for x in volumes]
+        volumes = self._augment(volumes)
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
 
         return *volumes, labels
