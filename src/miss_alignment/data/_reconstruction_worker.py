@@ -55,6 +55,7 @@ def reconstruction_worker(
     stop_event : mp.Event
         Event to signal worker shutdown
     """
+    torch.set_num_threads(1)
     print(
         f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
     )
