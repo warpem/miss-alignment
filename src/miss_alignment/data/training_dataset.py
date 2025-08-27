@@ -66,20 +66,21 @@ class ReconstructionPoolDataset(Dataset):
 
         return *volumes, labels
 
-    def _augment(self, volume: torch.Tensor) -> torch.Tensor:
+    def _augment(self, volumes: list[torch.Tensor]) -> list[torch.Tensor]:
         if self.noise_augmentation and random.random() > 0.5:
             noise_std = random.random() * 1.5
-            volume = volume + torch.normal(
+            volumes = [v + torch.normal(
                 mean=0.0,
                 std=noise_std,
-                size=volume.shape,
-            )
-        volume = random_edge_mask(volume, edge_width=(1, 5))
-        volume = random_cube_mask(volume)
-        volume = self._normalize(volume)
-        volume = random_contrast(volume)
-        volume = random_mirror(volume)
-        return volume
+                size=v.shape,
+            ) for v in volumes]
+        volumes = [random_edge_mask(v, edge_width=(1, 5))
+                   for v in volumes]
+        volumes = [random_cube_mask(v) for v in volumes]
+        volumes = [self._normalize(v) for v in volumes]
+        volumes = [random_contrast(v) for v in volumes]
+        volumes = random_mirror(volumes)
+        return volumes
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)

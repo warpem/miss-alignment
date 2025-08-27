@@ -46,7 +46,7 @@ def random_cube_mask(
     return volume
 
 
-def random_mirror(volume):
+def random_mirror(volumes):
     # Randomly decide which axes to flip (0=no flip, 1=flip)
     flip_dims = [random.choice([True, False]) for _ in range(3)]
 
@@ -57,9 +57,9 @@ def random_mirror(volume):
             dims_to_flip.append(-(3 - i))  # -3, -2, -1 for D, H, W
 
     if dims_to_flip:
-        volume = torch.flip(volume, dims_to_flip)
+        volumes = [torch.flip(v, dims_to_flip) for v in volumes]
 
-    return volume
+    return volumes
 
 
 def random_edge_mask(
