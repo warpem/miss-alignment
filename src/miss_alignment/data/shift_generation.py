@@ -241,12 +241,11 @@ def generate_shifts(
 
 def project_shifts_3d_to_2d(
     shifts_3d: torch.Tensor,  # contains (n, zyx) shifts
-    rotation_matrices: torch.Tensor,  # contains (n, 3, 3) but works on
+    projection_matrices: torch.Tensor,  # contains (n, 3, 3) but works on
     # xyz coordinates, hence some weird swapping inside
 ) -> torch.Tensor:
     """Project 3D shifts to 2D."""
     shifts_3d = einops.rearrange(shifts_3d, "b zyx -> b zyx 1")
-    shifts_3d = rotation_matrices @ shifts_3d
-    shifts_3d = einops.rearrange(shifts_3d, "b zyx 1 -> b zyx")
-    shifts_2d = shifts_3d[:, 1:]  # (n, zyx) -> (n, yx)
+    shifts_2d = projection_matrices @ shifts_3d
+    shifts_2d = einops.rearrange(shifts_2d, "b yx 1 -> b yx")
     return shifts_2d

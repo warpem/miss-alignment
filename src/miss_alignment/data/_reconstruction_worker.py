@@ -150,9 +150,9 @@ def _create_pool_reconstruction(
     r0 = Ry(tilt_series.tilt_angles, zyx=True)
     r1 = Rz(tilt_series.tilt_axis_angle, zyx=True)
     rotation_matrices = r1 @ r0
-    rotation_matrices = rotation_matrices[..., :3, :3]
+    projection_matrices = rotation_matrices[..., 1:3, :3]
     aligned_shifts, misaligned_shifts = (
-        _generate_translations(shift_generator, rotation_matrices)
+        _generate_translations(shift_generator, projection_matrices)
     )
 
     # set the translations needed for reconstruction
