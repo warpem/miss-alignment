@@ -142,9 +142,12 @@ def train_miss_align(
             "monitor": monitor,
         }
 
-        model = MissAlignment.load_from_checkpoint(
-            model_training_config["model_checkpoint"], **model_params
-        )
+        if model_training_config["model_checkpoint"] is not None:
+            model = MissAlignment.load_from_checkpoint(
+                model_training_config["model_checkpoint"], **model_params
+            )
+        else:
+            model = MissAlignment(**model_params)
 
         # Initialize data module with parameters from config
         torch.set_num_threads(1)
