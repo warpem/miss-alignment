@@ -146,20 +146,36 @@ def optimize_shifts(
     """
     tilt_series.to(device)
     model.to(device)
-    tilt_series.sample_translations.requires_grad_()
 
+    # store the initial tilt_series alignment
+    initial_alignment = tilt_series.sample_translations.clone()
+
+    # create the alignment parameters
+    shifts = torch.zeros_like(
+        tilt_series.sample_translations,
+        requires_grad=True,
+        device=device,
+    )
     alignment_optimizer = torch.optim.LBFGS(
-        [
-            tilt_series.sample_translations,
-        ],
+        [shifts],
         line_search_fn="strong_wolfe",
     )
+
+    # set the reference image index, the tilt image closest to 0 degrees
+    reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
+    # Create mask outside the closure
+    mask = torch.ones_like(shifts, device=device)
+    mask[reference_idx] = 0.0
 
     # Initialize list to store loss values
     loss_values = []
 
     def closure():
         alignment_optimizer.zero_grad()
+
+        # update the alignments
+        masked_shifts = shifts * mask
+        tilt_series.sample_translations = initial_alignment + masked_shifts
 
         volumes = []
         for zyx in positions:
@@ -188,7 +204,7 @@ def optimize_shifts(
         alignment_optimizer.step(closure)
 
     # remove gradients
-    tilt_series.sample_translations.detach_()
+    tilt_series.sample_translations = initial_alignment + shifts.detach()
     tilt_series.to("cpu")
     model.to("cpu")
 
