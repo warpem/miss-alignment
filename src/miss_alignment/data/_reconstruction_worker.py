@@ -156,7 +156,8 @@ def _create_pool_reconstruction(
     )
 
     # set the translations needed for reconstruction
-    aligned_translations = sample_translations + aligned_shifts
+    # just skip adding additional shifts
+    aligned_translations = sample_translations  # + aligned_shifts
     misaligned_translations = sample_translations + misaligned_shifts
 
     # reconstruct both volumes
