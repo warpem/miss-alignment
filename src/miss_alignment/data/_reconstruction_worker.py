@@ -174,27 +174,27 @@ def _create_pool_reconstruction(
     # make tuple with volume and label
     examples = [(aligned, 1), (misaligned, -1)]
 
-    # make a triplet example randomly mimick 1 or 2
-    examples += [(aligned.clone(), 1) if random.random() > 0.5 else (
-        misaligned.clone(), -1)]
+    # # make a triplet example randomly mimick 1 or 2
+    # examples += [(aligned.clone(), 1) if random.random() > 0.5 else (
+    #     misaligned.clone(), -1)]
 
-    # TODO add logic here to give additional rotation to the triplet
-    # tilt_series.tilt_angles += random.uniform(-10, +10)
-    # Create a new reconstruction from aligned volume
-    # tilt_series.sample_translations = sample_translations + aligned_translations
-    # example3_volume = tilt_series.reconstruct_subvolume(
-    #     location, self.target_size
-    # )huffle(examples)
-    # volumes, labels = zip(*examples)
-    # return (
-    #     *volumes,
-    #     torch.tensor(labels),
-    # )
-    # example3_volume = self._normalize(example3_volume)
-    # example3 = {
-    #     "volume": self._augment(example3_volume),
-    #     "target": 1,
-    # }
+    # create triplet with additional rotations
+    tilt_series.tilt_angles += random.uniform(-5, +5)
+    if random.random() > 0.5:  # create aligned triplet
+        tilt_series.sample_translations = aligned_translations
+        example3 = tilt_series.reconstruct_subvolume(
+            reconstruction_location, patch_size
+        )
+        example3 = _normalize(example3)
+        examples += [(example3, 1)]
+    else:  # create misaligned triplet
+        tilt_series.sample_translations = misaligned_translations
+        example3 = tilt_series.reconstruct_subvolume(
+            reconstruction_location, patch_size
+        )
+        example3 = _normalize(example3)
+        examples += [(example3, -1)]
+
     return examples
 
 

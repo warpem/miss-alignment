@@ -27,7 +27,7 @@ class ReconstructionPoolDataset(Dataset):
     pool_size : int
         Number of reconstructions in the pool
     """
-    noise_augmentation = False
+    noise_augmentation = True
 
     def __init__(self, pool_dir: Path, pool_size: int, epoch_size: int):
         self.pool_dir = pool_dir
