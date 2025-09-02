@@ -146,6 +146,8 @@ def optimize_shifts(
     """
     tilt_series.to(device)
     model.to(device)
+    model.freeze()
+    model.eval()
 
     # store the initial tilt_series alignment
     initial_alignment = tilt_series.sample_translations.clone()
@@ -186,7 +188,7 @@ def optimize_shifts(
         volumes = torch.stack(volumes)
 
         # change channel to batch dimension
-        volumes = einops.rearrange(volumes, "c d h w -> c 1 d h w")
+        volumes = einops.rearrange(volumes, "b d h w -> b 1 d h w")
 
         # Get loss and compute backward pass
         loss = model(volumes)
@@ -234,6 +236,10 @@ def evaluate_tilt_series(
     position_grid = (
         torch.stack(torch.meshgrid(zs, ys, xs, indexing='ij'), dim=-1)
     )
+    # ensure we get a list of zyx positions!!
+    position_grid = einops.rearrange(position_grid, 'd h w zyx -> (d h w) zyx')
+
+    # store initial shifts for reference
     initial_translations = tilt_series.sample_translations.clone()
 
     print(f"Aligning {tilt_series_name}...")
