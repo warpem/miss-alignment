@@ -152,7 +152,7 @@ class SHRECDataModule(pl.LightningDataModule):
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=False,  # data is already randomized by recon workers
             drop_last=True,
             num_workers=self.dataloader_workers,
             persistent_workers=True,

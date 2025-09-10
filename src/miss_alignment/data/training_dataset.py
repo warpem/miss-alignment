@@ -52,8 +52,7 @@ class ReconstructionPoolDataset(Dataset):
         tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
             Dictionary containing the reconstruction data
         """
-        random_idx = random.randint(0, self.pool_size - 1)
-        file_path = self.pool_dir / f"recon_{random_idx}.pickle"
+        file_path = self.pool_dir / f"recon_{idx % self.pool_size}.pickle"
 
         # This should always succeed due to atomic rename
         with open(file_path, "rb") as infile:
