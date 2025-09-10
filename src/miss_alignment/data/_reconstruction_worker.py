@@ -136,8 +136,12 @@ def _create_pool_reconstruction(
         tilt_series.images, "tilt h w -> tilt 1 1", reduction="mean"
     )
     tilt_series.images /= torch.std(tilt_series.images, dim=(-2, -1), keepdim=True)
+
     # store original alignment
     sample_translations = tilt_series.sample_translations.clone()
+
+    # add a random rotation to the sample
+    tilt_series.tilt_angles += random.uniform(-10, +10)
 
     # select a random reconstruction position
     _offset = patch_size // 2
