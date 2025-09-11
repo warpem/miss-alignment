@@ -13,7 +13,7 @@ from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import SHRECDataModule
-from .data.shift_generation import generate_shifts
+from .data.shift_generation import create_default_generator
 from .data.io import read_tomogram_from_pickle
 from .models import MissAlignment, MAEarlyStopping
 from .alignment import evaluate_tilt_series
@@ -153,7 +153,7 @@ def train_miss_align(
         torch.set_num_threads(1)
         with SHRECDataModule(
             iteration_directory,
-            partial(generate_shifts, **shift_generation_config),
+            create_default_generator(**shift_generation_config),
             reconstruction_workers=reconstruction_workers,
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
