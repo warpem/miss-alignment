@@ -7,6 +7,7 @@ import torch
 import einops
 import matplotlib.pyplot as plt
 from torch_tomogram import Tomogram
+from itertools import chain
 
 from miss_alignment.data.io import save_tomogram_to_pickle
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
@@ -118,6 +119,120 @@ def get_shift_from_correlation_image(correlation_image: torch.Tensor) -> torch.T
     )
 
     return subpixel_shift
+
+
+def optimize_shifts_local(
+    model,
+    tilt_series,
+    positions,
+    patch_size,
+    device,
+    tomogram_shape,
+):
+    """Find shifts to optimize model score.
+
+    Parameters
+    ----------
+    model: torch.nn.Module
+        Model that produces the optimization target.
+    tilt_image_dfts: torch.Tensor
+        DFTs of tilt images to use for reconstruction.
+    tilt_rotation_matrices: torch.Tensor:
+        Tilt rotation matrices to use for back projection.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor, list]
+        - Detected translational alignment.
+        - List of loss values for each optimization iteration.
+    """
+    from torch_cubic_spline_grids import CubicBSplineGrid3d
+
+    tilt_series.to(device)
+    model.to(device)
+    model.freeze()
+    model.eval()
+
+    d, h, w = tomogram_shape
+    dc, hc, wc = d // 2, h // 2, w // 2
+    n_tilts, _ = tilt_series.sample_translations.shape
+    tilt_idx = torch.linspace(0, 1, n_tilts)
+
+    # store the initial tilt_series alignment
+    initial_alignment = tilt_series.sample_translations.clone()
+
+    # create the alignment parameters
+    shifts_y = CubicBSplineGrid3d(resolution=(n_tilts, 3, 3))
+    shifts_x = CubicBSplineGrid3d(resolution=(n_tilts, 3, 3))
+    alignment_optimizer = torch.optim.LBFGS(
+        chain(shifts_y.parameters(), shifts_x.parameters()),
+        line_search_fn="strong_wolfe",
+    )
+
+    # set the reference image index, the tilt image closest to 0 degrees
+    reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
+    # Create mask outside the closure
+    mask = torch.ones((n_tilts, 2), device=device)
+    mask[reference_idx] = 0.0
+
+    # Initialize list to store loss values
+    loss_values = []
+    patches = []
+
+    def closure():
+        alignment_optimizer.zero_grad()
+
+        # update the alignments
+        # masked_shifts = shifts * mask
+        # tilt_series.sample_translations = initial_alignment + masked_shifts
+
+        volumes = []
+        for zyx in positions:
+            # convert to [0, 1] for accessing the spline grids
+            z, y, x = zyx
+            z, y, x = (z + dc) / d, (y + hc) / h, (x + wc) / w
+            shift_idx = torch.stack((tilt_idx, torch.tensor([y,] * n_tilts),
+                         torch.tensor([x,] * n_tilts))).T
+            sub_shifts = torch.cat((shifts_y(shift_idx), shifts_x(
+                shift_idx)), dim=1)
+            masked_shifts = sub_shifts * mask
+            tilt_series.sample_translations = initial_alignment + masked_shifts
+
+            subtomo = tilt_series.reconstruct_subvolume(zyx, patch_size)
+            mean, std = torch.mean(subtomo), torch.std(subtomo)
+            subtomo = (subtomo - mean) / std
+            volumes.append(subtomo)
+        volumes = torch.stack(volumes)
+
+        # change channel to batch dimension
+        volumes = einops.rearrange(volumes, "b d h w -> b 1 d h w")
+
+        # Get loss and compute backward pass
+        loss = model(volumes)
+        loss = loss.mean()
+        loss.backward()
+
+        print(loss.item())
+
+        # Store the loss value
+        loss_values.append(loss.item())
+        patches.append(volumes.detach().numpy())
+
+        return loss
+
+    n_iters = 1  # 5 iterations should give convergence
+    for x in range(n_iters):
+        print(f"Optimizing... {x + 1}/{n_iters}")
+        alignment_optimizer.step(closure)
+
+    # remove gradients
+    # tilt_series.sample_translations = initial_alignment + shifts.detach()
+    tilt_series.to("cpu")
+    model.to("cpu")
+
+    return (shifts_y, shifts_x), patches
+
+    # return tilt_series, loss_values
 
 
 def optimize_shifts(
@@ -243,6 +358,14 @@ def evaluate_tilt_series(
     initial_translations = tilt_series.sample_translations.clone()
 
     print(f"Aligning {tilt_series_name}...")
+    # return optimize_shifts_local(
+    #     model,
+    #     tilt_series,  # is modified in-place
+    #     position_grid,
+    #     patch_size,
+    #     device,
+    #     tomogram_shape,
+    # )
     tilt_series, loss = optimize_shifts(
         model,
         tilt_series,  # is modified in-place
@@ -275,7 +398,7 @@ def evaluate_tilt_series(
         shift_3d = shift_3d.repeat(n_tilts, 1)
 
         shifts_2d = project_shifts_3d_to_2d(
-            shift_3d, tilt_series.projection_matrices[..., :3, :3]
+            shift_3d, tilt_series.projection_matrices[..., 1:3, :3]
         )
         tilt_series.sample_translations += shifts_2d
 
