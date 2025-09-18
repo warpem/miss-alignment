@@ -27,8 +27,6 @@ class ReconstructionPoolDataset(Dataset):
     pool_size : int
         Number of reconstructions in the pool
     """
-    noise_augmentation = False
-
     def __init__(self, pool_dir: Path, pool_size: int, epoch_size: int):
         self.pool_dir = pool_dir
         self.pool_size = pool_size
@@ -63,30 +61,27 @@ class ReconstructionPoolDataset(Dataset):
         volumes, labels = zip(*examples)
         labels = torch.tensor(labels)
 
-        # volumes, labels = data_and_labels[:-1], data_and_labels[-1]
-        # augment and add empty channel dim to all volumes
-        volumes = self._augment(volumes)
+        # run normalization and augmentation
+        volumes = self._prep_and_augment(volumes)
+        # add empty channel dim to all volumes
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
 
         return *volumes, labels
 
-    def _augment(self, volumes: list[torch.Tensor]) -> list[torch.Tensor]:
-        if self.noise_augmentation and random.random() > 0.5:
-            noise_std = random.random() * 1.5
-            volumes = [v + torch.normal(
-                mean=0.0,
-                std=noise_std,
-                size=v.shape,
-            ) for v in volumes]
+    def _prep_and_augment(self, volumes: list[torch.Tensor]) -> list[
+        torch.Tensor]:
+        volumes = [self._normalize(v) for v in volumes]
+        volumes = [random_contrast(v) for v in volumes]
         volumes = [random_edge_mask(v, edge_width=(1, 5))
                    for v in volumes]
         volumes = [random_cube_mask(v) for v in volumes]
-        volumes = [self._normalize(v) for v in volumes]
-        volumes = [random_contrast(v) for v in volumes]
+        # random mirror works on list to ensure consistency between triplets
         volumes = random_mirror(volumes)
         return volumes
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)
-        volume = torch.nan_to_num(volume, nan=float(mean))
+        if std == 0.0:
+            raise ValueError('Cannot normalize patch because '
+                             'the standard deviation is 0.')
         return (volume - mean) / std
