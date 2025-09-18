@@ -168,12 +168,10 @@ def _create_pool_reconstruction(
     aligned = tilt_series.reconstruct_subvolume(
         reconstruction_location, patch_size
     )
-    aligned = _normalize(aligned)
     tilt_series.sample_translations = misaligned_translations
     misaligned = tilt_series.reconstruct_subvolume(
             reconstruction_location, patch_size
     )
-    misaligned = _normalize(misaligned)
 
     # make tuple with volume and label
     examples = [(aligned, 1), (misaligned, -1)]
@@ -189,14 +187,12 @@ def _create_pool_reconstruction(
     #     example3 = tilt_series.reconstruct_subvolume(
     #         reconstruction_location, patch_size
     #     )
-    #     example3 = _normalize(example3)
     #     examples += [(example3, 1)]
     # else:  # create misaligned triplet
     #     tilt_series.sample_translations = misaligned_translations
     #     example3 = tilt_series.reconstruct_subvolume(
     #         reconstruction_location, patch_size
     #     )
-    #     example3 = _normalize(example3)
     #     examples += [(example3, -1)]
 
     return examples
@@ -234,9 +230,3 @@ def _generate_translations(
         aligned_translations = shifts_1
 
     return aligned_translations, misaligned_translations
-
-
-def _normalize(volume: torch.Tensor) -> torch.Tensor:
-    mean, std = torch.mean(volume), torch.std(volume)
-    volume = torch.nan_to_num(volume, nan=float(mean))
-    return (volume - mean) / std
