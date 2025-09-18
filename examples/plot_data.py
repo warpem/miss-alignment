@@ -1,7 +1,7 @@
 import os
 import typer
 from pathlib import Path
-from .._cli import OPTION_PROMPT_KWARGS, cli
+from miss_alignment._cli import OPTION_PROMPT_KWARGS, cli
 
 import einops
 import torch
