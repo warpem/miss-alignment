@@ -52,8 +52,6 @@ def train_miss_align(
     monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
-    max_threads = torch.get_num_threads()
-
     # Load configuration from YAML file
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -186,8 +184,9 @@ def train_miss_align(
         # set input and output dirs
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
-        # maximize threading for alignment loop
-        torch.set_num_threads(max_threads)
+        # multithread alignment with recon_workers, workaround till we can
+        # make use of the gpu for the image alignment
+        torch.set_num_threads(reconstruction_workers)
         for file_path in iteration_directory.iterdir():
             if file_path.suffix != '.pickle':
                 continue
