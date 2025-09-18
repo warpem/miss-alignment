@@ -138,7 +138,7 @@ class TestRandomCubeMask:
         volume = torch.ones(16, 32, 32)
         result = random_cube_mask(volume, p=1.0)
 
-        # Should contain mask values (random() - 0.5, so in range [-0.5, 0.5])
+        # Should contain mask values in range [-1, 1]
         unique_values = torch.unique(result)
         has_mask_values = any(abs(val.item()) < 0.6 and val.item() != 1.0
                               for val in unique_values)
@@ -194,28 +194,18 @@ class TestRandomEdgeMask:
         result = random_edge_mask(volume, p=0.0)
         torch.testing.assert_close(result, original)
 
-    def test_probability_one_always_applies(self):
+    @patch('random.random')
+    def test_probability_one_always_applies(self, mock_random):
         """Test that p=1 always applies edge masking."""
+        mock_random.side_effect = [0.0, 0.5]  # p, mask_value
         volume = torch.ones(10, 10, 10)
-        result = random_edge_mask(volume, p=1.0, edge_width=(2, 2),
-                                  mask_value=0.0)
+        result = random_edge_mask(volume, p=1.0, edge_width=(2, 2))
 
         # Check that edges are masked (should contain 0.0 values)
         assert 0.0 in result
         # Check that center still has original values
         center = result[2:-2, 2:-2, 2:-2]
         assert torch.all(center == 1.0)
-
-    def test_custom_mask_value(self):
-        """Test that custom mask value is applied."""
-        volume = torch.ones(8, 8, 8)
-        mask_value = -999.0
-        result = random_edge_mask(
-            volume, p=1.0, edge_width=(1, 1), mask_value=mask_value
-        )
-
-        # Should contain the custom mask value
-        assert mask_value in result
 
     def test_edge_width_range(self):
         """Test that edge width is within specified range."""
@@ -227,20 +217,22 @@ class TestRandomEdgeMask:
             mock_randint.return_value = 3  # Fixed width
 
             result = random_edge_mask(
-                volume, p=1.0, edge_width=(2, 5), mask_value=0.0
+                volume, p=1.0, edge_width=(2, 5),
             )
 
             # Verify randint was called with correct range
             mock_randint.assert_called_once_with(2, 5)
 
-    def test_all_edges_masked(self):
+    @patch('random.random')
+    def test_all_edges_masked(self, mock_random):
         """Test that all 6 faces of the cube are masked."""
+        mask_value = 1.0
+        mock_random.side_effect = [0.5, (mask_value + 1) / 2]
         volume = torch.ones(10, 10, 10)
         width = 1
-        mask_value = 0.0
 
         result = random_edge_mask(
-            volume, p=1.0, edge_width=(width, width), mask_value=mask_value
+            volume, p=1.0, edge_width=(width, width)
         )
 
         # Check all 6 faces are masked

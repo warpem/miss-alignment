@@ -30,7 +30,7 @@ def random_cube_mask(
         volume: torch.Tensor, p=.3, size_range=(0.1, 0.3)
 ) -> torch.Tensor:
     """Mask out a random cube in a volume with probability p"""
-    if random.random() > 1 - p:
+    if random.random() >= 1 - p:
         d, h, w = volume.shape
 
         # Determine mask size as fraction of volume dimensions
@@ -48,7 +48,7 @@ def random_cube_mask(
             start_d:start_d + mask_d,
             start_h:start_h + mask_h,
             start_w:start_w + mask_w
-        ] = random.random() - .5
+        ] = 2 * random.random() - 1.0
     return volume
 
 
@@ -56,15 +56,16 @@ def random_edge_mask(
         volume: torch.Tensor,
         p: float = 0.5,
         edge_width: tuple[int, int] = (1, 8),
-        mask_value: float = 0.0
 ) -> torch.Tensor:
     """Mask out all edges of a volume with probability p"""
-    if random.random() > 1 - p:
+    if random.random() >= 1 - p:
         width = random.randint(edge_width[0], edge_width[1])
 
         # Mask all edges in one line using slicing tricks
         volume[..., :width, :, :] = volume[..., -width:, :, :] = \
             volume[..., :, :width, :] = volume[..., :, -width:, :] = \
-            volume[..., :, :, :width] = volume[..., :, :, -width:] = mask_value
+            volume[..., :, :, :width] = volume[..., :, :, -width:] = (
+            2 * random.random() - 1.0
+        )
 
     return volume
