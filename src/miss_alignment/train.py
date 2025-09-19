@@ -184,9 +184,8 @@ def train_miss_align(
         # set input and output dirs
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
-        # multithread alignment with recon_workers, workaround till we can
-        # make use of the gpu for the image alignment
-        torch.set_num_threads(reconstruction_workers)
+        # set multithread for cpu to max 30 cores
+        torch.set_num_threads(min(reconstruction_workers, 30))
         for file_path in iteration_directory.iterdir():
             if file_path.suffix != '.pickle':
                 continue
@@ -207,7 +206,7 @@ def train_miss_align(
                 alignment_config["patch_size"],
                 TOMOGRAM_SHAPE,
                 output_directory,
-                device="cpu",  # force to CPU for dimitry's projectors
+                device="cuda" if torch.cuda.is_available() else "cpu",
                 tilt_series_ground_truth=tilt_series_ground_truth,
             )
 
