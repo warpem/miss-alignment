@@ -7,8 +7,8 @@ from unittest.mock import patch, MagicMock
 from miss_alignment.data.shift_generation import (
     ShiftConfig, ShiftGenerator, select_random_indices,
     generate_smooth_trajectory, generate_shift_trajectory,
-    create_trajectory_generator, create_jitter_generator,
-    create_outlier_generator, create_default_generator,
+    TrajectoryGenerator, JitterGenerator,
+    OutlierGenerator, create_default_generator,
     project_shifts_3d_to_2d
 )
 
@@ -280,7 +280,7 @@ class TestGeneratorCreators:
     def test_create_trajectory_generator(self):
         """Test trajectory generator creation."""
         max_shift = 10.0
-        generator = create_trajectory_generator(max_shift)
+        generator = TrajectoryGenerator(max_shift)
 
         num_points = 20
         shifts = generator(num_points)
@@ -295,7 +295,7 @@ class TestGeneratorCreators:
     def test_create_jitter_generator(self):
         """Test jitter generator creation."""
         max_std = 5.0
-        generator = create_jitter_generator(max_std)
+        generator = JitterGenerator(max_std)
 
         num_points = 100
         shifts = generator(num_points)
@@ -312,7 +312,7 @@ class TestGeneratorCreators:
     def test_create_outlier_generator(self):
         """Test outlier generator creation."""
         max_shift = 20.0
-        generator = create_outlier_generator(max_shift, max_sequence_length=3,
+        generator = OutlierGenerator(max_shift, max_sequence_length=3,
                                              edge_only=False)
 
         num_points = 50
@@ -511,7 +511,7 @@ def test_generator_output_shapes(num_points):
 @pytest.mark.parametrize("max_shift", [0.1, 1.0, 10.0, 100.0])
 def test_trajectory_generator_scaling(max_shift):
     """Test that trajectory generator respects max_shift parameter."""
-    generator = create_trajectory_generator(max_shift)
+    generator = TrajectoryGenerator(max_shift)
     shifts = generator(50)
 
     # The actual maximum might be less due to centering, but should be reasonable

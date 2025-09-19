@@ -204,58 +204,54 @@ def generate_shift_trajectory(
     return timesteps, x_positions, y_positions, z_positions
 
 
-def create_trajectory_generator(trajectory_max_shift: float) -> Callable[
-    [int], torch.Tensor]:
-    """Create a trajectory shift generator."""
+class TrajectoryGenerator:
+    """Picklable trajectory shift generator."""
 
-    def generate_trajectory_shift(num_points: int) -> torch.Tensor:
+    def __init__(self, trajectory_max_shift: float):
+        self.trajectory_max_shift = trajectory_max_shift
+
+    def __call__(self, num_points: int) -> torch.Tensor:
         _, x_shifts, y_shifts, z_shifts = generate_shift_trajectory(num_points)
-        x_shifts = x_shifts * trajectory_max_shift
-        y_shifts = y_shifts * trajectory_max_shift
-        z_shifts = z_shifts * trajectory_max_shift
+        x_shifts = x_shifts * self.trajectory_max_shift
+        y_shifts = y_shifts * self.trajectory_max_shift
+        z_shifts = z_shifts * self.trajectory_max_shift
         shifts = torch.stack([z_shifts, y_shifts, x_shifts], dim=1)
-
-        # Center the trajectories to the origin in 3D
         shifts = shifts - einops.reduce(shifts, "n zyx -> 1 zyx",
                                         reduction="mean")
         return shifts
 
-    return generate_trajectory_shift
+
+class JitterGenerator:
+    """Picklable jitter shift generator."""
+
+    def __init__(self, jitter_max_std: float):
+        self.jitter_max_std = jitter_max_std
+
+    def __call__(self, num_points: int) -> torch.Tensor:
+        std = random.random() * self.jitter_max_std
+        return torch.normal(mean=0.0, std=float(std), size=(num_points, 3))
 
 
-def create_jitter_generator(jitter_max_std: float) -> Callable[
-    [int], torch.Tensor]:
-    """Create a jitter shift generator."""
+class OutlierGenerator:
+    """Picklable outlier shift generator."""
 
-    def generate_jitter_shift(num_points: int) -> torch.Tensor:
-        std = random.random() * jitter_max_std
-        return torch.normal(
-            mean=0.0,
-            std=float(std),
-            size=(num_points, 3),
-        )
+    def __init__(self, outlier_max_shift: float, max_sequence_length: int = 3,
+                 edge_only: bool = False):
+        self.outlier_max_shift = outlier_max_shift
+        self.max_sequence_length = max_sequence_length
+        self.edge_only = edge_only
 
-    return generate_jitter_shift
-
-
-def create_outlier_generator(outlier_max_shift: float,
-                             max_sequence_length: int = 3,
-                             edge_only: bool = False) -> Callable[
-    [int], torch.Tensor]:
-    """Create an outlier shift generator."""
-
-    def generate_outlier_shift(num_points: int) -> torch.Tensor:
+    def __call__(self, num_points: int) -> torch.Tensor:
         shifts = torch.zeros((num_points, 3))
         ids = select_random_indices(
             torch.arange(num_points),
-            max_sequence_length=max_sequence_length,
-            edge_only=edge_only
+            max_sequence_length=self.max_sequence_length,
+            edge_only=self.edge_only
         )
-        outliers = torch.rand(3) * (2 * outlier_max_shift) - outlier_max_shift
+        outliers = torch.rand(3) * (
+                    2 * self.outlier_max_shift) - self.outlier_max_shift
         shifts[ids] = outliers
         return shifts
-
-    return generate_outlier_shift
 
 
 def create_default_generator(
@@ -267,71 +263,35 @@ def create_default_generator(
         outlier_max_shift: float = 20.0,
         high_tilt_outlier_probability: float = 0.4,
         high_tilt_max_shift: float = 30.0,
-) -> Callable[[int], torch.Tensor]:
-    """
-    Generate a set of shifts in 3D using composable shift generators.
+) -> ShiftGenerator:
+    """Create a picklable shift generator."""
 
-    Now properly respects zero probabilities - if a shift has 0.0 probability,
-    it will never be applied, even in the fallback case.
-
-    Parameters
-    ----------
-    num_points : int
-        Number of points to generate shifts for
-    trajectory_probability : float
-        Probability of applying trajectory shift
-    trajectory_max_shift : float
-        Maximum shift magnitude for trajectory
-    jitter_probability : float
-        Probability of applying jitter
-    jitter_max_std : float
-        Maximum standard deviation for jitter
-    outlier_probability : float
-        Probability of applying regular outliers
-    outlier_max_shift : float
-        Maximum shift magnitude for outliers
-    high_tilt_outlier_probability : float
-        Probability of applying high tilt outliers
-    high_tilt_max_shift : float
-        Maximum shift magnitude for high tilt outliers
-
-    Returns
-    -------
-    torch.Tensor
-        Tensor of shape (num_points, 3) containing the generated shifts
-    """
-
-    # Create shift configurations
     shift_configs = [
         ShiftConfig(
             name="trajectory",
             probability=trajectory_probability,
-            generator=create_trajectory_generator(trajectory_max_shift)
+            generator=TrajectoryGenerator(trajectory_max_shift)
         ),
         ShiftConfig(
             name="jitter",
             probability=jitter_probability,
-            generator=create_jitter_generator(jitter_max_std)
+            generator=JitterGenerator(jitter_max_std)
         ),
         ShiftConfig(
             name="outlier",
             probability=outlier_probability,
-            generator=create_outlier_generator(outlier_max_shift,
-                                               max_sequence_length=3,
-                                               edge_only=False)
+            generator=OutlierGenerator(outlier_max_shift,
+                                       max_sequence_length=3, edge_only=False)
         ),
         ShiftConfig(
             name="high_tilt_outlier",
             probability=high_tilt_outlier_probability,
-            generator=create_outlier_generator(high_tilt_max_shift,
-                                               max_sequence_length=7,
-                                               edge_only=True)
+            generator=OutlierGenerator(high_tilt_max_shift,
+                                       max_sequence_length=7, edge_only=True)
         ),
     ]
 
-    # Create generator and apply shifts
-    generator = ShiftGenerator(shift_configs, ensure_at_least_one=True)
-    return generator
+    return ShiftGenerator(shift_configs, ensure_at_least_one=True)
 
 
 def project_shifts_3d_to_2d(
