@@ -137,10 +137,8 @@ def _create_pool_reconstruction(
     )
     tilt_series.images /= torch.std(tilt_series.images, dim=(-2, -1), keepdim=True)
 
-    # store original alignment
-    sample_translations = tilt_series.sample_translations.clone()
-
     # add a random rotation to the sample
+    # TODO instead of full tilt angle offset we should use a subtomo rotation
     tilt_series.tilt_angles += random.uniform(-10, +10)
 
     # select a random reconstruction position
@@ -155,20 +153,16 @@ def _create_pool_reconstruction(
     r1 = Rz(tilt_series.tilt_axis_angle, zyx=True)
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
-    aligned_shifts, misaligned_shifts = (
+    translations = (
         _generate_translations(shift_generator, projection_matrices)
     )
 
-    # set the translations needed for reconstruction
-    aligned_translations = sample_translations + aligned_shifts
-    misaligned_translations = sample_translations + misaligned_shifts
-
     # reconstruct both volumes
-    tilt_series.sample_translations = aligned_translations
     aligned = tilt_series.reconstruct_subvolume(
         reconstruction_location, patch_size
     )
-    tilt_series.sample_translations = misaligned_translations
+    # add the extra translations for misaligned example
+    tilt_series.sample_translations += translations
     misaligned = tilt_series.reconstruct_subvolume(
             reconstruction_location, patch_size
     )
@@ -180,53 +174,23 @@ def _create_pool_reconstruction(
     examples += [(aligned.clone(), 1) if random.random() > 0.5 else (
         misaligned.clone(), -1)]
 
-    # create triplet with additional rotations
-    # tilt_series.tilt_angles += random.uniform(-5, +5)
-    # if random.random() > 0.5:  # create aligned triplet
-    #     tilt_series.sample_translations = aligned_translations
-    #     example3 = tilt_series.reconstruct_subvolume(
-    #         reconstruction_location, patch_size
-    #     )
-    #     examples += [(example3, 1)]
-    # else:  # create misaligned triplet
-    #     tilt_series.sample_translations = misaligned_translations
-    #     example3 = tilt_series.reconstruct_subvolume(
-    #         reconstruction_location, patch_size
-    #     )
-    #     examples += [(example3, -1)]
-
     return examples
 
 
 def _generate_translations(
         generate_shifts: Callable,
         rotation_matrices,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     n_tilts, _, _ = rotation_matrices.shape
     # generate two sets of shifts, 3d shifts zyx
-    shifts_1 = generate_shifts(n_tilts)
-    shifts_2 = generate_shifts(n_tilts)
-
-    # project the shifts to 2d
-    shifts_1 = project_shifts_3d_to_2d(shifts_1, rotation_matrices)
-    shifts_2 = project_shifts_3d_to_2d(shifts_2, rotation_matrices)
+    shifts = generate_shifts(n_tilts)
+    shifts = project_shifts_3d_to_2d(shifts, rotation_matrices)
 
     # randomly remove x or y shifts
     die_roll = random.random()
     if die_roll < 0.25:  # set y to 0
-        shifts_1[:, 0] = 0.0
-        shifts_2[:, 0] = 0.0
+        shifts[:, 0] = 0.0
     if 0.25 <= die_roll < 0.5:  # set x to 0
-        shifts_1[:, 1] = 0.0
-        shifts_2[:, 1] = 0.0
+        shifts[:, 1] = 0.0
 
-    # set (mis)alignment based on the \sigma of the generated shifts
-    if torch.sum(torch.abs(shifts_1)) > torch.sum(torch.abs(shifts_2)):
-        # if torch.pow(shifts_1, 2).sum() > torch.pow(shifts_2, 2).sum():
-        misaligned_translations = shifts_1
-        aligned_translations = shifts_2
-    else:
-        misaligned_translations = shifts_2
-        aligned_translations = shifts_1
-
-    return aligned_translations, misaligned_translations
+    return shifts
