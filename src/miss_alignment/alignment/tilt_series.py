@@ -279,10 +279,10 @@ def optimize_shifts(
     )
 
     # set the reference image index, the tilt image closest to 0 degrees
-    reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
+    # reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
     # Create mask outside the closure
-    mask = torch.ones_like(shifts, device=device)
-    mask[reference_idx] = 0.0
+    # mask = torch.ones_like(shifts, device=device)
+    # mask[reference_idx] = 0.0
 
     # Initialize list to store loss values
     loss_values = []
@@ -291,8 +291,8 @@ def optimize_shifts(
         alignment_optimizer.zero_grad()
 
         # update the alignments
-        masked_shifts = shifts * mask
-        tilt_series.sample_translations = initial_alignment + masked_shifts
+        # masked_shifts = shifts * mask
+        tilt_series.sample_translations = initial_alignment + shifts
 
         volumes = []
         for zyx in positions:
