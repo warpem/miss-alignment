@@ -386,6 +386,17 @@ class TestDefaultGenerator:
 
 class TestProjectShifts3DTo2D:
     """Test 3D to 2D projection function."""
+    def test_raise_error_with_wrong_matrix_shape(self):
+        shifts_3d = torch.randn((10, 3))
+        matrices = torch.randn((10, 3, 3))
+        with pytest.raises(ValueError):
+            project_shifts_3d_to_2d(shifts_3d, matrices)
+
+    def test_raise_error_with_mismatch_of_points(self):
+        shifts_3d = torch.randn((5, 3))
+        matrices = torch.randn((2, 2, 3))
+        with pytest.raises(RuntimeError):
+            project_shifts_3d_to_2d(shifts_3d, matrices)
 
     def test_basic_projection(self):
         """Test basic 3D to 2D projection."""
@@ -517,7 +528,3 @@ def test_trajectory_generator_scaling(max_shift):
     # The actual maximum might be less due to centering, but should be reasonable
     max_observed = torch.max(torch.abs(shifts)).item()
     assert max_observed <= max_shift * 2  # Allow some tolerance for centering
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])
