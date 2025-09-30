@@ -132,7 +132,7 @@ def reconstruction_worker(
 
         data_and_labels = _create_pool_reconstruction(
             tilt_series=tilt_series_fetcher(),
-            tomogram_shape=tomogram_shape,
+            tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
             patch_size=patch_size,
             shift_generator=shift_generator,
         )
@@ -158,7 +158,7 @@ def reconstruction_worker(
 
         data_and_labels = _create_pool_reconstruction(
             tilt_series=tilt_series_fetcher(),
-            tomogram_shape=tomogram_shape,
+            tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
             patch_size=patch_size,
             shift_generator=shift_generator,
         )
