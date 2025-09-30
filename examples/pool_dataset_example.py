@@ -24,7 +24,7 @@ if __name__ == "__main__":
 
     # interested in the impact of this...
     tilt_series_refresh_rate = 100
-    device = 'cpu'
+    device = 'cuda:0'
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pool_dir = Path(tmpdir)
