@@ -59,7 +59,6 @@ def reconstruction_worker(
     print(
         f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
     )
-    # torch.set_num_threads(1)
 
     # Initial fill of assigned pool slots
     for idx in assigned_indices:
@@ -179,18 +178,20 @@ def _create_pool_reconstruction(
 
 def _generate_translations(
         generate_shifts: Callable,
-        rotation_matrices,
+        projection_matrices,
 ) -> torch.Tensor:
-    n_tilts, _, _ = rotation_matrices.shape
+    n_tilts, y, x = projection_matrices.shape
+    if (y, x) != (2, 3):
+        raise ValueError('Projection matrices must have shape (2, 3)')
     # generate two sets of shifts, 3d shifts zyx
     shifts = generate_shifts(n_tilts)
-    shifts = project_shifts_3d_to_2d(shifts, rotation_matrices)
+    shifts = project_shifts_3d_to_2d(shifts, projection_matrices)
 
     # randomly remove x or y shifts
     die_roll = random.random()
     if die_roll < 0.25:  # set y to 0
         shifts[:, 0] = 0.0
-    if 0.25 <= die_roll < 0.5:  # set x to 0
+    elif 0.25 <= die_roll < 0.5:  # set x to 0
         shifts[:, 1] = 0.0
 
     return shifts

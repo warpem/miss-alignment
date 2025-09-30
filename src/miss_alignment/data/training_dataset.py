@@ -59,6 +59,9 @@ class ReconstructionPoolDataset(Dataset):
         # shuffle the triplet
         random.shuffle(examples)
         volumes, labels = zip(*examples)
+        if not (1 in labels and -1 in labels and all(i in [1, -1] for i in labels)):
+            raise ValueError("Training examples must contain positive and "
+                             "negative labels.")
         labels = torch.tensor(labels)
 
         # run normalization and augmentation

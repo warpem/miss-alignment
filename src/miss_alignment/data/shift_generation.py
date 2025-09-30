@@ -299,6 +299,9 @@ def project_shifts_3d_to_2d(
     projection_matrices: torch.Tensor,  # contains (n, 2, 3)
 ) -> torch.Tensor:
     """Project 3D shifts to 2D."""
+    y, x = projection_matrices.shape[-2:]
+    if (y, x) != (2, 3):
+        raise ValueError('Shift projection matrices must have shape (2, 3)')
     shifts_3d = einops.rearrange(shifts_3d, "b zyx -> b zyx 1")
     shifts_2d = projection_matrices @ shifts_3d
     shifts_2d = einops.rearrange(shifts_2d, "b yx 1 -> b yx")
