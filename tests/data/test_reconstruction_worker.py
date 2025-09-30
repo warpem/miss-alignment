@@ -14,6 +14,7 @@ from miss_alignment.data._reconstruction_worker import (
     _create_pool_reconstruction,
     _generate_translations,
     reconstruction_worker,
+    TiltSeriesFetcher,
 )
 
 
@@ -44,6 +45,153 @@ def shift_generator():
         return torch.randn(n_tilts, 3)
 
     return generator
+
+
+class TestTiltSeriesFetcher:
+    """Test TiltSeriesFetcher class."""
+
+    def test_initialization(self, temp_dir):
+        """Test that TiltSeriesFetcher initializes correctly.
+
+        Parameters
+        ----------
+        temp_dir : Path
+            Temporary directory for test files
+        """
+        tilt_series_pickles = [temp_dir / "test.pickle"]
+        refresh_rate = 5
+        device = torch.device("cpu")
+
+        fetcher = TiltSeriesFetcher(
+            tilt_series_pickles=tilt_series_pickles,
+            refresh_rate=refresh_rate,
+            device=device
+        )
+        
+        assert fetcher.tilt_series_pickles == tilt_series_pickles
+        assert fetcher.refresh_rate == refresh_rate
+        assert fetcher.device == device
+        assert fetcher._counter == 0
+        assert fetcher._tilt_series is None
+    
+    @patch('miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
+    def test_load_next(self, mock_read, mock_tilt_series, temp_dir):
+        """Test that _load_next loads and processes a tilt series correctly.
+
+        Parameters
+        ----------
+        mock_read : MagicMock
+            Mock for read_tomogram_from_pickle function
+        mock_tilt_series : Mock
+            Mock tilt series object
+        temp_dir : Path
+            Temporary directory for test files
+        """
+        mock_read.return_value = mock_tilt_series
+        tilt_series_pickles = [temp_dir / "test.pickle"]
+
+        fetcher = TiltSeriesFetcher(
+            tilt_series_pickles=tilt_series_pickles,
+            refresh_rate=5,
+            device=torch.device("cpu")
+        )
+        
+        fetcher._load_next()
+        
+        assert fetcher._tilt_series is not None
+        mock_read.assert_called_once()
+        mock_tilt_series.to.assert_called_once()
+    
+    @patch('miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
+    def test_call_first_time(self, mock_read, mock_tilt_series, temp_dir):
+        """Test that __call__ loads a new tilt series on first call."""
+        mock_read.return_value = mock_tilt_series
+        tilt_series_pickles = [temp_dir / "test.pickle"]
+        
+        fetcher = TiltSeriesFetcher(
+            tilt_series_pickles=tilt_series_pickles,
+            refresh_rate=5,
+            device=torch.device("cpu")
+        )
+        
+        result = fetcher()
+        
+        assert result is mock_tilt_series
+        assert fetcher._counter == 1
+        mock_read.assert_called_once()
+    
+    @patch('miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
+    def test_call_reuse(self, mock_read, mock_tilt_series, temp_dir):
+        """Test that __call__ reuses tilt series within refresh rate."""
+        mock_read.return_value = mock_tilt_series
+        tilt_series_pickles = [temp_dir / "test.pickle"]
+        
+        fetcher = TiltSeriesFetcher(
+            tilt_series_pickles=tilt_series_pickles,
+            refresh_rate=5,
+            device=torch.device("cpu")
+        )
+        
+        # First call loads new
+        fetcher()
+        mock_read.reset_mock()
+        
+        # Second call should reuse
+        result = fetcher()
+        
+        assert result is mock_tilt_series
+        assert fetcher._counter == 2
+        mock_read.assert_not_called()
+    
+    @patch('miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
+    def test_call_refresh(self, mock_read, mock_tilt_series, temp_dir):
+        """Test that __call__ refreshes after reaching refresh rate."""
+        mock_read.return_value = mock_tilt_series
+        tilt_series_pickles = [temp_dir / "test.pickle"]
+        
+        fetcher = TiltSeriesFetcher(
+            tilt_series_pickles=tilt_series_pickles,
+            refresh_rate=2,
+            device=torch.device("cpu")
+        )
+        
+        # First call loads new
+        fetcher()
+        # Second call reuses
+        fetcher()
+        mock_read.reset_mock()
+        
+        # Third call should refresh
+        result = fetcher()
+        
+        assert result is mock_tilt_series
+        assert fetcher._counter == 1
+        mock_read.assert_called_once()
+    
+    @patch('miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
+    def test_alignment_backup_restore(self, mock_read, mock_tilt_series, temp_dir):
+        """Test that alignment parameters are backed up and restored correctly."""
+        mock_read.return_value = mock_tilt_series
+        tilt_series_pickles = [temp_dir / "test.pickle"]
+        
+        fetcher = TiltSeriesFetcher(
+            tilt_series_pickles=tilt_series_pickles,
+            refresh_rate=5,
+            device=torch.device("cpu")
+        )
+        
+        # First call loads and backs up
+        fetcher()
+        
+        # Modify alignment parameters
+        original_translations = mock_tilt_series.sample_translations.clone()
+        mock_tilt_series.sample_translations = torch.ones_like(original_translations)
+        
+        # Second call should restore original values
+        fetcher()
+        
+        # Check that original values were restored
+        torch.testing.assert_close(mock_tilt_series.sample_translations, original_translations)
 
 
 class TestGenerateTranslations:
@@ -101,16 +249,10 @@ class TestGenerateTranslations:
 class TestCreatePoolReconstruction:
     """Test pool reconstruction creation."""
 
-    @patch(
-        'miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
-    def test_reconstruction_output_format(self, mock_read, mock_tilt_series,
-                                          temp_dir, shift_generator):
+    def test_reconstruction_output_format(self, mock_tilt_series, shift_generator):
         """Test that reconstruction returns correct format."""
-        mock_read.return_value = mock_tilt_series
-        tilt_series_path = temp_dir / "test.pickle"
-
         result = _create_pool_reconstruction(
-            tilt_series_path=tilt_series_path,
+            tilt_series=mock_tilt_series,
             tomogram_shape=(128, 128, 128),
             patch_size=32,
             shift_generator=shift_generator,
@@ -123,19 +265,14 @@ class TestCreatePoolReconstruction:
         assert 1 in [item[1] for item in result]
         assert -1 in [item[1] for item in result]
 
-    @patch(
-        'miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
     @patch('random.uniform')
-    def test_tilt_angle_augmentation(self, mock_uniform, mock_read,
-                                     mock_tilt_series, temp_dir,
-                                     shift_generator):
+    def test_tilt_angle_augmentation(self, mock_uniform, mock_tilt_series, shift_generator):
         """Test that tilt angles are augmented correctly."""
         mock_uniform.return_value = 5.0
-        mock_read.return_value = mock_tilt_series
         original_angles = mock_tilt_series.tilt_angles.clone()
 
         _create_pool_reconstruction(
-            tilt_series_path=temp_dir / "test.pickle",
+            tilt_series=mock_tilt_series,
             tomogram_shape=(128, 128, 128),
             patch_size=32,
             shift_generator=shift_generator,
@@ -149,11 +286,16 @@ class TestCreatePoolReconstruction:
 class TestReconstructionWorker:
     """Test reconstruction worker process."""
 
-    def test_worker_initial_fill(self, temp_dir, shift_generator):
+    @patch('miss_alignment.data._reconstruction_worker.TiltSeriesFetcher')
+    def test_worker_initial_fill(self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series):
         """Test that worker fills initial pool correctly."""
         assigned_indices = [0, 1, 2]
         ready_flag = mp.Value('i', 0)
         stop_event = mp.Event()
+
+        # Mock the TiltSeriesFetcher instance
+        mock_fetcher_instance = mock_fetcher_class.return_value
+        mock_fetcher_instance.return_value = mock_tilt_series
 
         # Mock the reconstruction creation
         mock_data = [(torch.randn(32, 32, 32), 1),
@@ -178,6 +320,7 @@ class TestReconstructionWorker:
                 ready_flag=ready_flag,
                 stop_event=stop_event,
                 monitor=None,
+                tilt_series_refresh_rate=10,
             )
 
         # Check that files were created
@@ -190,11 +333,16 @@ class TestReconstructionWorker:
                 data = pickle.load(f)
                 assert len(data) == 3
 
-    def test_worker_ready_flag(self, temp_dir, shift_generator):
+    @patch('miss_alignment.data._reconstruction_worker.TiltSeriesFetcher')
+    def test_worker_ready_flag(self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series):
         """Test that worker sets ready flag after initial fill."""
         ready_flag = mp.Value('i', 0)
         stop_event = mp.Event()
         stop_event.set()  # Stop immediately after initial fill
+
+        # Mock the TiltSeriesFetcher instance
+        mock_fetcher_instance = mock_fetcher_class.return_value
+        mock_fetcher_instance.return_value = mock_tilt_series
 
         with patch(
                 'miss_alignment.data._reconstruction_worker'
@@ -211,15 +359,21 @@ class TestReconstructionWorker:
                 ready_flag=ready_flag,
                 stop_event=stop_event,
                 monitor=None,
+                tilt_series_refresh_rate=10,
             )
 
         assert ready_flag.value == 1
 
-    def test_worker_continuous_update(self, temp_dir, shift_generator):
+    @patch('miss_alignment.data._reconstruction_worker.TiltSeriesFetcher')
+    def test_worker_continuous_update(self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series):
         """Test that worker continuously updates pool when not stopped."""
         ready_flag = mp.Value('i', 0)
         stop_event = mp.Event()
         assigned_indices = [0, 1]
+
+        # Mock the TiltSeriesFetcher instance
+        mock_fetcher_instance = mock_fetcher_class.return_value
+        mock_fetcher_instance.return_value = mock_tilt_series
 
         update_count = 0
         max_updates = 3
@@ -249,16 +403,22 @@ class TestReconstructionWorker:
                 ready_flag=ready_flag,
                 stop_event=stop_event,
                 monitor=None,
+                tilt_series_refresh_rate=10,
             )
 
         # Should have done initial fill + continuous updates
         assert update_count > len(assigned_indices)
 
-    def test_worker_with_monitor(self, temp_dir, shift_generator):
+    @patch('miss_alignment.data._reconstruction_worker.TiltSeriesFetcher')
+    def test_worker_with_monitor(self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series):
         """Test that worker reports to monitor when provided."""
         mock_monitor = Mock()
         ready_flag = mp.Value('i', 0)
         stop_event = mp.Event()
+
+        # Mock the TiltSeriesFetcher instance
+        mock_fetcher_instance = mock_fetcher_class.return_value
+        mock_fetcher_instance.return_value = mock_tilt_series
 
         # Run one update cycle
         update_count = 0
@@ -287,6 +447,7 @@ class TestReconstructionWorker:
                 ready_flag=ready_flag,
                 stop_event=stop_event,
                 monitor=mock_monitor,
+                tilt_series_refresh_rate=10,
             )
 
         # Monitor should have been called for continuous updates (not initial fill)
