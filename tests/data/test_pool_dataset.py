@@ -21,7 +21,7 @@ class TestReconstructionPoolDataset:
     def sample_data(self):
         """Create sample reconstruction data."""
         volumes = [torch.randn(64, 64, 64) for _ in range(3)]
-        labels = [0, 1, 2]
+        labels = [-1, 1, 1]  # Valid labels are -1 and 1
         return list(zip(volumes, labels))
 
     @pytest.fixture
@@ -76,6 +76,10 @@ class TestReconstructionPoolDataset:
             # Check return format
             assert len(result) == 4  # 3 volumes + 1 labels tensor
             assert isinstance(result[-1], torch.Tensor)  # labels
+            
+            # Check that labels contain both -1 and 1
+            labels = result[-1]
+            assert -1 in labels and 1 in labels, "Labels should contain both -1 and 1"
 
             # Check volumes have correct shape (1, d, h, w)
             for volume in result[:-1]:
@@ -187,6 +191,36 @@ class TestReconstructionPoolDataset:
                       side_effect=pickle.UnpicklingError("Bad pickle")):
             with pytest.raises(pickle.UnpicklingError):
                 dataset[0]
+                
+    def test_invalid_labels(self, dataset):
+        """Test that ValueError is raised when labels don't contain both -1 and 1."""
+        # Create sample data with invalid labels (only contains 1, missing -1)
+        invalid_data = [(torch.randn(64, 64, 64), 1) for _ in range(3)]
+        
+        with patch('builtins.open', new_callable=mock_open), \
+                patch('pickle.load', return_value=invalid_data), \
+                patch('random.shuffle'):
+            with pytest.raises(ValueError, match="Training examples must contain positive and negative labels"):
+                dataset[0]
+                
+        # Create sample data with invalid labels (only contains -1, missing 1)
+        invalid_data = [(torch.randn(64, 64, 64), -1) for _ in range(3)]
+        
+        with patch('builtins.open', new_callable=mock_open), \
+                patch('pickle.load', return_value=invalid_data), \
+                patch('random.shuffle'):
+            with pytest.raises(ValueError, match="Training examples must contain positive and negative labels"):
+                dataset[0]
+                
+        # Create sample data with invalid labels (contains 0, which is not valid)
+        invalid_data = [(torch.randn(64, 64, 64), label) for label in [0, 0,
+                                                                       0]]
+        
+        with patch('builtins.open', new_callable=mock_open), \
+                patch('pickle.load', return_value=invalid_data), \
+                patch('random.shuffle'):
+            with pytest.raises(ValueError, match="Training examples must contain positive and negative labels"):
+                dataset[0]
 
     @pytest.mark.parametrize("pool_size,idx,expected_file", [
         (10, 0, "recon_0.pickle"),
@@ -201,7 +235,9 @@ class TestReconstructionPoolDataset:
         mock_pool_dir.mkdir()
         dataset = ReconstructionPoolDataset(mock_pool_dir, pool_size, 100)
 
-        sample_data = [(torch.randn(10, 10, 10), 0) for _ in range(3)]
+        sample_data = [(torch.randn(10, 10, 10), -1),
+                       (torch.randn(10, 10, 10), -1),
+                       (torch.randn(10, 10, 10), 1)]
 
         with patch('builtins.open', new_callable=mock_open) as mock_file, \
                 patch('pickle.load', return_value=sample_data), \

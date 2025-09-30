@@ -120,7 +120,8 @@ class TestCreatePoolReconstruction:
         assert all(isinstance(item, tuple) for item in result)
         assert all(len(item) == 2 for item in result)
         assert all(isinstance(item[0], torch.Tensor) for item in result)
-        assert all(item[1] in [1, -1] for item in result)
+        assert 1 in [item[1] for item in result]
+        assert -1 in [item[1] for item in result]
 
     @patch(
         'miss_alignment.data._reconstruction_worker.read_tomogram_from_pickle')
@@ -229,7 +230,9 @@ class TestReconstructionWorker:
             # Stop after initial fill + max_updates
             if update_count > len(assigned_indices) + max_updates:
                 stop_event.set()
-            return [(torch.randn(32, 32, 32), 1)] * 3
+            return [(torch.randn(32, 32, 32), 1),
+                     (torch.randn(32, 32, 32), -1),
+                     (torch.randn(32, 32, 32), 1)]
 
         with patch(
                 'miss_alignment.data._reconstruction_worker'
@@ -265,7 +268,9 @@ class TestReconstructionWorker:
             update_count += 1
             if update_count > 2:  # Initial fill (1) + one update
                 stop_event.set()
-            return [(torch.zeros(1), 1)] * 3
+            return [(torch.zeros(1), 1),
+                     (torch.zeros(1), -1),
+                     (torch.zeros(1), 1)]
 
         with patch(
                 'miss_alignment.data._reconstruction_worker'
