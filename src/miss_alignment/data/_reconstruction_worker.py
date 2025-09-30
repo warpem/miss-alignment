@@ -79,8 +79,6 @@ def reconstruction_worker(
         # ensure correct permissions
         os.chmod(file_path, 0o644)
 
-    print(f"Worker {worker_id} completed initial fill")
-
     # Signal ready after initial fill
     with ready_flag.get_lock():
         ready_flag.value += 1
@@ -119,8 +117,6 @@ def reconstruction_worker(
         # Record production
         if monitor is not None:
             monitor.record_production()
-
-    print(f"Worker {worker_id} shutting down")
 
 
 def _create_pool_reconstruction(
