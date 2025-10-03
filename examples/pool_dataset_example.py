@@ -24,7 +24,7 @@ if __name__ == "__main__":
 
     # interested in the impact of this...
     tilt_series_refresh_rate = 100
-    device = 'cuda:0'
+    device = 'cuda'
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pool_dir = Path(tmpdir)
@@ -90,3 +90,5 @@ if __name__ == "__main__":
         stop_event.set()
         for worker in workers:
             worker.join(timeout=5), "Worker failed to stop"
+
+
