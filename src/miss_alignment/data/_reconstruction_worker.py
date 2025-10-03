@@ -24,7 +24,7 @@ from ._pool_monitor import SimplePoolMonitor
 class TiltSeriesFetcher:
     tilt_series_pickles: list[Path]
     refresh_rate: int
-    device: torch.device
+    device: str | torch.device
     _counter: int = 0
     _tilt_series: Optional[Tomogram] = None
 
@@ -82,6 +82,7 @@ def reconstruction_worker(
         stop_event: mp.Event,
         monitor: Optional[SimplePoolMonitor] = None,
         tilt_series_refresh_rate: int = 10,
+        device: str | torch.device = 'cpu',
 ):
     """
     Worker process that maintains a subset of the reconstruction pool.
@@ -112,6 +113,8 @@ def reconstruction_worker(
     tilt_series_refresh_rate: int, default 10
         Number of times a tilt-series is reused before loading a new one,
          prevents repeatedly loading from disk.
+    device: str | torch.Device, default 'cpu'
+        Device to use
     """
     torch.set_num_threads(1)
     print(
@@ -122,7 +125,7 @@ def reconstruction_worker(
     tilt_series_fetcher = TiltSeriesFetcher(
         tilt_series_pickles=tilt_series_pickles,
         refresh_rate=tilt_series_refresh_rate,
-        device=torch.device("cpu"),
+        device=device,
     )
 
     # Initial fill of assigned pool slots
@@ -199,7 +202,7 @@ def _create_pool_reconstruction(
     _offset = patch_size // 2
     _region = [d // 2 - _offset, h // 2 - _offset, w // 2 - _offset]
     reconstruction_location = (
-        torch.tensor([random.randint(-r, r) for r in _region])
+        torch.tensor([random.randint(-r, r) for r in _region], device=tilt_series.device)
     )
 
     # generate aligned and misaligned shifts
@@ -239,7 +242,7 @@ def _generate_translations(
     if (y, x) != (2, 3):
         raise ValueError('Projection matrices must have shape (2, 3)')
     # generate two sets of shifts, 3d shifts zyx
-    shifts = generate_shifts(n_tilts)
+    shifts = generate_shifts(n_tilts).to(projection_matrices.device)
     shifts = project_shifts_3d_to_2d(shifts, projection_matrices)
 
     # randomly remove x or y shifts
