@@ -81,7 +81,7 @@ def reconstruction_worker(
         ready_flag: mp.Value,
         stop_event: mp.Event,
         monitor: Optional[SimplePoolMonitor] = None,
-        tilt_series_refresh_rate: int = 10,
+        tilt_series_refresh_rate: int = 1,
         device: str | torch.device = 'cpu',
 ):
     """
@@ -200,10 +200,8 @@ def _create_pool_reconstruction(
     # select a random reconstruction position
     d, h, w = tomogram_shape
     _offset = patch_size // 2
-    _region = [d // 2 - _offset, h // 2 - _offset, w // 2 - _offset]
-    reconstruction_location = (
-        torch.tensor([random.randint(-r, r) for r in _region], device=tilt_series.device)
-    )
+    _region = [x // 2 - _offset for x in tomogram_shape]
+    reconstruction_location = tuple([random.randint(-r, r) for r in _region])
 
     # generate aligned and misaligned shifts
     r0 = Ry(tilt_series.tilt_angles, zyx=True)
