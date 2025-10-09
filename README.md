@@ -8,7 +8,7 @@
 
 ## Installation
 
-Installation is limited at the moment to a specific python, CUDA, and torch version. This might be fixed at some point in the future. For now, its easiest to set everything up in conda environment.
+Installation is limited at the moment to a specific python, CUDA, and torch version. This might be fixed at some point in the future. For now, its easiest to set everything up in a conda environment.
 
 First create an environment called `miss-alignment` with cuda-toolkit 12.9 and activate it:
 
