@@ -21,7 +21,6 @@ model_training:
     gamma: 1.0  # just delay the early stopping callback
 
 data_module:
-  dataset_type: "SHREC"  # Options: "SHREC", "EMDB"
   training_directory: /data/set/  # path to dataset location
   batch_size: 32  # for SHREC these values seems solid:
   patch_size: 96  # batch size 32 | reconstruction size 128 ^ 3
