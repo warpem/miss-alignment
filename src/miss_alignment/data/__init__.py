@@ -1,7 +1,7 @@
-from .training_datamodule import SHRECDataModule
+from .training_datamodule import MissAlignmentDataModule
 from .download import download_training_data
 
 __all__ = [
-    "SHRECDataModule",
+    "MissAlignmentDataModule",
     "download_training_data",
 ]

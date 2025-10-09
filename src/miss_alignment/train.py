@@ -12,16 +12,13 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
-from .data import SHRECDataModule
+from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
 from .data.io import read_tomogram_from_pickle
 from .models import MissAlignment, MAEarlyStopping
 from .alignment import evaluate_tilt_series
 from .data._pool_monitor import SimplePoolMonitor
 
-_data_module_dict = {
-    "SHREC": SHRECDataModule,
-}
 _zenodo_archive = "16574872"
 
 
@@ -149,7 +146,7 @@ def train_miss_align(
 
         # Initialize data module with parameters from config
         torch.set_num_threads(1)
-        with SHRECDataModule(
+        with MissAlignmentDataModule(
             iteration_directory,
             create_default_generator(**shift_generation_config),
             reconstruction_workers=reconstruction_workers,

@@ -23,7 +23,7 @@ else:
     RECON_POOL_SIZE = 1000
 
 
-class SHRECDataModule(pl.LightningDataModule):
+class MissAlignmentDataModule(pl.LightningDataModule):
     """
     Training datamodule assumes the following directory layout:
 

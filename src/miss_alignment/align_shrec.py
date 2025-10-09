@@ -7,7 +7,7 @@ import torch
 from lightning.pytorch import seed_everything
 
 from miss_alignment.models import MissAlignment
-from miss_alignment.data import SHRECDataModule
+from miss_alignment.data import MissAlignmentDataModule
 from miss_alignment.alignment import evaluate_tilt_series
 
 
@@ -63,12 +63,12 @@ def align_shrec(
     model.freeze()
 
     # initialize the dataset
-    datamodule = SHRECDataModule(
+    datamodule = MissAlignmentDataModule(
         test_data_directory,
         dataset_type="SHREC",
     )
     datamodule.setup(stage="validate")
-    ground_truth = SHRECDataModule(
+    ground_truth = MissAlignmentDataModule(
         test_data_ground_truth,
         dataset_type="SHREC",
     )
