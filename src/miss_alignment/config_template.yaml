@@ -3,42 +3,42 @@ general:
   # here you can continue training from a specific iteration
   start_at_iteration: 0
   seed: 45132
-  download_data: True  # download data from zenodo to folder/iter0 if its empty
-  tomogram_shape: (180, 512, 512)  # This is known and fixed per tomogram
+  download_data: True              # download data from zenodo to folder/iter0 if its empty
+  tomogram_shape: (180, 512, 512)  # this determines the reconstruction area in 3D that is used for training/alignment
 
 model_training:
   # used to initialize model weights
   model_checkpoint: /path/to/model.ckpt
-  output_directory: /path/to/  # here model checkpoints are stored in lightning_log directories
+  output_directory: /path/to/   # here model checkpoints are stored in lightning_log directories
   loss_margin: 0.5
-  learning_rate: [0.001, 0.0005, 0.00025, 0.000125, 0.0000625]  # learning rate per iteration
+  learning_rate: 1.0e-3
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
   weight_decay: 1.0e-4
-  max_epochs_per_iteration: 100  # absolute maximum of stopping
-  warmup_steps: 500  # number of steps for linear warm-up
+  max_epochs_per_iteration: 30  # absolute maximum of stopping
+  warmup_steps: 500
   multistep_lr_scheduler:
-    milestones: [5]  # number of cycles, where the length of a cycle is n_steps_per_cycle
-    gamma: 1.0  # just delay the early stopping callback
+    milestones: [5, 15]
+    gamma: 0.5                  # multiply learning rate by this value at the milestone epochs
 
 data_module:
   training_directory: /data/set/  # path to dataset location
-  batch_size: 32  # for SHREC these values seems solid:
-  patch_size: 96  # batch size 32 | reconstruction size 128 ^ 3
-  steps_per_epoch: 1000  # define the epoch size
+  batch_size: 32                  # these value have been used as defaults:
+  patch_size: 96                  # batch size 32 | reconstruction size 128 ^ 3
+  steps_per_epoch: 1000           # this defines the size of an epoch
 
 # this configures the shift generation for the contrastive training of MissAlignment
 # all parameters are in units of 10A (nm) as we assume to work with tilt-series sampled to 10A
 shift_generation:
-  trajectory_probability: .5   # these make bananas and birds
-  trajectory_max_shift: 10.0  # (10 A) trajectories fall somewhere between +/- f
+  trajectory_probability: .5      # these make bananas and birds
+  trajectory_max_shift: 10.0      # (10 A) trajectories fall somewhere between +/- f
   jitter_probability: .5
-  jitter_max_std: 3.0  # (10 A) maximum standard deviation of a normal distribution
-  outlier_probability: .4
-  outlier_max_shift: 20.0  # (10 A) outlier can maximally go to this value
-  high_tilt_outlier_probability: .4
-  high_tilt_max_shift: 30.0  # (10 A) specific strong shifts for high tilt images up to this value
+  jitter_max_std: 2.0             # (10 A) maximum standard deviation of a normal distribution
+  outlier_probability: .5
+  outlier_max_shift: 20.0         # (10 A) outlier can maximally go to this value
+  high_tilt_outlier_probability: .5
+  high_tilt_max_shift: 30.0       # (10 A) specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
-  patches_per_dim: [1, 2, 2]
-  patch_size: 128
+  patches_per_dim: [2, 5, 5]    # this should be chosen to fit as many non-overlapping boxes in the tomo shape
+  patch_size: 96                # same as training patch size
   ground_truth_directory: null  # optional directory to get ground truth, name.pickle should match
