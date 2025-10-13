@@ -1,6 +1,7 @@
 import random
 import torch
 import einops
+import warnings
 from torch_cubic_spline_grids import CubicBSplineGrid1d
 from dataclasses import dataclass
 from typing import List, Callable, Optional
@@ -35,6 +36,10 @@ class ShiftGenerator:
         """
         self.shift_configs = shift_configs
         self.ensure_at_least_one = ensure_at_least_one
+
+        for config in self.shift_configs:
+            if config.probability == 0.0:
+                warnings.warn(f"ShiftConfig {config.name} has probability 0.0")
 
     def __call__(self, num_points: int) -> torch.Tensor:
         """Generate combined shifts for the given number of points."""
@@ -250,6 +255,8 @@ class OutlierGenerator:
         )
         outliers = torch.rand(3) * (
                     2 * self.outlier_max_shift) - self.outlier_max_shift
+        if random.random() > 0.5:  # make it a linear increase
+
         shifts[ids] = outliers
         return shifts
 
@@ -281,13 +288,13 @@ def create_default_generator(
             name="outlier",
             probability=outlier_probability,
             generator=OutlierGenerator(outlier_max_shift,
-                                       max_sequence_length=3, edge_only=False)
+                                       max_sequence_length=1, edge_only=False)
         ),
         ShiftConfig(
             name="high_tilt_outlier",
             probability=high_tilt_outlier_probability,
             generator=OutlierGenerator(high_tilt_max_shift,
-                                       max_sequence_length=7, edge_only=True)
+                                       max_sequence_length=30, edge_only=True)
         ),
     ]
 
