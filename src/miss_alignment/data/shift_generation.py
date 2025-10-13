@@ -255,7 +255,7 @@ class OutlierGenerator:
         )
         outliers = torch.rand(3) * (
                     2 * self.outlier_max_shift) - self.outlier_max_shift
-        if random.random() > 0.5:  # make it a linear increase
+        # if random.random() > 0.5:  # make it a linear increase
 
         shifts[ids] = outliers
         return shifts
@@ -288,13 +288,13 @@ def create_default_generator(
             name="outlier",
             probability=outlier_probability,
             generator=OutlierGenerator(outlier_max_shift,
-                                       max_sequence_length=1, edge_only=False)
+                                       max_sequence_length=3, edge_only=False)
         ),
         ShiftConfig(
             name="high_tilt_outlier",
             probability=high_tilt_outlier_probability,
             generator=OutlierGenerator(high_tilt_max_shift,
-                                       max_sequence_length=30, edge_only=True)
+                                       max_sequence_length=7, edge_only=True)
         ),
     ]
 
