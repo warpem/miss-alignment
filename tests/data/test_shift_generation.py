@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 # Import your modules (adjust import path as needed)
 from miss_alignment.data.shift_generation import (
     ShiftConfig, ShiftGenerator, select_random_indices,
-    generate_smooth_trajectory, generate_shift_trajectory,
+    generate_shift_trajectory, parabola_from_control_points,
     TrajectoryGenerator, JitterGenerator,
     OutlierGenerator, create_default_generator,
     project_shifts_3d_to_2d
@@ -226,29 +226,25 @@ class TestTrajectoryGeneration:
 
     def test_generate_smooth_trajectory(self):
         """Test smooth trajectory generation."""
-        grid_x, grid_y, grid_z = generate_smooth_trajectory(grid_resolution=3)
+        grid_x = parabola_from_control_points(
+            torch.rand(3) * 2 - 1,
+            n_points=10,
+        )
 
-        assert grid_x.data.shape == torch.Size([1, 3])
-        assert grid_y.data.shape == torch.Size([1, 3])
-        assert grid_z.data.shape == torch.Size([1, 3])
+        assert grid_x.shape == torch.Size([10])
 
         # Check that values are in expected range [-1, 1]
-        for grid in [grid_x, grid_y, grid_z]:
-            assert torch.all(grid.data >= -1)
-            assert torch.all(grid.data <= 1)
+        assert torch.all(grid_x >= -1)
+        assert torch.all(grid_x <= 1)
 
     def test_generate_shift_trajectory(self):
         """Test shift trajectory generation."""
         num_points = 50
-        timesteps, x_pos, y_pos, z_pos = generate_shift_trajectory(num_points)
+        x_pos, y_pos, z_pos = generate_shift_trajectory(num_points)
 
-        assert len(timesteps) == num_points
         assert len(x_pos) == num_points
         assert len(y_pos) == num_points
         assert len(z_pos) == num_points
-
-        # Check timesteps are properly spaced
-        assert torch.allclose(timesteps, torch.linspace(0, 1, num_points))
 
         # Check that positions are detached (no gradients)
         assert not x_pos.requires_grad
@@ -259,8 +255,7 @@ class TestTrajectoryGeneration:
         """Test that generate_shift_trajectory validates input properly."""
 
         # Test valid input
-        timesteps, x_pos, y_pos, z_pos = generate_shift_trajectory(4)
-        assert len(timesteps) == 4
+        x_pos, y_pos, z_pos = generate_shift_trajectory(4)
         assert len(x_pos) == 4
         assert len(y_pos) == 4
         assert len(z_pos) == 4
