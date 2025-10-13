@@ -1,6 +1,7 @@
 import pytest
 import torch
 import random
+import warnings
 from unittest.mock import patch, MagicMock
 
 # Import your modules (adjust import path as needed)
@@ -99,7 +100,12 @@ class TestShiftGenerator:
             return torch.ones((n, 3))
 
         config = ShiftConfig("test", 0.0, dummy_generator)
-        generator = ShiftGenerator([config], ensure_at_least_one=False)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default")
+            generator = ShiftGenerator([config], ensure_at_least_one=False)
+            assert len(w) == 1
+            assert all(["has probability 0." in str(x.message) for x in w])
 
         result = generator(10)
         assert result.shape == (10, 3)
@@ -120,8 +126,12 @@ class TestShiftGenerator:
 
         mock_choice.return_value = config2
 
-        generator = ShiftGenerator([config1, config2],
-                                   ensure_at_least_one=True)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default")
+            generator = ShiftGenerator([config1, config2],
+                                       ensure_at_least_one=True)
+            assert len(w) == 1
+            assert all(["has probability 0." in str(x.message) for x in w])
 
         with patch.object(config2, 'should_apply', return_value=False):
             result = generator(10)
@@ -141,7 +151,6 @@ class TestShiftGenerator:
 
         config1 = ShiftConfig("test1", 1.0, generator1)
         config2 = ShiftConfig("test2", 1.0, generator2)
-
         generator = ShiftGenerator([config1, config2])
         result = generator(10)
 
@@ -351,13 +360,17 @@ class TestDefaultGenerator:
     def test_zero_probabilities_respected(self):
         """Test that zero probabilities are properly respected."""
         # Set all probabilities to zero except jitter
-        generator = create_default_generator(
-            trajectory_probability=0.0,
-            jitter_probability=1.0,
-            outlier_probability=0.0,
-            high_tilt_outlier_probability=0.0,
-            jitter_max_std=1.0
-        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default")
+            generator = create_default_generator(
+                trajectory_probability=0.0,
+                jitter_probability=1.0,
+                outlier_probability=0.0,
+                high_tilt_outlier_probability=0.0,
+                jitter_max_std=1.0
+            )
+            assert len(w) == 3
+            assert all(["has probability 0." in str(x.message) for x in w])
 
         num_points = 50
         shifts = generator(num_points)
@@ -369,12 +382,16 @@ class TestDefaultGenerator:
 
     def test_all_zero_probabilities(self):
         """Test behavior when all probabilities are zero."""
-        generator = create_default_generator(
-            trajectory_probability=0.0,
-            jitter_probability=0.0,
-            outlier_probability=0.0,
-            high_tilt_outlier_probability=0.0
-        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default")
+            generator = create_default_generator(
+                trajectory_probability=0.0,
+                jitter_probability=0.0,
+                outlier_probability=0.0,
+                high_tilt_outlier_probability=0.0
+            )
+            assert len(w) == 4
+            assert all(["has probability 0." in str(x.message) for x in w])
 
         num_points = 20
         shifts = generator(num_points)
@@ -444,13 +461,18 @@ class TestIntegration:
 
     def test_end_to_end_workflow(self):
         """Test complete workflow from generator creation to 2D projection."""
-        # Create a generator
-        generator = create_default_generator(
-            trajectory_probability=1.0,  # Ensure trajectory is applied
-            jitter_probability=0.0,
-            outlier_probability=0.0,
-            high_tilt_outlier_probability=0.0
-        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default")
+            # Create a generator
+            generator = create_default_generator(
+                trajectory_probability=1.0,  # Ensure trajectory is applied
+                jitter_probability=0.0,
+                outlier_probability=0.0,
+                high_tilt_outlier_probability=0.0
+            )
+
+            assert len(w) == 3
+            assert all(["has probability 0." in str(x.message) for x in w])
 
         # Generate 3D shifts
         num_points = 20
