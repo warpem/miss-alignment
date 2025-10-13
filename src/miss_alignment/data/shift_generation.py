@@ -221,7 +221,7 @@ class TrajectoryGenerator:
         y_shifts = y_shifts * self.trajectory_max_shift
         z_shifts = z_shifts * self.trajectory_max_shift
         shifts = torch.stack([z_shifts, y_shifts, x_shifts], dim=1)
-        shifts = shifts - einops.reduce(shifts, "n zyx -> 1 zyx",
+        shifts -= einops.reduce(shifts, "n zyx -> 1 zyx",
                                         reduction="mean")
         return shifts
 
@@ -240,24 +240,44 @@ class JitterGenerator:
 class OutlierGenerator:
     """Picklable outlier shift generator."""
 
-    def __init__(self, outlier_max_shift: float, max_sequence_length: int = 3,
-                 edge_only: bool = False):
+    def __init__(self, outlier_max_shift: float):
         self.outlier_max_shift = outlier_max_shift
-        self.max_sequence_length = max_sequence_length
-        self.edge_only = edge_only
 
     def __call__(self, num_points: int) -> torch.Tensor:
         shifts = torch.zeros((num_points, 3))
         ids = select_random_indices(
             torch.arange(num_points),
-            max_sequence_length=self.max_sequence_length,
-            edge_only=self.edge_only
+            max_sequence_length=1,
+            edge_only=False,
         )
         outliers = torch.rand(3) * (
                     2 * self.outlier_max_shift) - self.outlier_max_shift
-        # if random.random() > 0.5:  # make it a linear increase
-
         shifts[ids] = outliers
+        return shifts
+
+
+class FractureGenerator:
+    """Picklable fracture shift generator."""
+    def __init__(self, fracture_max_shift: float):
+        self.fracture_max_shift = fracture_max_shift
+
+    def __call__(self, num_points: int) -> torch.Tensor:
+        shifts = torch.zeros((num_points, 3))
+        fraction_idx = random.randint(0, num_points - 1)
+        outliers = torch.rand(3) * (
+                2 * self.fracture_max_shift) - self.fracture_max_shift
+        if random.random() > 0.5:  # make it linear
+            z = torch.linspace(outliers[0], 0, fraction_idx)
+            y = torch.linspace(outliers[1], 0, fraction_idx)
+            x = torch.linspace(outliers[2], 0, fraction_idx)
+            outliers = torch.stack([z, y, x], dim=1)
+        # randomly invert direction
+        if random.random() > 0.5:
+            shifts[- fraction_idx:] = torch.flip(outliers, dims=(0,))
+        else:
+            shifts[:fraction_idx] = outliers
+        shifts -= einops.reduce(shifts, "n zyx -> 1 zyx",
+                                        reduction="mean")
         return shifts
 
 
@@ -268,8 +288,8 @@ def create_default_generator(
         jitter_max_std: float = 2.0,
         outlier_probability: float = 0.4,
         outlier_max_shift: float = 20.0,
-        high_tilt_outlier_probability: float = 0.4,
-        high_tilt_max_shift: float = 30.0,
+        fracture_probability: float = 0.4,
+        fracture_max_shift: float = 30.0,
 ) -> ShiftGenerator:
     """Create a picklable shift generator."""
 
@@ -287,14 +307,12 @@ def create_default_generator(
         ShiftConfig(
             name="outlier",
             probability=outlier_probability,
-            generator=OutlierGenerator(outlier_max_shift,
-                                       max_sequence_length=3, edge_only=False)
+            generator=OutlierGenerator(outlier_max_shift)
         ),
         ShiftConfig(
-            name="high_tilt_outlier",
-            probability=high_tilt_outlier_probability,
-            generator=OutlierGenerator(high_tilt_max_shift,
-                                       max_sequence_length=7, edge_only=True)
+            name="fracture",
+            probability=fracture_probability,
+            generator=FractureGenerator(fracture_max_shift)
         ),
     ]
 
