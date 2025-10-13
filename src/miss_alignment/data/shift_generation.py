@@ -41,9 +41,9 @@ class ShiftGenerator:
             if config.probability == 0.0:
                 warnings.warn(f"ShiftConfig {config.name} has probability 0.0")
 
-    def __call__(self, num_points: int) -> torch.Tensor:
+    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
         """Generate combined shifts for the given number of points."""
-        shifts = torch.zeros((num_points, 3))
+        shifts = torch.zeros((num_points, 3), device=device)
 
         # Determine which shifts to apply
         shifts_to_apply = [config for config in self.shift_configs if
@@ -59,7 +59,7 @@ class ShiftGenerator:
 
         # Apply selected shifts
         for config in shifts_to_apply:
-            shift_contribution = config.generator(num_points)
+            shift_contribution = config.generator(num_points, device=device)
             shifts = shifts + shift_contribution
 
         return shifts
@@ -112,7 +112,7 @@ def select_random_indices(
 
 
 def generate_smooth_trajectory(
-    grid_resolution: int = 3,
+    grid_resolution: int = 3, device: str = 'cpu',
 ) -> tuple[CubicBSplineGrid1d, CubicBSplineGrid1d, CubicBSplineGrid1d]:
     """Generate a smooth trajectory using cubic B-spline interpolation.
 
@@ -120,6 +120,7 @@ def generate_smooth_trajectory(
     ----------
     grid_resolution : int, optional
         Resolution of the grid used for generating smooth trajectories, by default 3.
+    device : str, optional
 
     Returns
     -------
@@ -132,21 +133,18 @@ def generate_smooth_trajectory(
     grid_z = CubicBSplineGrid1d(resolution=grid_resolution)
 
     # Initialize grid data with random values to create a parabola-like curve
-    x_values = torch.rand(3) * 2 - 1
-    y_values = torch.rand(3) * 2 - 1
-    z_values = torch.rand(3) * 2 - 1
-
-    grid_x.data = x_values
-    grid_y.data = y_values
-    grid_z.data = z_values
+    grid_x.data = torch.rand(3, device=device) * 2 - 1
+    grid_y.data = torch.rand(3, device=device) * 2 - 1
+    grid_z.data = torch.rand(3, device=device) * 2 - 1
 
     return grid_x, grid_y, grid_z
 
 
 def generate_shift_trajectory(
-    num_points: int,
-    grid_resolution: int = 3,
-    breakpoint_p: float = 0.5,
+        num_points: int,
+        grid_resolution: int = 3,
+        breakpoint_p: float = 0.5,
+        device: str = 'cpu',
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Generate a trajectory with an optional shift in direction.
 
@@ -162,6 +160,7 @@ def generate_shift_trajectory(
         Resolution of the grid used for generating smooth trajectories, by default 3.
     breakpoint_p : float, optional
         Probability of generating a trajectory with a breakpoint, by default 0.5.
+    device : str, optional
 
     Returns
     -------
@@ -180,8 +179,12 @@ def generate_shift_trajectory(
         raise ValueError(f"num_points must be at least 4, got {num_points}")
 
     if random.random() > 1.0 - breakpoint_p:
-        grid_x1, grid_y1, grid_z1 = generate_smooth_trajectory(grid_resolution)
-        grid_x2, grid_y2, grid_z2 = generate_smooth_trajectory(grid_resolution)
+        grid_x1, grid_y1, grid_z1 = (
+            generate_smooth_trajectory(grid_resolution, device=device)
+        )
+        grid_x2, grid_y2, grid_z2 = (
+            generate_smooth_trajectory(grid_resolution, device=device)
+        )
         grid_x2.data[..., 0] = grid_x1.data[
             ..., grid_resolution - 1
         ]  # stitch grids together
@@ -189,17 +192,19 @@ def generate_shift_trajectory(
         grid_z2.data[..., 0] = grid_z1.data[..., grid_resolution - 1]
         t1 = random.randint(2, num_points - 2)
         t2 = num_points - t1
-        t1 = torch.linspace(0, 1, t1)
-        t2 = torch.linspace(0, 1, t2 + 1)[1:]
+        t1 = torch.linspace(0, 1, t1, device=device)
+        t2 = torch.linspace(0, 1, t2 + 1, device=device)[1:]
         x_pos1, y_pos1, z_pos1 = grid_x1(t1), grid_y1(t1), grid_z1(t1)
         x_pos2, y_pos2, z_pos2 = grid_x2(t2), grid_y2(t2), grid_z2(t2)
         x_positions = torch.cat([x_pos1, x_pos2])
         y_positions = torch.cat([y_pos1, y_pos2])
         z_positions = torch.cat([z_pos1, z_pos2])
-        timesteps = torch.linspace(0, 1, num_points)
+        timesteps = torch.linspace(0, 1, num_points, device=device)
     else:
-        grid_x, grid_y, grid_z = generate_smooth_trajectory(grid_resolution)
-        timesteps = torch.linspace(0, 1, num_points)
+        grid_x, grid_y, grid_z = (
+            generate_smooth_trajectory(grid_resolution, device=device)
+        )
+        timesteps = torch.linspace(0, 1, num_points, device=device)
         x_positions = grid_x(timesteps)
         y_positions = grid_y(timesteps)
         z_positions = grid_z(timesteps)
@@ -215,8 +220,10 @@ class TrajectoryGenerator:
     def __init__(self, trajectory_max_shift: float):
         self.trajectory_max_shift = trajectory_max_shift
 
-    def __call__(self, num_points: int) -> torch.Tensor:
-        _, x_shifts, y_shifts, z_shifts = generate_shift_trajectory(num_points)
+    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+        _, x_shifts, y_shifts, z_shifts = (
+            generate_shift_trajectory(num_points, device=device)
+        )
         x_shifts = x_shifts * self.trajectory_max_shift
         y_shifts = y_shifts * self.trajectory_max_shift
         z_shifts = z_shifts * self.trajectory_max_shift
@@ -232,9 +239,10 @@ class JitterGenerator:
     def __init__(self, jitter_max_std: float):
         self.jitter_max_std = jitter_max_std
 
-    def __call__(self, num_points: int) -> torch.Tensor:
+    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
         std = random.random() * self.jitter_max_std
-        return torch.normal(mean=0.0, std=float(std), size=(num_points, 3))
+        return torch.normal(mean=0.0, std=float(std), size=(num_points, 3),
+                            device=device)
 
 
 class OutlierGenerator:
@@ -243,14 +251,14 @@ class OutlierGenerator:
     def __init__(self, outlier_max_shift: float):
         self.outlier_max_shift = outlier_max_shift
 
-    def __call__(self, num_points: int) -> torch.Tensor:
-        shifts = torch.zeros((num_points, 3))
+    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+        shifts = torch.zeros((num_points, 3), device=device)
         ids = select_random_indices(
             torch.arange(num_points),
             max_sequence_length=1,
             edge_only=False,
         )
-        outliers = torch.rand(3) * (
+        outliers = torch.rand(3, device=device) * (
                     2 * self.outlier_max_shift) - self.outlier_max_shift
         shifts[ids] = outliers
         return shifts
@@ -261,15 +269,15 @@ class FractureGenerator:
     def __init__(self, fracture_max_shift: float):
         self.fracture_max_shift = fracture_max_shift
 
-    def __call__(self, num_points: int) -> torch.Tensor:
-        shifts = torch.zeros((num_points, 3))
+    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+        shifts = torch.zeros((num_points, 3), device=device)
         fraction_idx = random.randint(1, num_points)
-        outliers = torch.rand(3) * (
+        outliers = torch.rand(3, device=device) * (
                 2 * self.fracture_max_shift) - self.fracture_max_shift
         if random.random() > 0.5:  # make it linear
-            z = torch.linspace(outliers[0], 0, fraction_idx)
-            y = torch.linspace(outliers[1], 0, fraction_idx)
-            x = torch.linspace(outliers[2], 0, fraction_idx)
+            z = torch.linspace(outliers[0], 0, fraction_idx, device=device)
+            y = torch.linspace(outliers[1], 0, fraction_idx, device=device)
+            x = torch.linspace(outliers[2], 0, fraction_idx, device=device)
             outliers = torch.stack([z, y, x], dim=1)
         # randomly invert direction
         if random.random() > 0.5:

@@ -195,6 +195,7 @@ def _create_pool_reconstruction(
 ) -> list[tuple[torch.Tensor, int]]:
     # add a random rotation to the sample
     # TODO instead of full tilt angle offset we should use a subtomo rotation
+    device = tilt_series.device
     tilt_series.tilt_angles += random.uniform(-10, +10)
 
     # select a random reconstruction position
@@ -209,7 +210,8 @@ def _create_pool_reconstruction(
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
     translations = (
-        _generate_translations(shift_generator, projection_matrices)
+        _generate_translations(shift_generator, projection_matrices,
+                               device=device)
     )
 
     # reconstruct both volumes
@@ -235,12 +237,13 @@ def _create_pool_reconstruction(
 def _generate_translations(
         generate_shifts: Callable,
         projection_matrices,
+        device: str = 'cpu',
 ) -> torch.Tensor:
     n_tilts, y, x = projection_matrices.shape
     if (y, x) != (2, 3):
         raise ValueError('Projection matrices must have shape (2, 3)')
     # generate two sets of shifts, 3d shifts zyx
-    shifts = generate_shifts(n_tilts).to(projection_matrices.device)
+    shifts = generate_shifts(n_tilts, device=device)
     shifts = project_shifts_3d_to_2d(shifts, projection_matrices)
 
     # randomly remove x or y shifts
