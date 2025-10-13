@@ -111,44 +111,69 @@ def select_random_indices(
     return selected_indices
 
 
-def generate_smooth_trajectory(
-    grid_resolution: int = 3, device: str = 'cpu',
-) -> tuple[CubicBSplineGrid1d, CubicBSplineGrid1d, CubicBSplineGrid1d]:
-    """Generate a smooth trajectory using cubic B-spline interpolation.
+def parabola_from_control_points(
+        y_controls: torch.Tensor,
+        n_points: int = 100,
+        device: str | torch.device = "cpu"
+) -> torch.Tensor:
+    """
+    Generate parabolas through 3 evenly-spaced control points (vectorized).
 
     Parameters
     ----------
-    grid_resolution : int, optional
-        Resolution of the grid used for generating smooth trajectories, by default 3.
-    device : str, optional
+    y_controls : torch.Tensor
+        Tensor of shape (..., 3) with y-values at x = [0, 0.5, 1].
+        Can be batched along any leading dimensions.
+    n_points : int, default=100
+        Number of points to generate along each parabola.
+    device : str or torch.device, default="cpu"
+        Device to run computation on ('cpu', 'cuda', etc.).
 
     Returns
     -------
-    tuple
-        A tuple with three CubicSplineGrid1d objects for x/y/z trajectories.
+    y : torch.Tensor
+        Y coordinates of parabolas, shape (..., n_points).
+
+    Examples
+    --------
+    >>> y_ctrl = torch.tensor([[0., 1., 0.], [1., 0., 1.]])
+    >>> y = parabola_from_control_points(y_ctrl, n_points=5)
+    >>> y.shape
+    torch.Size([2, 5])
     """
-    # Create three 1D spline grids for x, y, and z coordinates
-    grid_x = CubicBSplineGrid1d(resolution=grid_resolution)
-    grid_y = CubicBSplineGrid1d(resolution=grid_resolution)
-    grid_z = CubicBSplineGrid1d(resolution=grid_resolution)
-    grid_x.to(device=device)
-    grid_y.to(device=device)
-    grid_z.to(device=device)
+    y_controls = y_controls.to(device)
 
-    # Initialize grid data with random values to create a parabola-like curve
-    grid_x.data = torch.rand(3, device=device) * 2 - 1
-    grid_y.data = torch.rand(3, device=device) * 2 - 1
-    grid_z.data = torch.rand(3, device=device) * 2 - 1
+    if y_controls.shape[-1] != 3:
+        raise ValueError("Last dimension must be 3 control points")
 
-    return grid_x, grid_y, grid_z
+    # Extract control points: (..., 3) -> 3 tensors of shape (...)
+    y0 = y_controls[..., 0]
+    y1 = y_controls[..., 1]
+    y2 = y_controls[..., 2]
+
+    # Compute parabola coefficients
+    c = y0
+    a = 2 * (y0 - 2 * y1 + y2)
+    b = -3 * y0 + 4 * y1 - y2
+
+    # Generate x coordinates
+    x = torch.linspace(0, 1, n_points, device=device)
+
+    # Compute y = ax² + bx + c (broadcasting over batch dims)
+    # a, b, c: shape (...), x: shape (n_points,)
+    # Reshape for broadcasting: (..., 1) * (n_points,) -> (..., n_points)
+    y = (a[..., None] * x ** 2 +
+         b[..., None] * x +
+         c[..., None])
+
+    return y
 
 
 def generate_shift_trajectory(
         num_points: int,
-        grid_resolution: int = 3,
         breakpoint_p: float = 0.5,
         device: str = 'cpu',
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Generate a trajectory with an optional shift in direction.
 
     This function creates a smooth trajectory in 3D space. With probability
@@ -159,8 +184,6 @@ def generate_shift_trajectory(
     ----------
     num_points : int
         Number of points in the final trajectory.
-    grid_resolution : int, optional
-        Resolution of the grid used for generating smooth trajectories, by default 3.
     breakpoint_p : float, optional
         Probability of generating a trajectory with a breakpoint, by default 0.5.
     device : str, optional
@@ -169,8 +192,6 @@ def generate_shift_trajectory(
     -------
     tuple
         A tuple containing:
-            - timesteps : torch.Tensor
-                Linear space from 0 to 1 with `num_points` elements.
             - x_positions : torch.Tensor
                 X-coordinates of the trajectory points.
             - y_positions : torch.Tensor
@@ -181,40 +202,32 @@ def generate_shift_trajectory(
     if num_points < 4:
         raise ValueError(f"num_points must be at least 4, got {num_points}")
 
+    shifts = []
     if random.random() > 1.0 - breakpoint_p:
-        grid_x1, grid_y1, grid_z1 = (
-            generate_smooth_trajectory(grid_resolution, device=device)
-        )
-        grid_x2, grid_y2, grid_z2 = (
-            generate_smooth_trajectory(grid_resolution, device=device)
-        )
-        grid_x2.data[..., 0] = grid_x1.data[
-            ..., grid_resolution - 1
-        ]  # stitch grids together
-        grid_y2.data[..., 0] = grid_y1.data[..., grid_resolution - 1]
-        grid_z2.data[..., 0] = grid_z1.data[..., grid_resolution - 1]
         t1 = random.randint(2, num_points - 2)
         t2 = num_points - t1
-        t1 = torch.linspace(0, 1, t1, device=device)
-        t2 = torch.linspace(0, 1, t2 + 1, device=device)[1:]
-        x_pos1, y_pos1, z_pos1 = grid_x1(t1), grid_y1(t1), grid_z1(t1)
-        x_pos2, y_pos2, z_pos2 = grid_x2(t2), grid_y2(t2), grid_z2(t2)
-        x_positions = torch.cat([x_pos1, x_pos2])
-        y_positions = torch.cat([y_pos1, y_pos2])
-        z_positions = torch.cat([z_pos1, z_pos2])
-        timesteps = torch.linspace(0, 1, num_points, device=device)
+        for _ in range(3):
+            controls_1 = torch.rand(3, device=device) * 2 - 1
+            controls_2 = torch.cat([
+                controls_1[2:3],
+                torch.rand(2, device=device) * 2 - 1
+            ])
+            s1 = parabola_from_control_points(
+                controls_1, t1, device=device
+            )
+            s2 = parabola_from_control_points(
+                controls_2, t2 + 1, device=device
+            )
+            shifts += [torch.cat([s1, s2[1:]])]
     else:
-        grid_x, grid_y, grid_z = (
-            generate_smooth_trajectory(grid_resolution, device=device)
-        )
-        timesteps = torch.linspace(0, 1, num_points, device=device)
-        x_positions = grid_x(timesteps)
-        y_positions = grid_y(timesteps)
-        z_positions = grid_z(timesteps)
-    x_positions = x_positions.detach()
-    y_positions = y_positions.detach()
-    z_positions = z_positions.detach()
-    return timesteps, x_positions, y_positions, z_positions
+        for _ in range(3):
+            controls = torch.rand(3, device=device) * 2 - 1
+            shifts += [
+                parabola_from_control_points(
+                    controls, num_points, device=device
+                )
+            ]
+    return shifts
 
 
 class TrajectoryGenerator:
@@ -224,7 +237,7 @@ class TrajectoryGenerator:
         self.trajectory_max_shift = trajectory_max_shift
 
     def __call__(self, num_points: int, device: str) -> torch.Tensor:
-        _, x_shifts, y_shifts, z_shifts = (
+        x_shifts, y_shifts, z_shifts = (
             generate_shift_trajectory(num_points, device=device)
         )
         x_shifts = x_shifts * self.trajectory_max_shift
