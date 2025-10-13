@@ -263,7 +263,7 @@ class FractureGenerator:
 
     def __call__(self, num_points: int) -> torch.Tensor:
         shifts = torch.zeros((num_points, 3))
-        fraction_idx = random.randint(1, num_points - 1)
+        fraction_idx = random.randint(1, num_points)
         outliers = torch.rand(3) * (
                 2 * self.fracture_max_shift) - self.fracture_max_shift
         if random.random() > 0.5:  # make it linear
