@@ -321,8 +321,7 @@ class TestGeneratorCreators:
     def test_create_outlier_generator(self):
         """Test outlier generator creation."""
         max_shift = 20.0
-        generator = OutlierGenerator(max_shift, max_sequence_length=3,
-                                             edge_only=False)
+        generator = OutlierGenerator(max_shift)
 
         num_points = 50
         shifts = generator(num_points)
@@ -333,8 +332,7 @@ class TestGeneratorCreators:
         non_zero_mask = torch.any(shifts != 0, dim=1)
         num_outliers = torch.sum(non_zero_mask).item()
 
-        assert num_outliers >= 1
-        assert num_outliers <= 3  # max_sequence_length
+        assert num_outliers == 1
 
         # Check outlier magnitudes are within expected range
         outlier_shifts = shifts[non_zero_mask]
@@ -366,7 +364,7 @@ class TestDefaultGenerator:
                 trajectory_probability=0.0,
                 jitter_probability=1.0,
                 outlier_probability=0.0,
-                high_tilt_outlier_probability=0.0,
+                fracture_probability=0.0,
                 jitter_max_std=1.0
             )
             assert len(w) == 3
@@ -388,7 +386,7 @@ class TestDefaultGenerator:
                 trajectory_probability=0.0,
                 jitter_probability=0.0,
                 outlier_probability=0.0,
-                high_tilt_outlier_probability=0.0
+                fracture_probability=0.0
             )
             assert len(w) == 4
             assert all(["has probability 0." in str(x.message) for x in w])
@@ -468,7 +466,7 @@ class TestIntegration:
                 trajectory_probability=1.0,  # Ensure trajectory is applied
                 jitter_probability=0.0,
                 outlier_probability=0.0,
-                high_tilt_outlier_probability=0.0
+                fracture_probability=0.0
             )
 
             assert len(w) == 3
