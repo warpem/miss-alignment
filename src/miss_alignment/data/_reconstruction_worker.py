@@ -138,6 +138,7 @@ def reconstruction_worker(
             tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
             patch_size=patch_size,
             shift_generator=shift_generator,
+            device=device,
         )
 
         # Write directly first time (no temp file needed)
@@ -164,6 +165,7 @@ def reconstruction_worker(
             tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
             patch_size=patch_size,
             shift_generator=shift_generator,
+            device=device,
         )
 
         # Atomic replacement using temp file and rename
@@ -192,10 +194,10 @@ def _create_pool_reconstruction(
         tomogram_shape: tuple[int, int, int],
         patch_size: int,
         shift_generator: Callable,
+        device: str | torch.device = 'cpu',
 ) -> list[tuple[torch.Tensor, int]]:
     # add a random rotation to the sample
     # TODO instead of full tilt angle offset we should use a subtomo rotation
-    device = tilt_series.device
     tilt_series.tilt_angles += random.uniform(-10, +10)
 
     # select a random reconstruction position

@@ -12,7 +12,7 @@ class ShiftConfig:
     """Configuration for a single shift type."""
     name: str
     probability: float
-    generator: Callable[[int], torch.Tensor]
+    generator: Callable[[int, str], torch.Tensor]
 
     def should_apply(self) -> bool:
         """Check if this shift should be applied based on probability."""
@@ -59,7 +59,7 @@ class ShiftGenerator:
 
         # Apply selected shifts
         for config in shifts_to_apply:
-            shift_contribution = config.generator(num_points, device=device)
+            shift_contribution = config.generator(num_points, device)
             shifts = shifts + shift_contribution
 
         return shifts
@@ -131,6 +131,9 @@ def generate_smooth_trajectory(
     grid_x = CubicBSplineGrid1d(resolution=grid_resolution)
     grid_y = CubicBSplineGrid1d(resolution=grid_resolution)
     grid_z = CubicBSplineGrid1d(resolution=grid_resolution)
+    grid_x.to(device=device)
+    grid_y.to(device=device)
+    grid_z.to(device=device)
 
     # Initialize grid data with random values to create a parabola-like curve
     grid_x.data = torch.rand(3, device=device) * 2 - 1
@@ -220,7 +223,7 @@ class TrajectoryGenerator:
     def __init__(self, trajectory_max_shift: float):
         self.trajectory_max_shift = trajectory_max_shift
 
-    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
         _, x_shifts, y_shifts, z_shifts = (
             generate_shift_trajectory(num_points, device=device)
         )
@@ -239,7 +242,7 @@ class JitterGenerator:
     def __init__(self, jitter_max_std: float):
         self.jitter_max_std = jitter_max_std
 
-    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
         std = random.random() * self.jitter_max_std
         return torch.normal(mean=0.0, std=float(std), size=(num_points, 3),
                             device=device)
@@ -251,7 +254,7 @@ class OutlierGenerator:
     def __init__(self, outlier_max_shift: float):
         self.outlier_max_shift = outlier_max_shift
 
-    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
         shifts = torch.zeros((num_points, 3), device=device)
         ids = select_random_indices(
             torch.arange(num_points),
@@ -269,7 +272,7 @@ class FractureGenerator:
     def __init__(self, fracture_max_shift: float):
         self.fracture_max_shift = fracture_max_shift
 
-    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
         shifts = torch.zeros((num_points, 3), device=device)
         fraction_idx = random.randint(1, num_points)
         outliers = torch.rand(3, device=device) * (

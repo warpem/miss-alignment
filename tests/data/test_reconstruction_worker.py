@@ -41,8 +41,8 @@ def mock_tilt_series():
 def shift_generator():
     """Create simple shift generator function."""
 
-    def generator(n_tilts):
-        return torch.randn(n_tilts, 3)
+    def generator(n_tilts, device: str = 'cpu'):
+        return torch.randn(n_tilts, 3, device=device)
 
     return generator
 

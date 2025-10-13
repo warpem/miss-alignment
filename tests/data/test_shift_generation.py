@@ -83,8 +83,8 @@ class TestShiftGenerator:
     def test_call_method(self):
         """Test that __call__ method works."""
 
-        def dummy_generator(n):
-            return torch.ones((n, 3))
+        def dummy_generator(n, device):
+            return torch.ones((n, 3), device=device)
 
         config = ShiftConfig("test", 1.0, dummy_generator)
         generator = ShiftGenerator([config])
@@ -115,11 +115,11 @@ class TestShiftGenerator:
     def test_fallback_mechanism(self, mock_choice):
         """Test fallback when no shifts are selected but ensure_at_least_one=True."""
 
-        def generator1(n):
-            return torch.ones((n, 3))
+        def generator1(n, device):
+            return torch.ones((n, 3), device=device)
 
-        def generator2(n):
-            return torch.ones((n, 3)) * 2
+        def generator2(n, device):
+            return torch.ones((n, 3), device=device) * 2
 
         config1 = ShiftConfig("test1", 0.0, generator1)  # Zero probability
         config2 = ShiftConfig("test2", 0.5, generator2)  # Non-zero probability
@@ -143,11 +143,11 @@ class TestShiftGenerator:
     def test_multiple_shifts_combined(self):
         """Test that multiple shifts are properly combined."""
 
-        def generator1(n):
-            return torch.ones((n, 3))
+        def generator1(n, device):
+            return torch.ones((n, 3), device=device)
 
-        def generator2(n):
-            return torch.ones((n, 3)) * 2
+        def generator2(n, device):
+            return torch.ones((n, 3), device=device) * 2
 
         config1 = ShiftConfig("test1", 1.0, generator1)
         config2 = ShiftConfig("test2", 1.0, generator2)
@@ -292,7 +292,7 @@ class TestGeneratorCreators:
         generator = TrajectoryGenerator(max_shift)
 
         num_points = 20
-        shifts = generator(num_points)
+        shifts = generator(num_points, 'cpu')
 
         assert shifts.shape == (num_points, 3)
         assert isinstance(shifts, torch.Tensor)
@@ -307,7 +307,7 @@ class TestGeneratorCreators:
         generator = JitterGenerator(max_std)
 
         num_points = 100
-        shifts = generator(num_points)
+        shifts = generator(num_points, 'cpu')
 
         assert shifts.shape == (num_points, 3)
         assert isinstance(shifts, torch.Tensor)
@@ -324,7 +324,7 @@ class TestGeneratorCreators:
         generator = OutlierGenerator(max_shift)
 
         num_points = 50
-        shifts = generator(num_points)
+        shifts = generator(num_points, 'cpu')
 
         assert shifts.shape == (num_points, 3)
 
@@ -543,7 +543,7 @@ def test_generator_output_shapes(num_points):
 def test_trajectory_generator_scaling(max_shift):
     """Test that trajectory generator respects max_shift parameter."""
     generator = TrajectoryGenerator(max_shift)
-    shifts = generator(50)
+    shifts = generator(50, 'cpu')
 
     # The actual maximum might be less due to centering, but should be reasonable
     max_observed = torch.max(torch.abs(shifts)).item()
