@@ -96,6 +96,9 @@ def train_miss_align(
         learning_rates = model_training_config["learning_rate"]
 
     for x, lr in zip(range(start_iter, end_iter), learning_rates):
+        # ============================================================
+        # ================= model training step ======================
+        # ============================================================
         iteration_directory = training_directory / ('iter' + str(x))
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
@@ -182,6 +185,9 @@ def train_miss_align(
             trainer.checkpoint_callback.best_model_path
         )
 
+        # ============================================================
+        # =============== tilt-series alignment step =================
+        # ============================================================
         # get the output directory ready
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
