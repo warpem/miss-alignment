@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from torch_tomogram import Tomogram
 from itertools import chain
 
-from miss_alignment.data.io import save_tomogram_to_pickle
+from miss_alignment.data.io import save_tomogram_to_pickle, \
+    read_tomogram_from_pickle
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from miss_alignment.models import MissAlignment
 
@@ -329,16 +330,24 @@ def optimize_shifts(
 
 
 def evaluate_tilt_series(
-    model: MissAlignment,
-    tilt_series_name: str,
-    tilt_series: Tomogram,
+    model_checkpoint: Path,
+    tilt_series: Path,
     patches_per_dim: tuple[int, int, int],
     patch_size: int,
     tomogram_shape: tuple[int, int, int],
     output_directory: Path,
-    tilt_series_ground_truth: Optional[Tomogram] = None,
+    tilt_series_ground_truth: Optional[Path] = None,
     device: str = "cpu",
 ) -> tuple[Tomogram, list[float]]:
+    # load the best model and run alignment optimization
+    model = MissAlignment.load_from_checkpoint(
+        model_checkpoint,
+    )
+
+    # load tilt_series and set its name for output
+    tilt_series_name = tilt_series.stem
+    tilt_series = read_tomogram_from_pickle(tilt_series)
+
     d, h, w = tomogram_shape
     dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
     pd, ph, pw = patches_per_dim
@@ -379,6 +388,7 @@ def evaluate_tilt_series(
 
     if tilt_series_ground_truth is not None:
         print(f"Centering alignment relative to ground truth...")
+        tilt_series_ground_truth = read_tomogram_from_pickle(tilt_series_ground_truth)
         ground_truth_alignment = tilt_series_ground_truth.sample_translations
         n_tilts, _, _ = tilt_series_ground_truth.images.shape
 
@@ -416,12 +426,12 @@ def evaluate_tilt_series(
 
         plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
 
-    mrcfile.write(
-        output_directory / f"{tilt_series_name}_reconstruction.mrc",
-        aligned_reconstruction.detach().numpy(),
-        voxel_size=10,
-        overwrite=True,
-    )
+    # mrcfile.write(
+    #     output_directory / f"{tilt_series_name}_reconstruction.mrc",
+    #     aligned_reconstruction.detach().numpy(),
+    #     voxel_size=10,
+    #     overwrite=True,
+    # )
 
     save_tomogram_to_pickle(
         tilt_series, output_directory / f"{tilt_series_name}.pickle"

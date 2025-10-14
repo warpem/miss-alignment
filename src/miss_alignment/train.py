@@ -4,7 +4,6 @@ import subprocess
 import shutil
 import os
 
-from functools import partial
 import typer
 import torch
 from lightning.pytorch import Trainer, seed_everything
@@ -14,9 +13,8 @@ from lightning.pytorch.plugins.environments import SLURMEnvironment
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
-from .data.io import read_tomogram_from_pickle
 from .models import MissAlignment, MAEarlyStopping
-from .alignment import evaluate_tilt_series
+from .alignment import run_alignment_parallel
 from .data._pool_monitor import SimplePoolMonitor
 
 
@@ -184,37 +182,30 @@ def train_miss_align(
             trainer.checkpoint_callback.best_model_path
         )
 
-        # load the best model and run alignment optimization
-        model = MissAlignment.load_from_checkpoint(
-            model_training_config["model_checkpoint"],
-        )
-        model.freeze()  # freeze model to perform alignments
-
-        # set input and output dirs
+        # get the output directory ready
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
-        for file_path in iteration_directory.iterdir():
-            if file_path.suffix != '.pickle':
-                continue
-            tilt_series = read_tomogram_from_pickle(file_path)
-            tilt_series_name = file_path.stem
-            tilt_series_ground_truth = (
-                read_tomogram_from_pickle(
-                    ground_truth_directory / f"{tilt_series_name}.pickle"
-                ) if ground_truth_directory is not None
-                else None
-            )
-            # results are written to the output_directory
-            evaluate_tilt_series(
-                model,
-                tilt_series_name,
-                tilt_series,
-                alignment_config["patches_per_dim"],
-                alignment_config["patch_size"],
-                TOMOGRAM_SHAPE,
-                output_directory,
-                device="cuda" if torch.cuda.is_available() else "cpu",
-                tilt_series_ground_truth=tilt_series_ground_truth,
-            )
+
+        # get list of all files to process for alignment
+        #  + their associated ground truth if available
+        tilt_series_list = list(iteration_directory.glob('*.pickle'))
+        if ground_truth_directory is not None:
+            ground_truth_list = [
+                ground_truth_directory / x.name for x in tilt_series_list
+            ]
+        else:
+            ground_truth_list = None
+
+        # run alignment in parallel over all available devices
+        run_alignment_parallel(
+            model_training_config["model_checkpoint"],
+            tilt_series_list,
+            alignment_config["patches_per_dim"],
+            alignment_config["patch_size"],
+            TOMOGRAM_SHAPE,
+            output_directory,
+            devices_list,
+            ground_truth_list=ground_truth_list,
+        )
 
     return None
