@@ -5,7 +5,8 @@ import torch
 def random_contrast(volume):
     """Slightly alter the mean and std of a pre-normalised tensor"""
     std_change, mean_change = (
-        torch.normal(1, 0.1, (1,)), torch.normal(0, 0.1, (1,))
+        torch.normal(1, 0.1, (1,), device=volume.device), 
+        torch.normal(0, 0.1, (1,), device=volume.device)
     )
     return volume * std_change + mean_change
 

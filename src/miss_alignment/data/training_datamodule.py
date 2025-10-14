@@ -162,6 +162,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             shuffle=False,  # data is already randomized by recon workers
             drop_last=True,
             num_workers=self.dataloader_workers,
+            multiprocessing_context='fork',
             persistent_workers=True,
             pin_memory=True,
         )

@@ -332,7 +332,7 @@ def evaluate_tilt_series(
 ) -> tuple[Tomogram, list[float]]:
     # load the best model and run alignment optimization
     model = MissAlignment.load_from_checkpoint(
-        model_checkpoint,
+        model_checkpoint, map_location='cpu',
     )
 
     # load tilt_series and set its name for output
@@ -354,10 +354,7 @@ def evaluate_tilt_series(
     # ensure we get a list of zyx positions!!
     position_grid = einops.rearrange(position_grid, 'd h w zyx -> (d h w) zyx')
 
-    # store initial shifts for reference
-    initial_translations = tilt_series.sample_translations.clone()
-
-    print(f"Aligning {tilt_series_name}...")
+    print(f"Aligning {tilt_series_name} on {device}")
     # return optimize_shifts_local(
     #     model,
     #     tilt_series,  # is modified in-place
@@ -373,13 +370,19 @@ def evaluate_tilt_series(
         patch_size,
         device,
     )
-    aligned_reconstruction = tilt_series.reconstruct_tomogram(
-        tomogram_shape, 128
-    )
 
     if tilt_series_ground_truth is not None:
         print(f"Centering alignment relative to ground truth...")
+        
+        tilt_series.to(device)
+        # store initial shifts for reference
+        initial_translations = tilt_series.sample_translations.clone()
+        aligned_reconstruction = tilt_series.reconstruct_tomogram(
+            tomogram_shape, 128
+        )
+
         tilt_series_ground_truth = read_tomogram_from_pickle(tilt_series_ground_truth)
+        tilt_series_ground_truth.to(device)
         ground_truth_alignment = tilt_series_ground_truth.sample_translations
         n_tilts, _, _ = tilt_series_ground_truth.images.shape
 
@@ -389,7 +392,7 @@ def evaluate_tilt_series(
 
         mean_diff_initial = torch.abs(
             ground_truth_alignment - initial_translations
-        )
+        ).cpu()
 
         correlation = calculate_cross_correlation(
             ground_truth_reconstruction, aligned_reconstruction
@@ -405,7 +408,7 @@ def evaluate_tilt_series(
 
         mean_diff_final = torch.abs(
             ground_truth_alignment - tilt_series.sample_translations
-        )
+        ).cpu()
 
         fig, ax = plt.subplots(1, 2)
         ax[0].plot(mean_diff_initial[:, 0], label="initial y")
@@ -423,7 +426,7 @@ def evaluate_tilt_series(
     #     voxel_size=10,
     #     overwrite=True,
     # )
-
+    tilt_series.to('cpu')
     save_tomogram_to_pickle(
         tilt_series, output_directory / f"{tilt_series_name}.pickle"
     )

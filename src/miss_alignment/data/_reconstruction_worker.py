@@ -117,6 +117,7 @@ def reconstruction_worker(
         Device to use
     """
     torch.set_num_threads(1)
+
     print(
         f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
     )
@@ -226,12 +227,12 @@ def _create_pool_reconstruction(
     )
 
     # make tuple with volume and label
-    examples = [(aligned, 1), (misaligned, -1)]
+    examples = [(aligned.cpu(), 1), (misaligned.cpu(), -1)]
 
     # make a triplet example randomly mimick 1 or 2
-    examples += [(aligned.clone(), 1) if random.random() > 0.5 else (
-        misaligned.clone(), -1)]
-
+    examples += [(aligned.clone().cpu(), 1) if random.random() > 0.5 else (
+        misaligned.clone().cpu(), -1)]
+    
     return examples
 
 

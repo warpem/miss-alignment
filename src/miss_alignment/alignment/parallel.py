@@ -1,17 +1,23 @@
 import queue
 import multiprocessing as mp
 import time
+import torch
 from multiprocessing.managers import BaseProxy
 from pathlib import Path
 from typing import Optional
 
 from .tilt_series import evaluate_tilt_series
 
+try:
+    mp.set_start_method("spawn")
+except RuntimeError:
+    pass
+
 
 def gpu_runner(
-    device: str,
-    task_queue: BaseProxy,
-    result_queue: BaseProxy,
+        device: str,
+        task_queue: BaseProxy,
+        result_queue: BaseProxy,
 ) -> None:
     """Start a GPU runner, each runner should be initialized to a
     multiprocessing.Process() and manage running jobs on a single GPU. Each runner will
@@ -27,6 +33,7 @@ def gpu_runner(
     result_queue: mp.manager.BaseProxy
         shared queue from multiprocessing for finished jobs
     """
+    torch.set_num_threads(1)
     while True:
         try:
             task_parameters = task_queue.get_nowait()
