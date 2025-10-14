@@ -38,31 +38,35 @@ class MissAlignmentDataModule(pl.LightningDataModule):
 
     Parameters
     ----------
-    dataset_directory
-    batch_size
-    num_workers
-    target_size
-    patches_per_tomogram
-    training_iteration
-    shift_generator
     """
     def __init__(
-        self,
-        dataset_directory: os.PathLike,
-        shift_generator: Callable,
-        reconstruction_workers: int = 4,
-        dataloader_workers: int = 4,
-        batch_size: int = 4,
-        steps_per_epoch: int = 1000,
-        patch_size: int = 64,
-        tomogram_shape: tuple[int, int, int] = (180, 512, 512),
-        monitor: Optional[SimplePoolMonitor] = None,
+            self,
+            dataset_directory: os.PathLike,
+            shift_generator: Callable,
+            reconstruction_workers: int = 4,
+            reconstruction_accelerators: Optional[list[int]] = None,
+            dataloader_workers: int = 4,
+            batch_size: int = 4,
+            steps_per_epoch: int = 1000,
+            patch_size: int = 64,
+            tomogram_shape: tuple[int, int, int] = (180, 512, 512),
+            monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
         # data module controls
         self.batch_size = batch_size
         self.epoch_size = steps_per_epoch * batch_size
         self.reconstruction_workers = reconstruction_workers
+        if reconstruction_accelerators is not None:
+            if len(reconstruction_accelerators) != reconstruction_workers:
+                raise ValueError('Number of reconstruction workers must match '
+                                 'number of reconstruction accelerators')
+            self.reconstruction_devices = ['cuda:' + str(x) for x in
+                                           reconstruction_accelerators]
+        else:
+            self.reconstruction_devices = ['cpu',] * reconstruction_workers
+
+        self.reconstruction_accelerators = reconstruction_accelerators
         self.dataloader_workers = dataloader_workers
 
         # reconstruction controls
@@ -130,7 +134,10 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                     self.shift_generator,
                     self.ready_flag,
                     self.stop_event,
-                    self.monitor
+                    self.monitor,
+                    10,  # number of times tilt_series is kept in memory
+                    # before fetching the next set
+                    self.reconstruction_devices[worker_id],
                 )
             )
             p.start()

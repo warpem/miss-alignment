@@ -19,8 +19,8 @@ from .models import MissAlignment, MAEarlyStopping
 from .alignment import evaluate_tilt_series
 from .data._pool_monitor import SimplePoolMonitor
 
-_zenodo_archive = "16574872"
 
+_zenodo_archive = "16574872"
 
 def _download_to_dir(dataset_directory: Path):
     subprocess.run(
@@ -42,13 +42,25 @@ def _download_to_dir(dataset_directory: Path):
 
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
-    config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-    reconstruction_workers: int = 4,
-    dataloader_workers: int = 4,
-    iterations: int = 3,
-    monitor_production_and_consumption: bool = False,
+        config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
+        reconstruction_workers: int = 4,
+        dataloader_workers: int = 4,
+        n_devices: int = 1,
+        iterations: int = 3,
+        monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
+
+    # check hardware settings, we assume gpu's are available and limit
+    # cpu multithreading
+    torch.set_num_threads(1)
+
+    # gpu devices is a number of available devices for processing
+    # the devices should be limited by CUDA_VISIBLE_DEVICES
+    if n_devices < 1:
+        raise ValueError("MissAlignment needs at least 1 GPU")
+    devices_list = list(range(n_devices))
+
     # Load configuration from YAML file
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -107,8 +119,8 @@ def train_miss_align(
 
         # Set up trainer with parameters from config
         trainer = Trainer(
-            accelerator="auto",
-            devices="auto",
+            accelerator="gpu",
+            devices=devices_list[0:1],  # use the 0 device
             default_root_dir=model_training_config["output_directory"],
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
@@ -145,11 +157,11 @@ def train_miss_align(
             model = MissAlignment(**model_params)
 
         # Initialize data module with parameters from config
-        torch.set_num_threads(1)
         with MissAlignmentDataModule(
             iteration_directory,
             create_default_generator(**shift_generation_config),
             reconstruction_workers=reconstruction_workers,
+            reconstruction_accelerators=devices_list[1:],
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
@@ -181,8 +193,6 @@ def train_miss_align(
         # set input and output dirs
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
-        # set multithread for cpu to max 30 cores
-        torch.set_num_threads(min(reconstruction_workers, 30))
         for file_path in iteration_directory.iterdir():
             if file_path.suffix != '.pickle':
                 continue
