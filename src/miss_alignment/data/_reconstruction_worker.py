@@ -201,7 +201,6 @@ def _create_pool_reconstruction(
     tilt_series.tilt_angles += random.uniform(-10, +10)
 
     # select a random reconstruction position
-    d, h, w = tomogram_shape
     _offset = patch_size // 2
     _region = [x // 2 - _offset for x in tomogram_shape]
     reconstruction_location = tuple([random.randint(-r, r) for r in _region])
