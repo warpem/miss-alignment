@@ -129,6 +129,7 @@ def optimize_shifts_local(
     patch_size,
     device,
     tomogram_shape,
+    image_warp_grid,
 ):
     """Find shifts to optimize model score.
 
@@ -163,29 +164,19 @@ def optimize_shifts_local(
     initial_alignment = tilt_series.sample_translations.clone()
 
     # create the alignment parameters
-    shifts_y = CubicBSplineGrid3d(resolution=(n_tilts, 3, 3))
-    shifts_x = CubicBSplineGrid3d(resolution=(n_tilts, 3, 3))
+    shifts_y = CubicBSplineGrid3d(resolution=image_warp_grid)
+    shifts_x = CubicBSplineGrid3d(resolution=image_warp_grid)
     alignment_optimizer = torch.optim.LBFGS(
         chain(shifts_y.parameters(), shifts_x.parameters()),
         line_search_fn="strong_wolfe",
     )
 
-    # set the reference image index, the tilt image closest to 0 degrees
-    reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
-    # Create mask outside the closure
-    mask = torch.ones((n_tilts, 2), device=device)
-    mask[reference_idx] = 0.0
-
     # Initialize list to store loss values
     loss_values = []
-    patches = []
+    patches = [None,]
 
     def closure():
         alignment_optimizer.zero_grad()
-
-        # update the alignments
-        # masked_shifts = shifts * mask
-        # tilt_series.sample_translations = initial_alignment + masked_shifts
 
         volumes = []
         for zyx in positions:
@@ -196,8 +187,8 @@ def optimize_shifts_local(
                          torch.tensor([x,] * n_tilts))).T
             sub_shifts = torch.cat((shifts_y(shift_idx), shifts_x(
                 shift_idx)), dim=1)
-            masked_shifts = sub_shifts * mask
-            tilt_series.sample_translations = initial_alignment + masked_shifts
+            sub_shifts = sub_shifts.to(device)
+            tilt_series.sample_translations = initial_alignment + sub_shifts
 
             subtomo = tilt_series.reconstruct_subvolume(zyx, patch_size)
             mean, std = torch.mean(subtomo), torch.std(subtomo)
@@ -217,7 +208,7 @@ def optimize_shifts_local(
 
         # Store the loss value
         loss_values.append(loss.item())
-        patches.append(volumes.detach().numpy())
+        patches[0] = volumes.detach().cpu()
 
         return loss
 
@@ -231,7 +222,7 @@ def optimize_shifts_local(
     tilt_series.to("cpu")
     model.to("cpu")
 
-    return (shifts_y, shifts_x), patches
+    return (shifts_y, shifts_x), patches[0]
 
     # return tilt_series, loss_values
 
