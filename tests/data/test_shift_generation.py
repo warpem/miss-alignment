@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 # Import your modules (adjust import path as needed)
 from miss_alignment.data.shift_generation import (
     ShiftConfig, ShiftGenerator, select_random_indices,
-    generate_smooth_trajectory, generate_shift_trajectory,
+    generate_shift_trajectory, parabola_from_control_points,
     TrajectoryGenerator, JitterGenerator,
     OutlierGenerator, create_default_generator,
     project_shifts_3d_to_2d
@@ -83,8 +83,8 @@ class TestShiftGenerator:
     def test_call_method(self):
         """Test that __call__ method works."""
 
-        def dummy_generator(n):
-            return torch.ones((n, 3))
+        def dummy_generator(n, device):
+            return torch.ones((n, 3), device=device)
 
         config = ShiftConfig("test", 1.0, dummy_generator)
         generator = ShiftGenerator([config])
@@ -115,11 +115,11 @@ class TestShiftGenerator:
     def test_fallback_mechanism(self, mock_choice):
         """Test fallback when no shifts are selected but ensure_at_least_one=True."""
 
-        def generator1(n):
-            return torch.ones((n, 3))
+        def generator1(n, device):
+            return torch.ones((n, 3), device=device)
 
-        def generator2(n):
-            return torch.ones((n, 3)) * 2
+        def generator2(n, device):
+            return torch.ones((n, 3), device=device) * 2
 
         config1 = ShiftConfig("test1", 0.0, generator1)  # Zero probability
         config2 = ShiftConfig("test2", 0.5, generator2)  # Non-zero probability
@@ -143,11 +143,11 @@ class TestShiftGenerator:
     def test_multiple_shifts_combined(self):
         """Test that multiple shifts are properly combined."""
 
-        def generator1(n):
-            return torch.ones((n, 3))
+        def generator1(n, device):
+            return torch.ones((n, 3), device=device)
 
-        def generator2(n):
-            return torch.ones((n, 3)) * 2
+        def generator2(n, device):
+            return torch.ones((n, 3), device=device) * 2
 
         config1 = ShiftConfig("test1", 1.0, generator1)
         config2 = ShiftConfig("test2", 1.0, generator2)
@@ -226,29 +226,25 @@ class TestTrajectoryGeneration:
 
     def test_generate_smooth_trajectory(self):
         """Test smooth trajectory generation."""
-        grid_x, grid_y, grid_z = generate_smooth_trajectory(grid_resolution=3)
+        grid_x = parabola_from_control_points(
+            torch.rand(3) * 2 - 1,
+            n_points=10,
+        )
 
-        assert grid_x.data.shape == torch.Size([1, 3])
-        assert grid_y.data.shape == torch.Size([1, 3])
-        assert grid_z.data.shape == torch.Size([1, 3])
+        assert grid_x.shape == torch.Size([10])
 
         # Check that values are in expected range [-1, 1]
-        for grid in [grid_x, grid_y, grid_z]:
-            assert torch.all(grid.data >= -1)
-            assert torch.all(grid.data <= 1)
+        assert torch.all(grid_x >= -1)
+        assert torch.all(grid_x <= 1)
 
     def test_generate_shift_trajectory(self):
         """Test shift trajectory generation."""
         num_points = 50
-        timesteps, x_pos, y_pos, z_pos = generate_shift_trajectory(num_points)
+        x_pos, y_pos, z_pos = generate_shift_trajectory(num_points)
 
-        assert len(timesteps) == num_points
         assert len(x_pos) == num_points
         assert len(y_pos) == num_points
         assert len(z_pos) == num_points
-
-        # Check timesteps are properly spaced
-        assert torch.allclose(timesteps, torch.linspace(0, 1, num_points))
 
         # Check that positions are detached (no gradients)
         assert not x_pos.requires_grad
@@ -259,8 +255,7 @@ class TestTrajectoryGeneration:
         """Test that generate_shift_trajectory validates input properly."""
 
         # Test valid input
-        timesteps, x_pos, y_pos, z_pos = generate_shift_trajectory(4)
-        assert len(timesteps) == 4
+        x_pos, y_pos, z_pos = generate_shift_trajectory(4)
         assert len(x_pos) == 4
         assert len(y_pos) == 4
         assert len(z_pos) == 4
@@ -292,7 +287,7 @@ class TestGeneratorCreators:
         generator = TrajectoryGenerator(max_shift)
 
         num_points = 20
-        shifts = generator(num_points)
+        shifts = generator(num_points, 'cpu')
 
         assert shifts.shape == (num_points, 3)
         assert isinstance(shifts, torch.Tensor)
@@ -307,7 +302,7 @@ class TestGeneratorCreators:
         generator = JitterGenerator(max_std)
 
         num_points = 100
-        shifts = generator(num_points)
+        shifts = generator(num_points, 'cpu')
 
         assert shifts.shape == (num_points, 3)
         assert isinstance(shifts, torch.Tensor)
@@ -321,11 +316,10 @@ class TestGeneratorCreators:
     def test_create_outlier_generator(self):
         """Test outlier generator creation."""
         max_shift = 20.0
-        generator = OutlierGenerator(max_shift, max_sequence_length=3,
-                                             edge_only=False)
+        generator = OutlierGenerator(max_shift)
 
         num_points = 50
-        shifts = generator(num_points)
+        shifts = generator(num_points, 'cpu')
 
         assert shifts.shape == (num_points, 3)
 
@@ -333,8 +327,7 @@ class TestGeneratorCreators:
         non_zero_mask = torch.any(shifts != 0, dim=1)
         num_outliers = torch.sum(non_zero_mask).item()
 
-        assert num_outliers >= 1
-        assert num_outliers <= 3  # max_sequence_length
+        assert num_outliers == 1
 
         # Check outlier magnitudes are within expected range
         outlier_shifts = shifts[non_zero_mask]
@@ -366,7 +359,7 @@ class TestDefaultGenerator:
                 trajectory_probability=0.0,
                 jitter_probability=1.0,
                 outlier_probability=0.0,
-                high_tilt_outlier_probability=0.0,
+                fracture_probability=0.0,
                 jitter_max_std=1.0
             )
             assert len(w) == 3
@@ -388,7 +381,7 @@ class TestDefaultGenerator:
                 trajectory_probability=0.0,
                 jitter_probability=0.0,
                 outlier_probability=0.0,
-                high_tilt_outlier_probability=0.0
+                fracture_probability=0.0
             )
             assert len(w) == 4
             assert all(["has probability 0." in str(x.message) for x in w])
@@ -468,7 +461,7 @@ class TestIntegration:
                 trajectory_probability=1.0,  # Ensure trajectory is applied
                 jitter_probability=0.0,
                 outlier_probability=0.0,
-                high_tilt_outlier_probability=0.0
+                fracture_probability=0.0
             )
 
             assert len(w) == 3
@@ -545,7 +538,7 @@ def test_generator_output_shapes(num_points):
 def test_trajectory_generator_scaling(max_shift):
     """Test that trajectory generator respects max_shift parameter."""
     generator = TrajectoryGenerator(max_shift)
-    shifts = generator(50)
+    shifts = generator(50, 'cpu')
 
     # The actual maximum might be less due to centering, but should be reasonable
     max_observed = torch.max(torch.abs(shifts)).item()

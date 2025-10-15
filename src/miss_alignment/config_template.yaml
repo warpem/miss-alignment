@@ -35,8 +35,8 @@ shift_generation:
   jitter_max_std: 2.0             # (10 A) maximum standard deviation of a normal distribution
   outlier_probability: .5
   outlier_max_shift: 20.0         # (10 A) outlier can maximally go to this value
-  high_tilt_outlier_probability: .5
-  high_tilt_max_shift: 30.0       # (10 A) specific strong shifts for high tilt images up to this value
+  fracture_probability: .5
+  fracture_max_shift: 30.0       # (10 A) specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
   patches_per_dim: [2, 5, 5]    # this should be chosen to fit as many non-overlapping boxes in the tomo shape

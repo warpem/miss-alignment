@@ -4,7 +4,6 @@ import subprocess
 import shutil
 import os
 
-from functools import partial
 import typer
 import torch
 from lightning.pytorch import Trainer, seed_everything
@@ -14,13 +13,12 @@ from lightning.pytorch.plugins.environments import SLURMEnvironment
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
-from .data.io import read_tomogram_from_pickle
 from .models import MissAlignment, MAEarlyStopping
-from .alignment import evaluate_tilt_series
+from .alignment import run_alignment_parallel
 from .data._pool_monitor import SimplePoolMonitor
 
-_zenodo_archive = "16574872"
 
+_zenodo_archive = "16574872"
 
 def _download_to_dir(dataset_directory: Path):
     subprocess.run(
@@ -42,13 +40,25 @@ def _download_to_dir(dataset_directory: Path):
 
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
-    config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-    reconstruction_workers: int = 4,
-    dataloader_workers: int = 4,
-    iterations: int = 3,
-    monitor_production_and_consumption: bool = False,
+        config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
+        reconstruction_workers: int = 4,
+        dataloader_workers: int = 4,
+        n_devices: int = 1,
+        iterations: int = 3,
+        monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
+
+    # check hardware settings, we assume gpu's are available and limit
+    # cpu multithreading
+    torch.set_num_threads(1)
+
+    # gpu devices is a number of available devices for processing
+    # the devices should be limited by CUDA_VISIBLE_DEVICES
+    if n_devices < 1:
+        raise ValueError("MissAlignment needs at least 1 GPU")
+    devices_list = list(range(n_devices))
+
     # Load configuration from YAML file
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -86,6 +96,9 @@ def train_miss_align(
         learning_rates = model_training_config["learning_rate"]
 
     for x, lr in zip(range(start_iter, end_iter), learning_rates):
+        # ============================================================
+        # ================= model training step ======================
+        # ============================================================
         iteration_directory = training_directory / ('iter' + str(x))
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
@@ -107,8 +120,8 @@ def train_miss_align(
 
         # Set up trainer with parameters from config
         trainer = Trainer(
-            accelerator="auto",
-            devices="auto",
+            accelerator="gpu",
+            devices=devices_list[0:1],  # use the 0 device
             default_root_dir=model_training_config["output_directory"],
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
@@ -145,11 +158,11 @@ def train_miss_align(
             model = MissAlignment(**model_params)
 
         # Initialize data module with parameters from config
-        torch.set_num_threads(1)
         with MissAlignmentDataModule(
             iteration_directory,
             create_default_generator(**shift_generation_config),
             reconstruction_workers=reconstruction_workers,
+            reconstruction_accelerators=devices_list[1:],
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
@@ -172,39 +185,33 @@ def train_miss_align(
             trainer.checkpoint_callback.best_model_path
         )
 
-        # load the best model and run alignment optimization
-        model = MissAlignment.load_from_checkpoint(
-            model_training_config["model_checkpoint"],
-        )
-        model.freeze()  # freeze model to perform alignments
-
-        # set input and output dirs
+        # ============================================================
+        # =============== tilt-series alignment step =================
+        # ============================================================
+        # get the output directory ready
         output_directory = training_directory / ('iter' + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
-        # set multithread for cpu to max 30 cores
-        torch.set_num_threads(min(reconstruction_workers, 30))
-        for file_path in iteration_directory.iterdir():
-            if file_path.suffix != '.pickle':
-                continue
-            tilt_series = read_tomogram_from_pickle(file_path)
-            tilt_series_name = file_path.stem
-            tilt_series_ground_truth = (
-                read_tomogram_from_pickle(
-                    ground_truth_directory / f"{tilt_series_name}.pickle"
-                ) if ground_truth_directory is not None
-                else None
-            )
-            # results are written to the output_directory
-            evaluate_tilt_series(
-                model,
-                tilt_series_name,
-                tilt_series,
-                alignment_config["patches_per_dim"],
-                alignment_config["patch_size"],
-                TOMOGRAM_SHAPE,
-                output_directory,
-                device="cuda" if torch.cuda.is_available() else "cpu",
-                tilt_series_ground_truth=tilt_series_ground_truth,
-            )
+
+        # get list of all files to process for alignment
+        #  + their associated ground truth if available
+        tilt_series_list = list(iteration_directory.glob('*.pickle'))
+        if ground_truth_directory is not None:
+            ground_truth_list = [
+                ground_truth_directory / x.name for x in tilt_series_list
+            ]
+        else:
+            ground_truth_list = None
+
+        # run alignment in parallel over all available devices
+        run_alignment_parallel(
+            model_training_config["model_checkpoint"],
+            tilt_series_list,
+            alignment_config["patches_per_dim"],
+            alignment_config["patch_size"],
+            TOMOGRAM_SHAPE,
+            output_directory,
+            devices_list,
+            ground_truth_list=ground_truth_list,
+        )
 
     return None

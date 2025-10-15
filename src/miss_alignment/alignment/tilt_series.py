@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from torch_tomogram import Tomogram
 from itertools import chain
 
-from miss_alignment.data.io import save_tomogram_to_pickle
+from miss_alignment.data.io import save_tomogram_to_pickle, \
+    read_tomogram_from_pickle
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from miss_alignment.models import MissAlignment
 
@@ -128,6 +129,7 @@ def optimize_shifts_local(
     patch_size,
     device,
     tomogram_shape,
+    image_warp_grid,
 ):
     """Find shifts to optimize model score.
 
@@ -162,29 +164,19 @@ def optimize_shifts_local(
     initial_alignment = tilt_series.sample_translations.clone()
 
     # create the alignment parameters
-    shifts_y = CubicBSplineGrid3d(resolution=(n_tilts, 3, 3))
-    shifts_x = CubicBSplineGrid3d(resolution=(n_tilts, 3, 3))
+    shifts_y = CubicBSplineGrid3d(resolution=image_warp_grid)
+    shifts_x = CubicBSplineGrid3d(resolution=image_warp_grid)
     alignment_optimizer = torch.optim.LBFGS(
         chain(shifts_y.parameters(), shifts_x.parameters()),
         line_search_fn="strong_wolfe",
     )
 
-    # set the reference image index, the tilt image closest to 0 degrees
-    reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
-    # Create mask outside the closure
-    mask = torch.ones((n_tilts, 2), device=device)
-    mask[reference_idx] = 0.0
-
     # Initialize list to store loss values
     loss_values = []
-    patches = []
+    patches = [None, None]
 
     def closure():
         alignment_optimizer.zero_grad()
-
-        # update the alignments
-        # masked_shifts = shifts * mask
-        # tilt_series.sample_translations = initial_alignment + masked_shifts
 
         volumes = []
         for zyx in positions:
@@ -195,8 +187,8 @@ def optimize_shifts_local(
                          torch.tensor([x,] * n_tilts))).T
             sub_shifts = torch.cat((shifts_y(shift_idx), shifts_x(
                 shift_idx)), dim=1)
-            masked_shifts = sub_shifts * mask
-            tilt_series.sample_translations = initial_alignment + masked_shifts
+            sub_shifts = sub_shifts.to(device)
+            tilt_series.sample_translations = initial_alignment + sub_shifts
 
             subtomo = tilt_series.reconstruct_subvolume(zyx, patch_size)
             mean, std = torch.mean(subtomo), torch.std(subtomo)
@@ -216,7 +208,10 @@ def optimize_shifts_local(
 
         # Store the loss value
         loss_values.append(loss.item())
-        patches.append(volumes.detach().numpy())
+        if patches[0] is None:
+            patches[0] = volumes.detach().cpu()
+        else:
+            patches[1] = volumes.detach().cpu()
 
         return loss
 
@@ -329,16 +324,24 @@ def optimize_shifts(
 
 
 def evaluate_tilt_series(
-    model: MissAlignment,
-    tilt_series_name: str,
-    tilt_series: Tomogram,
+    model_checkpoint: Path,
+    tilt_series: Path,
     patches_per_dim: tuple[int, int, int],
     patch_size: int,
     tomogram_shape: tuple[int, int, int],
     output_directory: Path,
-    tilt_series_ground_truth: Optional[Tomogram] = None,
+    tilt_series_ground_truth: Optional[Path] = None,
     device: str = "cpu",
 ) -> tuple[Tomogram, list[float]]:
+    # load the best model and run alignment optimization
+    model = MissAlignment.load_from_checkpoint(
+        model_checkpoint, map_location='cpu',
+    )
+
+    # load tilt_series and set its name for output
+    tilt_series_name = tilt_series.stem
+    tilt_series = read_tomogram_from_pickle(tilt_series)
+
     d, h, w = tomogram_shape
     dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
     pd, ph, pw = patches_per_dim
@@ -353,11 +356,11 @@ def evaluate_tilt_series(
     )
     # ensure we get a list of zyx positions!!
     position_grid = einops.rearrange(position_grid, 'd h w zyx -> (d h w) zyx')
-
-    # store initial shifts for reference
+    
+    # store initial translations, before tilt-series is modifed in-place
     initial_translations = tilt_series.sample_translations.clone()
 
-    print(f"Aligning {tilt_series_name}...")
+    print(f"Aligning {tilt_series_name} on {device}")
     # return optimize_shifts_local(
     #     model,
     #     tilt_series,  # is modified in-place
@@ -373,12 +376,19 @@ def evaluate_tilt_series(
         patch_size,
         device,
     )
-    aligned_reconstruction = tilt_series.reconstruct_tomogram(
-        tomogram_shape, 128
-    )
 
     if tilt_series_ground_truth is not None:
         print(f"Centering alignment relative to ground truth...")
+        
+        # move back to device for faster reconstruction/cross-correlation
+        tilt_series.to(device)
+        initial_translations = initial_translations.to(device)
+        aligned_reconstruction = tilt_series.reconstruct_tomogram(
+            tomogram_shape, 128
+        )
+
+        tilt_series_ground_truth = read_tomogram_from_pickle(tilt_series_ground_truth)
+        tilt_series_ground_truth.to(device)
         ground_truth_alignment = tilt_series_ground_truth.sample_translations
         n_tilts, _, _ = tilt_series_ground_truth.images.shape
 
@@ -388,7 +398,7 @@ def evaluate_tilt_series(
 
         mean_diff_initial = torch.abs(
             ground_truth_alignment - initial_translations
-        )
+        ).cpu()
 
         correlation = calculate_cross_correlation(
             ground_truth_reconstruction, aligned_reconstruction
@@ -404,7 +414,7 @@ def evaluate_tilt_series(
 
         mean_diff_final = torch.abs(
             ground_truth_alignment - tilt_series.sample_translations
-        )
+        ).cpu()
 
         fig, ax = plt.subplots(1, 2)
         ax[0].plot(mean_diff_initial[:, 0], label="initial y")
@@ -416,13 +426,13 @@ def evaluate_tilt_series(
 
         plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
 
-    mrcfile.write(
-        output_directory / f"{tilt_series_name}_reconstruction.mrc",
-        aligned_reconstruction.detach().numpy(),
-        voxel_size=10,
-        overwrite=True,
-    )
-
+    # mrcfile.write(
+    #     output_directory / f"{tilt_series_name}_reconstruction.mrc",
+    #     aligned_reconstruction.detach().numpy(),
+    #     voxel_size=10,
+    #     overwrite=True,
+    # )
+    tilt_series.to('cpu')
     save_tomogram_to_pickle(
         tilt_series, output_directory / f"{tilt_series_name}.pickle"
     )

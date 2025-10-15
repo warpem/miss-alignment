@@ -117,6 +117,7 @@ def reconstruction_worker(
         Device to use
     """
     torch.set_num_threads(1)
+
     print(
         f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
     )
@@ -138,6 +139,7 @@ def reconstruction_worker(
             tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
             patch_size=patch_size,
             shift_generator=shift_generator,
+            device=device,
         )
 
         # Write directly first time (no temp file needed)
@@ -164,6 +166,7 @@ def reconstruction_worker(
             tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
             patch_size=patch_size,
             shift_generator=shift_generator,
+            device=device,
         )
 
         # Atomic replacement using temp file and rename
@@ -192,13 +195,13 @@ def _create_pool_reconstruction(
         tomogram_shape: tuple[int, int, int],
         patch_size: int,
         shift_generator: Callable,
+        device: str | torch.device = 'cpu',
 ) -> list[tuple[torch.Tensor, int]]:
     # add a random rotation to the sample
     # TODO instead of full tilt angle offset we should use a subtomo rotation
     tilt_series.tilt_angles += random.uniform(-10, +10)
 
     # select a random reconstruction position
-    d, h, w = tomogram_shape
     _offset = patch_size // 2
     _region = [x // 2 - _offset for x in tomogram_shape]
     reconstruction_location = tuple([random.randint(-r, r) for r in _region])
@@ -209,7 +212,8 @@ def _create_pool_reconstruction(
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
     translations = (
-        _generate_translations(shift_generator, projection_matrices)
+        _generate_translations(shift_generator, projection_matrices,
+                               device=device)
     )
 
     # reconstruct both volumes
@@ -223,24 +227,25 @@ def _create_pool_reconstruction(
     )
 
     # make tuple with volume and label
-    examples = [(aligned, 1), (misaligned, -1)]
+    examples = [(aligned.cpu(), 1), (misaligned.cpu(), -1)]
 
     # make a triplet example randomly mimick 1 or 2
-    examples += [(aligned.clone(), 1) if random.random() > 0.5 else (
-        misaligned.clone(), -1)]
-
+    examples += [(aligned.clone().cpu(), 1) if random.random() > 0.5 else (
+        misaligned.clone().cpu(), -1)]
+    
     return examples
 
 
 def _generate_translations(
         generate_shifts: Callable,
         projection_matrices,
+        device: str = 'cpu',
 ) -> torch.Tensor:
     n_tilts, y, x = projection_matrices.shape
     if (y, x) != (2, 3):
         raise ValueError('Projection matrices must have shape (2, 3)')
     # generate two sets of shifts, 3d shifts zyx
-    shifts = generate_shifts(n_tilts).to(projection_matrices.device)
+    shifts = generate_shifts(n_tilts, device=device)
     shifts = project_shifts_3d_to_2d(shifts, projection_matrices)
 
     # randomly remove x or y shifts

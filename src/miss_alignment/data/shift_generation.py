@@ -12,7 +12,7 @@ class ShiftConfig:
     """Configuration for a single shift type."""
     name: str
     probability: float
-    generator: Callable[[int], torch.Tensor]
+    generator: Callable[[int, str], torch.Tensor]
 
     def should_apply(self) -> bool:
         """Check if this shift should be applied based on probability."""
@@ -41,9 +41,9 @@ class ShiftGenerator:
             if config.probability == 0.0:
                 warnings.warn(f"ShiftConfig {config.name} has probability 0.0")
 
-    def __call__(self, num_points: int) -> torch.Tensor:
+    def __call__(self, num_points: int, device: str = 'cpu') -> torch.Tensor:
         """Generate combined shifts for the given number of points."""
-        shifts = torch.zeros((num_points, 3))
+        shifts = torch.zeros((num_points, 3), device=device)
 
         # Determine which shifts to apply
         shifts_to_apply = [config for config in self.shift_configs if
@@ -59,7 +59,7 @@ class ShiftGenerator:
 
         # Apply selected shifts
         for config in shifts_to_apply:
-            shift_contribution = config.generator(num_points)
+            shift_contribution = config.generator(num_points, device)
             shifts = shifts + shift_contribution
 
         return shifts
@@ -111,43 +111,69 @@ def select_random_indices(
     return selected_indices
 
 
-def generate_smooth_trajectory(
-    grid_resolution: int = 3,
-) -> tuple[CubicBSplineGrid1d, CubicBSplineGrid1d, CubicBSplineGrid1d]:
-    """Generate a smooth trajectory using cubic B-spline interpolation.
+def parabola_from_control_points(
+        y_controls: torch.Tensor,
+        n_points: int = 100,
+        device: str | torch.device = "cpu"
+) -> torch.Tensor:
+    """
+    Generate parabolas through 3 evenly-spaced control points (vectorized).
 
     Parameters
     ----------
-    grid_resolution : int, optional
-        Resolution of the grid used for generating smooth trajectories, by default 3.
+    y_controls : torch.Tensor
+        Tensor of shape (..., 3) with y-values at x = [0, 0.5, 1].
+        Can be batched along any leading dimensions.
+    n_points : int, default=100
+        Number of points to generate along each parabola.
+    device : str or torch.device, default="cpu"
+        Device to run computation on ('cpu', 'cuda', etc.).
 
     Returns
     -------
-    tuple
-        A tuple with three CubicSplineGrid1d objects for x/y/z trajectories.
+    y : torch.Tensor
+        Y coordinates of parabolas, shape (..., n_points).
+
+    Examples
+    --------
+    >>> y_ctrl = torch.tensor([[0., 1., 0.], [1., 0., 1.]])
+    >>> y = parabola_from_control_points(y_ctrl, n_points=5)
+    >>> y.shape
+    torch.Size([2, 5])
     """
-    # Create three 1D spline grids for x, y, and z coordinates
-    grid_x = CubicBSplineGrid1d(resolution=grid_resolution)
-    grid_y = CubicBSplineGrid1d(resolution=grid_resolution)
-    grid_z = CubicBSplineGrid1d(resolution=grid_resolution)
+    y_controls = y_controls.to(device)
 
-    # Initialize grid data with random values to create a parabola-like curve
-    x_values = torch.rand(3) * 2 - 1
-    y_values = torch.rand(3) * 2 - 1
-    z_values = torch.rand(3) * 2 - 1
+    if y_controls.shape[-1] != 3:
+        raise ValueError("Last dimension must be 3 control points")
 
-    grid_x.data = x_values
-    grid_y.data = y_values
-    grid_z.data = z_values
+    # Extract control points: (..., 3) -> 3 tensors of shape (...)
+    y0 = y_controls[..., 0]
+    y1 = y_controls[..., 1]
+    y2 = y_controls[..., 2]
 
-    return grid_x, grid_y, grid_z
+    # Compute parabola coefficients
+    c = y0
+    a = 2 * (y0 - 2 * y1 + y2)
+    b = -3 * y0 + 4 * y1 - y2
+
+    # Generate x coordinates
+    x = torch.linspace(0, 1, n_points, device=device)
+
+    # Compute y = ax² + bx + c (broadcasting over batch dims)
+    # a, b, c: shape (...), x: shape (n_points,)
+    # Reshape for broadcasting: (..., 1) * (n_points,) -> (..., n_points)
+    y = (a[..., None] * x ** 2 +
+         b[..., None] * x +
+         c[..., None])
+
+    return y
 
 
 def generate_shift_trajectory(
-    num_points: int,
-    grid_resolution: int = 3,
-    breakpoint_p: float = 0.5,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        num_points: int,
+        breakpoint_p: float = 0.5,
+        device: str = 'cpu',
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Generate a trajectory with an optional shift in direction.
 
     This function creates a smooth trajectory in 3D space. With probability
@@ -158,17 +184,14 @@ def generate_shift_trajectory(
     ----------
     num_points : int
         Number of points in the final trajectory.
-    grid_resolution : int, optional
-        Resolution of the grid used for generating smooth trajectories, by default 3.
     breakpoint_p : float, optional
         Probability of generating a trajectory with a breakpoint, by default 0.5.
+    device : str, optional
 
     Returns
     -------
     tuple
         A tuple containing:
-            - timesteps : torch.Tensor
-                Linear space from 0 to 1 with `num_points` elements.
             - x_positions : torch.Tensor
                 X-coordinates of the trajectory points.
             - y_positions : torch.Tensor
@@ -179,34 +202,32 @@ def generate_shift_trajectory(
     if num_points < 4:
         raise ValueError(f"num_points must be at least 4, got {num_points}")
 
+    shifts = []
     if random.random() > 1.0 - breakpoint_p:
-        grid_x1, grid_y1, grid_z1 = generate_smooth_trajectory(grid_resolution)
-        grid_x2, grid_y2, grid_z2 = generate_smooth_trajectory(grid_resolution)
-        grid_x2.data[..., 0] = grid_x1.data[
-            ..., grid_resolution - 1
-        ]  # stitch grids together
-        grid_y2.data[..., 0] = grid_y1.data[..., grid_resolution - 1]
-        grid_z2.data[..., 0] = grid_z1.data[..., grid_resolution - 1]
         t1 = random.randint(2, num_points - 2)
         t2 = num_points - t1
-        t1 = torch.linspace(0, 1, t1)
-        t2 = torch.linspace(0, 1, t2 + 1)[1:]
-        x_pos1, y_pos1, z_pos1 = grid_x1(t1), grid_y1(t1), grid_z1(t1)
-        x_pos2, y_pos2, z_pos2 = grid_x2(t2), grid_y2(t2), grid_z2(t2)
-        x_positions = torch.cat([x_pos1, x_pos2])
-        y_positions = torch.cat([y_pos1, y_pos2])
-        z_positions = torch.cat([z_pos1, z_pos2])
-        timesteps = torch.linspace(0, 1, num_points)
+        for _ in range(3):
+            controls_1 = torch.rand(3, device=device) * 2 - 1
+            controls_2 = torch.cat([
+                controls_1[2:3],
+                torch.rand(2, device=device) * 2 - 1
+            ])
+            s1 = parabola_from_control_points(
+                controls_1, t1, device=device
+            )
+            s2 = parabola_from_control_points(
+                controls_2, t2 + 1, device=device
+            )
+            shifts += [torch.cat([s1, s2[1:]])]
     else:
-        grid_x, grid_y, grid_z = generate_smooth_trajectory(grid_resolution)
-        timesteps = torch.linspace(0, 1, num_points)
-        x_positions = grid_x(timesteps)
-        y_positions = grid_y(timesteps)
-        z_positions = grid_z(timesteps)
-    x_positions = x_positions.detach()
-    y_positions = y_positions.detach()
-    z_positions = z_positions.detach()
-    return timesteps, x_positions, y_positions, z_positions
+        for _ in range(3):
+            controls = torch.rand(3, device=device) * 2 - 1
+            shifts += [
+                parabola_from_control_points(
+                    controls, num_points, device=device
+                )
+            ]
+    return shifts
 
 
 class TrajectoryGenerator:
@@ -215,13 +236,15 @@ class TrajectoryGenerator:
     def __init__(self, trajectory_max_shift: float):
         self.trajectory_max_shift = trajectory_max_shift
 
-    def __call__(self, num_points: int) -> torch.Tensor:
-        _, x_shifts, y_shifts, z_shifts = generate_shift_trajectory(num_points)
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
+        x_shifts, y_shifts, z_shifts = (
+            generate_shift_trajectory(num_points, device=device)
+        )
         x_shifts = x_shifts * self.trajectory_max_shift
         y_shifts = y_shifts * self.trajectory_max_shift
         z_shifts = z_shifts * self.trajectory_max_shift
         shifts = torch.stack([z_shifts, y_shifts, x_shifts], dim=1)
-        shifts = shifts - einops.reduce(shifts, "n zyx -> 1 zyx",
+        shifts -= einops.reduce(shifts, "n zyx -> 1 zyx",
                                         reduction="mean")
         return shifts
 
@@ -232,32 +255,53 @@ class JitterGenerator:
     def __init__(self, jitter_max_std: float):
         self.jitter_max_std = jitter_max_std
 
-    def __call__(self, num_points: int) -> torch.Tensor:
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
         std = random.random() * self.jitter_max_std
-        return torch.normal(mean=0.0, std=float(std), size=(num_points, 3))
+        return torch.normal(mean=0.0, std=float(std), size=(num_points, 3),
+                            device=device)
 
 
 class OutlierGenerator:
     """Picklable outlier shift generator."""
 
-    def __init__(self, outlier_max_shift: float, max_sequence_length: int = 3,
-                 edge_only: bool = False):
+    def __init__(self, outlier_max_shift: float):
         self.outlier_max_shift = outlier_max_shift
-        self.max_sequence_length = max_sequence_length
-        self.edge_only = edge_only
 
-    def __call__(self, num_points: int) -> torch.Tensor:
-        shifts = torch.zeros((num_points, 3))
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
+        shifts = torch.zeros((num_points, 3), device=device)
         ids = select_random_indices(
             torch.arange(num_points),
-            max_sequence_length=self.max_sequence_length,
-            edge_only=self.edge_only
+            max_sequence_length=1,
+            edge_only=False,
         )
-        outliers = torch.rand(3) * (
+        outliers = torch.rand(3, device=device) * (
                     2 * self.outlier_max_shift) - self.outlier_max_shift
-        # if random.random() > 0.5:  # make it a linear increase
-
         shifts[ids] = outliers
+        return shifts
+
+
+class FractureGenerator:
+    """Picklable fracture shift generator."""
+    def __init__(self, fracture_max_shift: float):
+        self.fracture_max_shift = fracture_max_shift
+
+    def __call__(self, num_points: int, device: str) -> torch.Tensor:
+        shifts = torch.zeros((num_points, 3), device=device)
+        fraction_idx = random.randint(1, num_points)
+        outliers = torch.rand(3, device=device) * (
+                2 * self.fracture_max_shift) - self.fracture_max_shift
+        if random.random() > 0.5:  # make it linear
+            z = torch.linspace(outliers[0], 0, fraction_idx, device=device)
+            y = torch.linspace(outliers[1], 0, fraction_idx, device=device)
+            x = torch.linspace(outliers[2], 0, fraction_idx, device=device)
+            outliers = torch.stack([z, y, x], dim=1)
+        # randomly invert direction
+        if random.random() > 0.5:
+            shifts[- fraction_idx:] = torch.flip(outliers, dims=(0,))
+        else:
+            shifts[:fraction_idx] = outliers
+        shifts -= einops.reduce(shifts, "n zyx -> 1 zyx",
+                                        reduction="mean")
         return shifts
 
 
@@ -268,8 +312,8 @@ def create_default_generator(
         jitter_max_std: float = 2.0,
         outlier_probability: float = 0.4,
         outlier_max_shift: float = 20.0,
-        high_tilt_outlier_probability: float = 0.4,
-        high_tilt_max_shift: float = 30.0,
+        fracture_probability: float = 0.4,
+        fracture_max_shift: float = 30.0,
 ) -> ShiftGenerator:
     """Create a picklable shift generator."""
 
@@ -287,14 +331,12 @@ def create_default_generator(
         ShiftConfig(
             name="outlier",
             probability=outlier_probability,
-            generator=OutlierGenerator(outlier_max_shift,
-                                       max_sequence_length=3, edge_only=False)
+            generator=OutlierGenerator(outlier_max_shift)
         ),
         ShiftConfig(
-            name="high_tilt_outlier",
-            probability=high_tilt_outlier_probability,
-            generator=OutlierGenerator(high_tilt_max_shift,
-                                       max_sequence_length=7, edge_only=True)
+            name="fracture",
+            probability=fracture_probability,
+            generator=FractureGenerator(fracture_max_shift)
         ),
     ]
 
