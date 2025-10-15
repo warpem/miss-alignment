@@ -8,11 +8,6 @@ from typing import Optional
 
 from .tilt_series import evaluate_tilt_series
 
-try:
-    mp.set_start_method("spawn")
-except RuntimeError:
-    pass
-
 
 def gpu_runner(
         device: str,
