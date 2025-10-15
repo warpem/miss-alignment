@@ -173,7 +173,7 @@ def optimize_shifts_local(
 
     # Initialize list to store loss values
     loss_values = []
-    patches = [None,]
+    patches = [None, None]
 
     def closure():
         alignment_optimizer.zero_grad()
@@ -208,7 +208,10 @@ def optimize_shifts_local(
 
         # Store the loss value
         loss_values.append(loss.item())
-        patches[0] = volumes.detach().cpu()
+        if patches[0] is None:
+            patches[0] = volumes.detach().cpu()
+        else:
+            patches[1] = volumes.detach().cpu()
 
         return loss
 
@@ -222,7 +225,7 @@ def optimize_shifts_local(
     tilt_series.to("cpu")
     model.to("cpu")
 
-    return (shifts_y, shifts_x), patches[0]
+    return (shifts_y, shifts_x), patches
 
     # return tilt_series, loss_values
 
