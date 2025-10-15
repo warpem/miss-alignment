@@ -379,6 +379,7 @@ def evaluate_tilt_series(
         
         # move back to device for faster reconstruction/cross-correlation
         tilt_series.to(device)
+        initial_translations = initial_translations.to(device)
         aligned_reconstruction = tilt_series.reconstruct_tomogram(
             tomogram_shape, 128
         )
