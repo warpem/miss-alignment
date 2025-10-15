@@ -353,6 +353,9 @@ def evaluate_tilt_series(
     )
     # ensure we get a list of zyx positions!!
     position_grid = einops.rearrange(position_grid, 'd h w zyx -> (d h w) zyx')
+    
+    # store initial translations, before tilt-series is modifed in-place
+    initial_translations = tilt_series.sample_translations.clone()
 
     print(f"Aligning {tilt_series_name} on {device}")
     # return optimize_shifts_local(
@@ -374,9 +377,8 @@ def evaluate_tilt_series(
     if tilt_series_ground_truth is not None:
         print(f"Centering alignment relative to ground truth...")
         
+        # move back to device for faster reconstruction/cross-correlation
         tilt_series.to(device)
-        # store initial shifts for reference
-        initial_translations = tilt_series.sample_translations.clone()
         aligned_reconstruction = tilt_series.reconstruct_tomogram(
             tomogram_shape, 128
         )
