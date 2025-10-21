@@ -8,8 +8,14 @@ from typing import Optional
 from lightning.pytorch.callbacks import Callback
 
 # from miss_alignment.models import resnet3d_18
-from miss_alignment.models import Compact3DConvNet
+from miss_alignment.models import Compact3DConvNet, Compact3DConvNetSpread
 from ..data._pool_monitor import SimplePoolMonitor
+
+
+model_map = {
+    'default': Compact3DConvNet,
+    'spread': Compact3DConvNetSpread,
+}
 
 
 class TripletMarginRankingLoss(nn.Module):
@@ -81,6 +87,7 @@ class MissAlignment(pl.LightningModule):
             # will be saved as a hyperparameter
         multistep_lr_scheduler: Optional[dict] = None,
         monitor: Optional[SimplePoolMonitor] = None,
+        model_architecture: str = "default",
     ):
         super().__init__()
 
@@ -93,7 +100,9 @@ class MissAlignment(pl.LightningModule):
         self.warmup_steps = warmup_steps
 
         self.criterion = TripletMarginRankingLoss(margin=margin)
-        self.net = Compact3DConvNet()  # resnet3d_18()
+
+        model = model_map[model_architecture]
+        self.net = model()  # resnet3d_18()
 
         self.monitor = monitor
 

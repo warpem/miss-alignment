@@ -8,6 +8,7 @@ general:
 
 model_training:
   # used to initialize model weights
+  model_architecture: 'default'
   model_checkpoint: /path/to/model.ckpt
   output_directory: /path/to/   # here model checkpoints are stored in lightning_log directories
   loss_margin: 0.5

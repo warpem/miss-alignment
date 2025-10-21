@@ -148,6 +148,7 @@ def train_miss_align(
             "multistep_lr_scheduler": model_training_config[
                 "multistep_lr_scheduler"],
             "monitor": monitor,
+            "model_architecture": model_training_config["model_architecture"],
         }
 
         if model_training_config["model_checkpoint"] is not None:
