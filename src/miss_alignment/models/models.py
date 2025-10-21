@@ -8,13 +8,20 @@ from typing import Optional
 from lightning.pytorch.callbacks import Callback
 
 # from miss_alignment.models import resnet3d_18
-from miss_alignment.models import Compact3DConvNet, Compact3DConvNetSpread
+from miss_alignment.models import (
+    Compact3DConvNet,
+    Compact3DConvNetSpread,
+    Compact3DConvNetWide,
+    Compact3DConvNetDeep,
+)
 from ..data._pool_monitor import SimplePoolMonitor
 
 
 model_map = {
     'default': Compact3DConvNet,
     'spread': Compact3DConvNetSpread,
+    'wide': Compact3DConvNetWide,
+    'deep': Compact3DConvNetDeep,
 }
 
 
