@@ -14,6 +14,7 @@ from miss_alignment.models import (
     Compact3DConvNetSpread,
     Compact3DConvNetWide,
     Compact3DConvNetDeep,
+    CompactResNet3D,
 )
 from ..data._pool_monitor import SimplePoolMonitor
 
@@ -24,6 +25,7 @@ model_map = {
     'spread': Compact3DConvNetSpread,
     'wide': Compact3DConvNetWide,
     'deep': Compact3DConvNetDeep,
+    'resnet': CompactResNet3D,
 }
 
 

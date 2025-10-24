@@ -213,3 +213,139 @@ class Compact3DConvNetDeep(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.regressor(x)
         return x
+
+
+class Bottleneck3D(nn.Module):
+    """
+    3D Bottleneck block with residual connection.
+
+    Uses 1x1x1 -> 3x3x3 -> 1x1x1 convolutions to reduce parameters
+    while adding depth. The middle 3x3x3 operates on fewer channels.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of input channels
+    bottleneck_channels : int
+        Number of channels in the bottleneck (middle 3x3x3 layer)
+    stride : int, default=1
+        Stride for the 3x3x3 convolution (use 2 for downsampling)
+    expansion : int, default=4
+        Expansion factor for output channels
+    """
+
+    def __init__(self, in_channels, bottleneck_channels, stride=1,
+                 expansion=4):
+        super().__init__()
+
+        out_channels = bottleneck_channels * expansion
+
+        # 1x1x1 reduce
+        self.conv1 = nn.Conv3d(in_channels, bottleneck_channels,
+                               kernel_size=1, stride=1, bias=False)
+        self.bn1 = nn.BatchNorm3d(bottleneck_channels)
+
+        # 3x3x3 process
+        self.conv2 = nn.Conv3d(bottleneck_channels, bottleneck_channels,
+                               kernel_size=3, stride=stride, padding=1,
+                               bias=False)
+        self.bn2 = nn.BatchNorm3d(bottleneck_channels)
+
+        # 1x1x1 expand
+        self.conv3 = nn.Conv3d(bottleneck_channels, out_channels,
+                               kernel_size=1, stride=1, bias=False)
+        self.bn3 = nn.BatchNorm3d(out_channels)
+
+        self.gelu = nn.GELU()
+
+        # Shortcut connection
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv3d(in_channels, out_channels,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm3d(out_channels)
+            )
+
+    def forward(self, x):
+        identity = self.shortcut(x)
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.gelu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.gelu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        out += identity
+        out = self.gelu(out)
+
+        return out
+
+
+class CompactResNet3D(nn.Module):
+    """
+    Compact 3D ResNet for scalar regression.
+
+    Uses Bottleneck blocks for efficient depth. Progressively downsamples
+    64^3 -> 32^3 -> 16^3 -> 8^3 -> 4^4 with residual connections.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    torch.Tensor
+        Regression output of shape (batch_size, 1)
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        # Initial convolution: 64^3 -> 64^3
+        self.conv1 = nn.Conv3d(1, 8, kernel_size=3, stride=1,
+                               padding=1, bias=False)
+        self.bn1 = nn.BatchNorm3d(8)
+        self.gelu = nn.GELU()
+
+        # Stage 1: 64^3 -> 32^3, channels: 8 -> 8
+        self.stage1 = Bottleneck3D(8, 2, stride=2, expansion=4)
+
+        # Stage 2: 32^3 -> 16^3, channels: 8 -> 16
+        self.stage2 = Bottleneck3D(8, 4, stride=2, expansion=4)
+
+        # Stage 3: 16^3 -> 8^3, channels: 16 -> 32
+        self.stage3 = Bottleneck3D(16, 8, stride=2, expansion=4)
+
+        # Stage 4: 8^3 -> 4^3, channels: 32 -> 32
+        self.stage4 = Bottleneck3D(32, 8, stride=2, expansion=4)
+
+        # Global average pooling
+        self.avgpool = nn.AdaptiveAvgPool3d(1)
+
+        # Regression head
+        self.regressor = nn.Linear(32, 1)
+
+    def forward(self, x):
+        # Initial conv
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.gelu(x)
+
+        # Bottleneck stages
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+
+        # Pool and regress
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.regressor(x)
+
+        return x

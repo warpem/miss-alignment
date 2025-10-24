@@ -10,6 +10,7 @@ from ._compact import (
     Compact3DConvNetSpread,
     Compact3DConvNetDeep,
     Compact3DConvNetWide,
+    CompactResNet3D,
 )
 from .models import MissAlignment, MAEarlyStopping
 
@@ -21,6 +22,7 @@ __all__ = [
     "Compact3DConvNetSpread",
     "Compact3DConvNetDeep",
     "Compact3DConvNetWide",
+    "CompactResNet3D",
     "resnet3d_18",
     "resnet3d_34",
     "resnet3d_50",
