@@ -297,28 +297,28 @@ class CompactResNet3D(nn.Module):
         super().__init__()
 
         # Initial convolution: 64^3 -> 64^3, 1 -> 24 channels
-        self.conv1 = nn.Conv3d(1, 24, kernel_size=3, stride=1,
+        self.conv1 = nn.Conv3d(1, 16, kernel_size=3, stride=1,
                                padding=1, bias=False)
-        self.bn1 = nn.BatchNorm3d(24)
+        self.bn1 = nn.BatchNorm3d(16)
         self.gelu = nn.GELU()
 
-        # Stage 1: 64^3 -> 32^3, 24 -> 24
-        self.stage1 = Bottleneck3D(24, 12, stride=2, expansion=2)
+        # Stage 1: 64^3 -> 32^3, 16 -> 16
+        self.stage1 = Bottleneck3D(16, 16, stride=2, expansion=2)
 
-        # Stage 2: 32^3 -> 16^3, 24 -> 40
-        self.stage2 = Bottleneck3D(24, 20, stride=2, expansion=2)
+        # Stage 2: 32^3 -> 16^3, 32 -> 32
+        self.stage2 = Bottleneck3D(32, 16, stride=2, expansion=2)
 
-        # Stage 3: 16^3 -> 8^3, 40 -> 40
-        self.stage3 = Bottleneck3D(40, 20, stride=2, expansion=2)
+        # Stage 3: 16^3 -> 8^3, 32 -> 64
+        self.stage3 = Bottleneck3D(32, 32, stride=2, expansion=2)
 
-        # Stage 4: 8^3 -> 4^3, 40 -> 40
-        self.stage4 = Bottleneck3D(40, 20, stride=2, expansion=2)
+        # Stage 4: 8^3 -> 4^3, 64 -> 64
+        self.stage4 = Bottleneck3D(64, 32, stride=2, expansion=2)
 
         # Global average pooling
         self.avgpool = nn.AdaptiveAvgPool3d(1)
 
         # Regression head
-        self.regressor = nn.Linear(40, 1)
+        self.regressor = nn.Linear(64, 1)
 
     def forward(self, x):
         x = self.conv1(x)
