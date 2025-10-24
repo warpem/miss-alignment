@@ -6,6 +6,7 @@ from ._resnet import (
 )
 from ._compact import (
     Compact3DConvNet,
+    Compact3DConvNetGELU,
     Compact3DConvNetSpread,
     Compact3DConvNetDeep,
     Compact3DConvNetWide,
@@ -16,6 +17,7 @@ __all__ = [
     "MissAlignment",
     "MAEarlyStopping",
     "Compact3DConvNet",
+    "Compact3DConvNetGELU",
     "Compact3DConvNetSpread",
     "Compact3DConvNetDeep",
     "Compact3DConvNetWide",
