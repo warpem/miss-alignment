@@ -219,9 +219,6 @@ class Bottleneck3D(nn.Module):
     """
     3D Bottleneck block with residual connection.
 
-    Uses 1x1x1 -> 3x3x3 -> 1x1x1 convolutions to reduce parameters
-    while adding depth. The middle 3x3x3 operates on fewer channels.
-
     Parameters
     ----------
     in_channels : int
@@ -230,35 +227,31 @@ class Bottleneck3D(nn.Module):
         Number of channels in the bottleneck (middle 3x3x3 layer)
     stride : int, default=1
         Stride for the 3x3x3 convolution (use 2 for downsampling)
-    expansion : int, default=4
+    expansion : int, default=2
         Expansion factor for output channels
     """
 
     def __init__(self, in_channels, bottleneck_channels, stride=1,
-                 expansion=4):
+                 expansion=2):
         super().__init__()
 
         out_channels = bottleneck_channels * expansion
 
-        # 1x1x1 reduce
         self.conv1 = nn.Conv3d(in_channels, bottleneck_channels,
                                kernel_size=1, stride=1, bias=False)
         self.bn1 = nn.BatchNorm3d(bottleneck_channels)
 
-        # 3x3x3 process
         self.conv2 = nn.Conv3d(bottleneck_channels, bottleneck_channels,
                                kernel_size=3, stride=stride, padding=1,
                                bias=False)
         self.bn2 = nn.BatchNorm3d(bottleneck_channels)
 
-        # 1x1x1 expand
         self.conv3 = nn.Conv3d(bottleneck_channels, out_channels,
                                kernel_size=1, stride=1, bias=False)
         self.bn3 = nn.BatchNorm3d(out_channels)
 
         self.gelu = nn.GELU()
 
-        # Shortcut connection
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
@@ -289,14 +282,10 @@ class Bottleneck3D(nn.Module):
 
 class CompactResNet3D(nn.Module):
     """
-    Compact 3D ResNet for scalar regression.
+    Compact 3D ResNet for scalar regression with ~45K parameters.
 
-    Uses Bottleneck blocks for efficient depth. Progressively downsamples
-    64^3 -> 32^3 -> 16^3 -> 8^3 -> 4^4 with residual connections.
-
-    Parameters
-    ----------
-    None
+    Uses wider channels to match parameter count of original network
+    while maintaining bottleneck depth benefits.
 
     Returns
     -------
@@ -307,43 +296,40 @@ class CompactResNet3D(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # Initial convolution: 64^3 -> 64^3
-        self.conv1 = nn.Conv3d(1, 8, kernel_size=3, stride=1,
+        # Initial convolution: 64^3 -> 64^3, 1 -> 24 channels
+        self.conv1 = nn.Conv3d(1, 24, kernel_size=3, stride=1,
                                padding=1, bias=False)
-        self.bn1 = nn.BatchNorm3d(8)
+        self.bn1 = nn.BatchNorm3d(24)
         self.gelu = nn.GELU()
 
-        # Stage 1: 64^3 -> 32^3, channels: 8 -> 8
-        self.stage1 = Bottleneck3D(8, 2, stride=2, expansion=4)
+        # Stage 1: 64^3 -> 32^3, 24 -> 24
+        self.stage1 = Bottleneck3D(24, 12, stride=2, expansion=2)
 
-        # Stage 2: 32^3 -> 16^3, channels: 8 -> 16
-        self.stage2 = Bottleneck3D(8, 4, stride=2, expansion=4)
+        # Stage 2: 32^3 -> 16^3, 24 -> 40
+        self.stage2 = Bottleneck3D(24, 20, stride=2, expansion=2)
 
-        # Stage 3: 16^3 -> 8^3, channels: 16 -> 32
-        self.stage3 = Bottleneck3D(16, 8, stride=2, expansion=4)
+        # Stage 3: 16^3 -> 8^3, 40 -> 40
+        self.stage3 = Bottleneck3D(40, 20, stride=2, expansion=2)
 
-        # Stage 4: 8^3 -> 4^3, channels: 32 -> 32
-        self.stage4 = Bottleneck3D(32, 8, stride=2, expansion=4)
+        # Stage 4: 8^3 -> 4^3, 40 -> 40
+        self.stage4 = Bottleneck3D(40, 20, stride=2, expansion=2)
 
         # Global average pooling
         self.avgpool = nn.AdaptiveAvgPool3d(1)
 
         # Regression head
-        self.regressor = nn.Linear(32, 1)
+        self.regressor = nn.Linear(40, 1)
 
     def forward(self, x):
-        # Initial conv
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.gelu(x)
 
-        # Bottleneck stages
         x = self.stage1(x)
         x = self.stage2(x)
         x = self.stage3(x)
         x = self.stage4(x)
 
-        # Pool and regress
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.regressor(x)
