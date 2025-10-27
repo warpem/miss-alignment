@@ -55,6 +55,7 @@ dependencies = [
     "typer",
     "zenodo-get",
     "matplotlib",
+    "warpylib",
 ]
 
 [project.urls]
