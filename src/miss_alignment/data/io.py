@@ -12,16 +12,10 @@ def _read_tomogram_from_pickle(
         stack_pixel_size: float,
         original_pixel_size: float,
         original_stack_shape: tuple[int, int],
-        write_stack: bool = True,
 ) -> tuple[TiltSeries, torch.Tensor]:
     with open(data_path, "rb") as infile:
         data_dict = pickle.load(infile)
     images = data_dict["tilt_series"]
-    # store images as stack so that we can continue with new format later
-    if write_stack:
-        with mrcfile.new(data_path.with_suffix(".st"), overwrite=True) as mrc:
-            mrc.set_data(images.cpu().numpy())
-            mrc.voxel_size = stack_pixel_size
     n_tilts, _, _ = images.shape
     tilt_series = TiltSeries(
         n_tilts=n_tilts,
