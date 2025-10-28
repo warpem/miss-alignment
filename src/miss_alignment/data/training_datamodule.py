@@ -117,9 +117,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.ready_flag = mp.Value('i', 0)
 
         # get a list of all the tilt series pickle files
-        tilt_series_pickles = (
-            [x for x in self.dataset_directory.iterdir() if x.suffix =='.pickle']
-        )
+        tilt_series_jsons = list(self.dataset_directory.glob('*.json'))
 
         for worker_id, indices in enumerate(partitions):
             p = mp.Process(
@@ -128,7 +126,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                     worker_id,
                     indices.tolist(),
                     self.pool_dir,
-                    tilt_series_pickles,
+                    tilt_series_jsons,
                     self.tomogram_shape,
                     self.patch_size,
                     self.shift_generator,

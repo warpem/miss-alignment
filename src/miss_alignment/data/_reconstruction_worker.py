@@ -10,10 +10,11 @@ import pickle
 import einops
 import os
 from torch_affine_utils.transforms_3d import Ry, Rz
-from torch_tomogram import Tomogram
+from warpylib import TiltSeries
+from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
 from dataclasses import dataclass
 
-from miss_alignment.data.io import read_tomogram_from_pickle
+from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data.shift_generation import (
     project_shifts_3d_to_2d
 )
@@ -22,61 +23,72 @@ from ._pool_monitor import SimplePoolMonitor
 
 @dataclass
 class TiltSeriesFetcher:
-    tilt_series_pickles: list[Path]
+    tilt_series_jsons: list[Path]
+    patch_size: int  # needed for filter calculation in warpylib
     refresh_rate: int
     device: str | torch.device
     _counter: int = 0
-    _tilt_series: Optional[Tomogram] = None
+    _tilt_series: Optional[TiltSeries] = None
+    _images: Optional[torch.Tensor] = None
+    _pixel_size: Optional[float] = None
 
     # temp storage of shifts, tilt angles, and tilt axis angle
-    _tmp_sample_translations: torch.Tensor = None
-    _tmp_tilt_angles: torch.Tensor = None
-    _tmp_tilt_axis_angle: torch.Tensor = None
+    _tmp_angles: torch.Tensor = None
+    _tmp_tilt_axis_angles: torch.Tensor = None
+    _tmp_tilt_axis_offset_x: torch.Tensor = None
+    _tmp_tilt_axis_offset_y: torch.Tensor = None
 
     def _backup_alignment(self):
-        self._tmp_sample_translations = (
-            self._tilt_series.sample_translations.clone())
-        self._tmp_tilt_angles = self._tilt_series.tilt_angles.clone()
-        self._tmp_tilt_axis_angle = self._tilt_series.tilt_axis_angle.clone()
+        self._tmp_angles = self._tilt_series.angles.clone()
+        self._tmp_tilt_axis_angles = self._tilt_series.tilt_axis_angles.clone()
+        self._tmp_tilt_axis_offset_x = self._tilt_series.tilt_axis_offset_x.clone()
+        self._tmp_tilt_axis_offset_y = self._tilt_series.tilt_axis_offset_y.clone()
 
     def _refresh_alignment(self):
-        self._tilt_series.sample_translations = (
-            self._tmp_sample_translations.clone())
-        self._tilt_series.tilt_angles = self._tmp_tilt_angles.clone()
-        self._tilt_series.tilt_axis_angle = self._tmp_tilt_axis_angle.clone()
+        self._tilt_series.angles = self._tmp_angles.clone()
+        self._tilt_series.tilt_axis_angles = self._tmp_tilt_axis_angles.clone()
+        self._tilt_series.tilt_axis_offset_x = (self._tmp_tilt_axis_offset_x.clone())
+        self._tilt_series.tilt_axis_offset_y = (self._tmp_tilt_axis_offset_y.clone())
 
     def _load_next(self):
-        tilt_series = (
-            read_tomogram_from_pickle(random.choice(self.tilt_series_pickles))
+        tilt_series_data = (
+            TiltSeriesData.from_json(random.choice(self.tilt_series_jsons))
         )
-        tilt_series.to(self.device)
-        # ensure normalization per tilt
-        tilt_series.images -= einops.reduce(
-            tilt_series.images, "tilt h w -> tilt 1 1", reduction="mean"
+        tilt_series, images, pixel_size = (
+            tilt_series_data.load_metadata_and_stack()
         )
-        tilt_series.images /= torch.std(tilt_series.images, dim=(-2, -1),
-                                        keepdim=True)
+        # run the preprocessing from warp for consistency
+        images = preprocess_tilt_data(
+            tilt_data=images,
+            normalize=True,
+            invert=False,
+            subvolume_size=self.patch_size,
+            subvolume_padding=2.0,
+        )
+        tilt_series = tilt_series.to(self.device)
+        images = images.to(self.device)
         self._tilt_series = tilt_series
+        self._images = images
+        self._pixel_size = pixel_size
 
-    def __call__(self) -> Tomogram:
+    def __call__(self) -> tuple[TiltSeries, torch.Tensor, float]:
         if self._tilt_series is None or self._counter >= self.refresh_rate:
             self._load_next()
             self._backup_alignment()
             self._counter = 1
-            return self._tilt_series
         else:
             self._counter += 1
             self._refresh_alignment()
-            return self._tilt_series
+        return self._tilt_series, self._images, self._pixel_size
 
 
 def reconstruction_worker(
         worker_id: int,
         assigned_indices: list,
         pool_dir: Path,
-        tilt_series_pickles: list[Path],
-        tomogram_shape: tuple[int, int, int],
+        tilt_series_jsons: list[Path],
         patch_size: int,
+        apply_ctf: bool,
         shift_generator: Callable,
         ready_flag: mp.Value,
         stop_event: mp.Event,
@@ -95,13 +107,13 @@ def reconstruction_worker(
         Pool indices assigned to this worker
     pool_dir : Path
         Directory to store reconstructions
-    tilt_series_pickles : list[Path]
-        List of paths to tilt-series stored as pickles to make
+    tilt_series_jsons : list[Path]
+        List of paths to tilt-series stored as jsons to make
          reconstructions from
-    tomogram_shape : tuple[int, int, int]
-        Reconstruction shape
     patch_size : int
         Shape of patches will be: (patch_size, ) * 3
+    apply_ctf : bool
+        Do CTF correction during reconstruction
     shift_generator : Callable
         Function that generates random sets of shifts in 3D
     ready_flag : mp.Value
@@ -124,7 +136,7 @@ def reconstruction_worker(
 
     # counter to keep track of how many times reconstructions have been reused
     tilt_series_fetcher = TiltSeriesFetcher(
-        tilt_series_pickles=tilt_series_pickles,
+        tilt_series_jsons=tilt_series_jsons,
         refresh_rate=tilt_series_refresh_rate,
         device=device,
     )
@@ -133,12 +145,14 @@ def reconstruction_worker(
     for idx in assigned_indices:
         if stop_event.is_set():
             print(f'Worker {worker_id} shutting down')
-
+        tilt_series, images, pixel_size = tilt_series_fetcher()
         data_and_labels = _create_pool_reconstruction(
-            tilt_series=tilt_series_fetcher(),
-            tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
+            tilt_series=tilt_series,
+            images=images,
+            pixel_size=pixel_size,
             patch_size=patch_size,
             shift_generator=shift_generator,
+            apply_ctf=apply_ctf,
             device=device,
         )
 
@@ -160,12 +174,14 @@ def reconstruction_worker(
     while not stop_event.is_set():
         # Randomly select one of our indices to update
         idx = next(idx_cycle)
-
+        tilt_series, images, pixel_size = tilt_series_fetcher()
         data_and_labels = _create_pool_reconstruction(
-            tilt_series=tilt_series_fetcher(),
-            tomogram_shape=tomogram_shape,  # type: tuple[int, int, int]
+            tilt_series=tilt_series,
+            images=images,
+            pixel_size=pixel_size,
             patch_size=patch_size,
             shift_generator=shift_generator,
+            apply_ctf=apply_ctf,
             device=device,
         )
 
@@ -191,24 +207,36 @@ def reconstruction_worker(
 
 
 def _create_pool_reconstruction(
-        tilt_series: Tomogram,
-        tomogram_shape: tuple[int, int, int],
+        tilt_series: TiltSeries,
+        images: torch.Tensor,
+        pixel_size: float,
         patch_size: int,
         shift_generator: Callable,
+        apply_ctf: bool = True,
         device: str | torch.device = 'cpu',
 ) -> list[tuple[torch.Tensor, int]]:
     # add a random rotation to the sample
     # TODO instead of full tilt angle offset we should use a subtomo rotation
-    tilt_series.tilt_angles += random.uniform(-10, +10)
+    tilt_series.angles += random.uniform(-10, +10)
 
     # select a random reconstruction position
-    _offset = patch_size // 2
-    _region = [x // 2 - _offset for x in tomogram_shape]
-    reconstruction_location = tuple([random.randint(-r, r) for r in _region])
+    patch_offset = (patch_size * pixel_size) / 2
+    x_dim, y_dim, z_dim = tilt_series.volume_dimensions_physical
+    reconstruction_location = [
+        random.uniform(patch_offset, x_dim - patch_offset),
+        random.uniform(patch_offset, y_dim - patch_offset),
+        random.uniform(patch_offset, z_dim - patch_offset),
+    ]
+    reconstruction_location = (
+        torch.tensor(reconstruction_location, device=device)
+    )
+    reconstruction_location = (
+        einops.rearrange(reconstruction_location, 'xyz -> 1 xyz')
+    )
 
-    # generate aligned and misaligned shifts
-    r0 = Ry(tilt_series.tilt_angles, zyx=True)
-    r1 = Rz(tilt_series.tilt_axis_angle, zyx=True)
+    # generate a misalignment
+    r0 = Ry(tilt_series.angles, zyx=True)
+    r1 = Rz(tilt_series.tilt_axis_angles, zyx=True)
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
     translations = (
@@ -217,13 +245,22 @@ def _create_pool_reconstruction(
     )
 
     # reconstruct both volumes
-    aligned = tilt_series.reconstruct_subvolume(
-        reconstruction_location, patch_size
+    aligned = tilt_series.reconstruct_subvolumes_single(
+        tilt_data=images,
+        coords=reconstruction_location,
+        pixel_size=pixel_size,
+        size=patch_size,
+        apply_ctf=apply_ctf,
     )
-    # add the extra translations for misaligned example
-    tilt_series.sample_translations += translations
+    # add the extra translations for the misaligned example
+    tilt_series.tilt_axis_offset_y += translations[:, 0]
+    tilt_series.tilt_axis_offset_x += translations[:, 1]
     misaligned = tilt_series.reconstruct_subvolume(
-            reconstruction_location, patch_size
+        tilt_data=images,
+        coords=reconstruction_location,
+        pixel_size=pixel_size,
+        size=patch_size,
+        apply_ctf=apply_ctf,
     )
 
     # make tuple with volume and label

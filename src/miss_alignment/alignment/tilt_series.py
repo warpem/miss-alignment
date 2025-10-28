@@ -9,8 +9,7 @@ import matplotlib.pyplot as plt
 from torch_tomogram import Tomogram
 from itertools import chain
 
-from miss_alignment.data.io import save_tomogram_to_pickle, \
-    read_tomogram_from_pickle
+from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from miss_alignment.models import MissAlignment
 
