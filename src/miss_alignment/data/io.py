@@ -123,7 +123,7 @@ def merge_pickle_and_xml_to_json_helper(
     # write all output files
     tilt_series_name = pickle_data_path.stem
     data_directory = pickle_data_path.parent
-    stack_path = data_directory / f"{tilt_series_name}.mrc"
+    stack_path = data_directory / f"{tilt_series_name}.st"
     xml_path = data_directory / f"{tilt_series_name}.xml"
     json_path = data_directory / f"{tilt_series_name}.json"
     with mrcfile.new(stack_path, overwrite=True) as mrc:
@@ -157,7 +157,6 @@ def convert_pickle_to_json_helper(
 
     # initialize a fresh warpylib TiltSeries
     tilt_series = TiltSeries(n_tilts=n_tilts,)
-    tilt_series.use_tilt = torch.tensor(n_tilts * [True], dtype=torch.bool)
     tilt_series.angles = data_dict["tilt_angles"]
     tilt_series.tilt_axis_angles = data_dict["tilt_axis_angle"]
     axis_offsets_angstrom = data_dict["sample_translations"] * stack_pixel_size
@@ -167,7 +166,7 @@ def convert_pickle_to_json_helper(
     # write all output files
     tilt_series_name = pickle_data_path.stem
     data_directory = pickle_data_path.parent
-    stack_path = data_directory / f"{tilt_series_name}.mrc"
+    stack_path = data_directory / f"{tilt_series_name}.st"
     xml_path = data_directory / f"{tilt_series_name}.xml"
     json_path = data_directory / f"{tilt_series_name}.json"
     with mrcfile.new(stack_path, overwrite=True) as mrc:
