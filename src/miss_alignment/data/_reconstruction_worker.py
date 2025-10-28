@@ -137,6 +137,7 @@ def reconstruction_worker(
     # counter to keep track of how many times reconstructions have been reused
     tilt_series_fetcher = TiltSeriesFetcher(
         tilt_series_jsons=tilt_series_jsons,
+        patch_size=patch_size,
         refresh_rate=tilt_series_refresh_rate,
         device=device,
     )
