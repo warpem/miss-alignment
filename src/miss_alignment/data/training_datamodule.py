@@ -49,7 +49,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             batch_size: int = 4,
             steps_per_epoch: int = 1000,
             patch_size: int = 64,
-            tomogram_shape: tuple[int, int, int] = (180, 512, 512),
+            apply_ctf: bool = False,
             monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
@@ -70,8 +70,8 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.dataloader_workers = dataloader_workers
 
         # reconstruction controls
-        self.tomogram_shape = tomogram_shape
         self.patch_size = patch_size
+        self.apply_ctf = apply_ctf
         self.shift_generator = shift_generator
 
         # initialize the dataset and pool attributes
@@ -122,21 +122,21 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         for worker_id, indices in enumerate(partitions):
             p = mp.Process(
                 target=reconstruction_worker,
-                args=(
-                    worker_id,
-                    indices.tolist(),
-                    self.pool_dir,
-                    tilt_series_jsons,
-                    self.tomogram_shape,
-                    self.patch_size,
-                    self.shift_generator,
-                    self.ready_flag,
-                    self.stop_event,
-                    self.monitor,
-                    10,  # number of times tilt_series is kept in memory
-                    # before fetching the next set
-                    self.reconstruction_devices[worker_id],
-                )
+                kwargs={
+                    'worker_id': worker_id,
+                    'assigned_indices': indices.tolist(),
+                    'pool_dir': self.pool_dir,
+                    'tilt_series_jsons': tilt_series_jsons,
+                    'patch_size': self.patch_size,
+                    'apply_ctf': self.apply_ctf,
+                    'shift_generator': self.shift_generator,
+                    'ready_flag': self.ready_flag,
+                    'stop_event': self.stop_event,
+                    'monitor': self.monitor,
+                    'tilt_series_refresh_rate': 10,  # number of times
+                    # tilt_series is reused before fetching next
+                    'device': self.reconstruction_devices[worker_id],
+                }
             )
             p.start()
             self.pool_processes.append(p)
