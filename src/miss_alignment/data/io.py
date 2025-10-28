@@ -1,55 +1,69 @@
 import pickle
 import torch
 import mrcfile
-from warnings import warn
+import json
 from pathlib import Path
 from warpylib import TiltSeries
-from typing import Optional
+from dataclasses import dataclass, replace, asdict
 
 
-def _read_tomogram_from_pickle(
-        data_path: Path,
-        stack_pixel_size: float,
-        original_pixel_size: float,
-        original_stack_shape: tuple[int, int],
-) -> tuple[TiltSeries, torch.Tensor]:
-    with open(data_path, "rb") as infile:
-        data_dict = pickle.load(infile)
-    images = data_dict["tilt_series"]
-    n_tilts, _, _ = images.shape
-    tilt_series = TiltSeries(
-        n_tilts=n_tilts,
-        image_dimensions_physical=torch.tensor(
-            [s * original_pixel_size for s in original_stack_shape], dtype=torch.float32
-        ),
-    )
-    tilt_series.use_tilt = torch.tensor(n_tilts * [True], dtype=torch.bool)
-    tilt_series.angles = data_dict["tilt_angles"]
-    tilt_series.tilt_axis_angles = data_dict["tilt_axis_angle"]
-    axis_offsets_angstrom = data_dict["sample_translations"] * stack_pixel_size
-    tilt_series.tilt_axis_offset_y = axis_offsets_angstrom[:, 0].clone()
-    tilt_series.tilt_axis_offset_x = axis_offsets_angstrom[:, 1].clone()
+@dataclass(kw_only=True, frozen=True)
+class TiltSeriesData:
+    # required variables
+    xml_metadata_path: Path
+    stack_path: Path
+    stack_pixel_size: float
+    original_pixel_size: float
+    original_stack_shape: tuple[int, int]
 
-    # get scaled width and height
-    original_width, original_height = original_stack_shape
-    downsample_factor = stack_pixel_size / original_pixel_size
-    scaled_width = int(round(original_width / downsample_factor / 2)) * 2
-    scaled_height = int(round(original_height / downsample_factor / 2)) * 2
+    def replace(self, **kwargs):
+        return replace(self, **kwargs)
 
-    # set rounding factors
-    tilt_series.size_rounding_factors = torch.tensor(
-        [
-            scaled_width / (original_width / downsample_factor),
-            scaled_height / (original_height / downsample_factor),
-            1.0,  # Z dimension (not used for 2D images)
-        ],
-        dtype=torch.float32,
-    )
+    @property
+    def xml_filename(self) -> str:
+        return self.xml_metadata_path.name
 
-    return tilt_series, images
+    def load_metadata_and_stack(self) -> tuple[TiltSeries, torch.Tensor]:
+        metadata, images = _load_metadata_and_stack(
+            self.xml_metadata_path,
+            self.stack_path,
+            self.stack_pixel_size,
+            self.original_pixel_size,
+            self.original_stack_shape,
+        )
+        return metadata, images
+
+    def save_metadata_to_xml(self, tilt_series: TiltSeries) -> None:
+        tilt_series.save_meta(self.xml_metadata_path)
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data['xml_metadata_path'] = str(self.xml_metadata_path)
+        data['stack_path'] = str(self.stack_path)
+        return data
+
+    def to_json(self, path: Path) -> None:
+        with open(path, 'w') as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'TiltSeriesData':
+        """Use as: dict = TiltSeriesData.from_dict(some_dict)"""
+        data = data.copy()
+        data['xml_metadata_path'] = Path(data['xml_metadata_path'])
+        data['stack_path'] = Path(data['stack_path'])
+        data['original_stack_shape'] = tuple(data['original_stack_shape'])
+        return cls(**data)
+
+    @classmethod
+    def from_json(cls, path: Path) -> 'TiltSeriesData':
+        """Use as: data = TiltSeriesData.from_json(some_path)"""
+        with open(path, 'r') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
 
 
-def _read_warp_metadata(
+def _load_metadata_and_stack(
         metadata_path: Path,
         stack_path: Path,
         stack_pixel_size: float,
@@ -84,68 +98,90 @@ def _read_warp_metadata(
     return tilt_series, images
 
 
-def load_tilt_series(
-        metadata_path: Path,
+def merge_pickle_and_xml_to_json_helper(
+        pickle_data_path: Path,
+        xml_data_path: Path,
         stack_pixel_size: float,
         original_pixel_size: float,
         original_stack_shape: tuple[int, int],
-        stack_path: Optional[Path] = None,
-) -> tuple[TiltSeries, torch.Tensor]:
-    """Load tilt-series metadata and images.
+) -> tuple[TiltSeriesData, Path]:
+    # read the pickle
+    with open(pickle_data_path, "rb") as infile:
+        data_dict = pickle.load(infile)
+    images = data_dict["tilt_series"]
 
-    Expects to load a Warp .xml file with metadata and a tilt-series stack
-    of images together with the pixel size of the stack. It can also read
-    torch_tomogram. Tomogram pickle object for backwards compatibility.
+    # load existing xml metadata
+    tilt_series = TiltSeries(xml_data_path)
 
-    Arguments
-    -------
-    metadata_path: Path
-        Path to the metadata file either .pickle or .xml
-    stack_pixel_size: float
-        Pixel size of the tilt-series stack in the pickle or the MRC format
-        stack
-    original_pixel_size: float
-        Pixel size of raw data before downsampling
-    original_stack_shape: tuple[int, int]
-        Shape of images before downsampling, used to correct for rounding
-    stack_path: Path, default None
-        Path to the stack file with the tilt series images in MRC format
-        with either .mrc or .st extension
+    # set all the alignments from the pickle
+    tilt_series.angles = data_dict["tilt_angles"]
+    tilt_series.tilt_axis_angles = data_dict["tilt_axis_angle"]
+    axis_offsets_angstrom = data_dict["sample_translations"] * stack_pixel_size
+    tilt_series.tilt_axis_offset_y = axis_offsets_angstrom[:, 0].clone()
+    tilt_series.tilt_axis_offset_x = axis_offsets_angstrom[:, 1].clone()
 
-    Returns
-    -------
-    metadata: warpylib.TiltSeries
-        TiltSeries object from warpylib containing all the metadata
-    images: torch.Tensor
-        The images of the tilt series
-    """
-    if metadata_path.suffix == ".pickle":
-        metadata, images = (
-            _read_tomogram_from_pickle(
-                metadata_path,
-                stack_pixel_size,
-                original_pixel_size,
-                original_stack_shape
-            )
+    # write all output files
+    tilt_series_name = pickle_data_path.stem
+    data_directory = pickle_data_path.parent
+    stack_path = data_directory / f"{tilt_series_name}.mrc"
+    xml_path = data_directory / f"{tilt_series_name}.xml"
+    json_path = data_directory / f"{tilt_series_name}.json"
+    with mrcfile.new(stack_path, overwrite=True) as mrc:
+        mrc.set_data(images.cpu().numpy())
+        mrc.set_voxel = stack_pixel_size
+    new_tilt_series_data = (
+        TiltSeriesData(
+            xml_metadata_path=xml_path,
+            stack_path=stack_path,
+            stack_pixel_size=stack_pixel_size,
+            original_stack_shape=original_stack_shape,
+            original_pixel_size=original_pixel_size,
         )
-    elif metadata_path.suffix == ".xml":
-        if stack_path is not None:
-            metadata, images = (
-                _read_warp_metadata(
-                    metadata_path,
-                    stack_path,
-                    stack_pixel_size,
-                    original_pixel_size,
-                    original_stack_shape,
-                )
-            )
-        else:
-            raise ValueError("Warp XML file also requires a tilt stack path.")
-    else:
-        raise ValueError("Invalid metadata file type; expected .pickle or "
-                         f".xml, but got {metadata_path.suffix}")
-    return metadata, images
+    )
+    new_tilt_series_data.save_metadata_to_xml(tilt_series)
+    new_tilt_series_data.to_json(json_path)
+    return new_tilt_series_data, json_path
 
 
-def save_tilt_series(tilt_series: TiltSeries, metadata_path: Path):
-    tilt_series.save_meta(metadata_path)
+def convert_pickle_to_json_helper(
+        pickle_data_path: Path,
+        stack_pixel_size: float,
+        original_pixel_size: float,
+        original_stack_shape: tuple[int, int],
+) -> tuple[TiltSeriesData, Path]:
+    # read the pickle
+    with open(pickle_data_path, "rb") as infile:
+        data_dict = pickle.load(infile)
+    images = data_dict["tilt_series"]
+    n_tilts, _, _ = images.shape
+
+    # initialize a fresh warpylib TiltSeries
+    tilt_series = TiltSeries(n_tilts=n_tilts,)
+    tilt_series.use_tilt = torch.tensor(n_tilts * [True], dtype=torch.bool)
+    tilt_series.angles = data_dict["tilt_angles"]
+    tilt_series.tilt_axis_angles = data_dict["tilt_axis_angle"]
+    axis_offsets_angstrom = data_dict["sample_translations"] * stack_pixel_size
+    tilt_series.tilt_axis_offset_y = axis_offsets_angstrom[:, 0].clone()
+    tilt_series.tilt_axis_offset_x = axis_offsets_angstrom[:, 1].clone()
+
+    # write all output files
+    tilt_series_name = pickle_data_path.stem
+    data_directory = pickle_data_path.parent
+    stack_path = data_directory / f"{tilt_series_name}.mrc"
+    xml_path = data_directory / f"{tilt_series_name}.xml"
+    json_path = data_directory / f"{tilt_series_name}.json"
+    with mrcfile.new(stack_path, overwrite=True) as mrc:
+        mrc.set_data(images.cpu().numpy())
+        mrc.set_voxel = stack_pixel_size
+    new_tilt_series_data = (
+        TiltSeriesData(
+            xml_metadata_path=xml_path,
+            stack_path=stack_path,
+            stack_pixel_size=stack_pixel_size,
+            original_stack_shape=original_stack_shape,
+            original_pixel_size=original_pixel_size,
+        )
+    )
+    new_tilt_series_data.save_metadata_to_xml(tilt_series)
+    new_tilt_series_data.to_json(json_path)
+    return new_tilt_series_data, json_path
