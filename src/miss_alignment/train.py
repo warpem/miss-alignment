@@ -167,7 +167,7 @@ def train_miss_align(
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
-            tomogram_shape=TOMOGRAM_SHAPE,
+            apply_ctf=data_module_config["apply_ctf"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
             monitor=monitor,
         ) as dm:
