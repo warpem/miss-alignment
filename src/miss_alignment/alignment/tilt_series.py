@@ -157,9 +157,9 @@ def optimize_shifts_image_warp(
 
     # movement grids - these should receive gradients
     n_params = functools.reduce(lambda x, y: x * y, image_warp_grid)
-    movement_x_leaf = torch.zeros(n_params, requires_grad=True)
+    movement_x_leaf = torch.zeros(n_params, requires_grad=True, device=device)
     tilt_series.grid_movement_x = CubicGrid(image_warp_grid, movement_x_leaf)
-    movement_y_leaf = torch.zeros(n_params, requires_grad=True)
+    movement_y_leaf = torch.zeros(n_params, requires_grad=True, device=device)
     tilt_series.grid_movement_y = CubicGrid(image_warp_grid, movement_y_leaf)
 
     # set the optimizer and parameters
@@ -212,7 +212,6 @@ def optimize_shifts_image_warp(
 
     n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
-        print(f"Optimizing... {x + 1}/{n_iters}")
         alignment_optimizer.step(closure)
 
     # remove gradients
