@@ -1,11 +1,14 @@
 from pathlib import Path
 from typing import Optional
 
+import functools
 import torch
 import einops
 import matplotlib.pyplot as plt
 from torch_tomogram import Tomogram
 from itertools import chain
+from warpylib.cubic_grid import CubicGrid
+from warpylib import TiltSeries
 
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
@@ -119,96 +122,80 @@ def get_shift_from_correlation_image(correlation_image: torch.Tensor) -> torch.T
     return subpixel_shift
 
 
-def optimize_shifts_local(
-    model,
-    tilt_series,
-    positions,
-    patch_size,
-    device,
-    tomogram_shape,
-    image_warp_grid,
+def optimize_shifts_image_warp(
+        model: MissAlignment,
+        tilt_series: TiltSeries,
+        images: torch.Tensor,
+        pixel_size: float,
+        positions: torch.Tensor,
+        patch_size: int,
+        image_warp_grid: tuple[int, int, int],
+        apply_ctf: bool,
+        device: str | torch.device,
 ):
-    """Find shifts to optimize model score.
+    """Find shifts with image warp to minimize model score.
 
     Parameters
     ----------
-    model: torch.nn.Module
-        Model that produces the optimization target.
-    tilt_image_dfts: torch.Tensor
-        DFTs of tilt images to use for reconstruction.
-    tilt_rotation_matrices: torch.Tensor:
-        Tilt rotation matrices to use for back projection.
+
 
     Returns
     -------
-    tuple[torch.Tensor, torch.Tensor, list]
+    tuple[torch.Tensor, list]
         - Detected translational alignment.
         - List of loss values for each optimization iteration.
     """
-    from torch_cubic_spline_grids import CubicBSplineGrid3d
-
+    # move all modules to device in place
     tilt_series.to(device)
     model.to(device)
     model.freeze()
     model.eval()
+    # move images to device
+    images = images.to(device)
 
-    d, h, w = tomogram_shape
-    dc, hc, wc = d // 2, h // 2, w // 2
-    n_tilts, _ = tilt_series.sample_translations.shape
-    tilt_idx = torch.linspace(0, 1, n_tilts)
+    # movement grids - these should receive gradients
+    n_params = functools.reduce(lambda x, y: x * y, image_warp_grid)
+    movement_x_leaf = torch.zeros(n_params, requires_grad=True)
+    tilt_series.grid_movement_x = CubicGrid(image_warp_grid, movement_x_leaf)
+    movement_y_leaf = torch.zeros(n_params, requires_grad=True)
+    tilt_series.grid_movement_y = CubicGrid(image_warp_grid, movement_y_leaf)
 
-    # store the initial tilt_series alignment
-    initial_alignment = tilt_series.sample_translations.clone()
-
-    # create the alignment parameters
-    shifts_y = CubicBSplineGrid3d(resolution=image_warp_grid)
-    shifts_x = CubicBSplineGrid3d(resolution=image_warp_grid)
+    # set the optimizer and parameters
     alignment_optimizer = torch.optim.LBFGS(
-        chain(shifts_y.parameters(), shifts_x.parameters()),
+        [movement_x_leaf, movement_y_leaf],
         line_search_fn="strong_wolfe",
     )
 
     # Initialize list to store loss values
     loss_values = []
-    patches = [None, None]
 
     def closure():
         alignment_optimizer.zero_grad()
 
-        volumes = []
-        for zyx in positions:
-            # convert to [0, 1] for accessing the spline grids
-            z, y, x = zyx
-            z, y, x = (z + dc) / d, (y + hc) / h, (x + wc) / w
-            shift_idx = torch.stack((tilt_idx, torch.tensor([y,] * n_tilts),
-                         torch.tensor([x,] * n_tilts))).T
-            sub_shifts = torch.cat((shifts_y(shift_idx), shifts_x(
-                shift_idx)), dim=1)
-            sub_shifts = sub_shifts.to(device)
-            tilt_series.sample_translations = initial_alignment + sub_shifts
-
-            subtomo = tilt_series.reconstruct_subvolume(zyx, patch_size)
-            mean, std = torch.mean(subtomo), torch.std(subtomo)
-            subtomo = (subtomo - mean) / std
-            volumes.append(subtomo)
-        volumes = torch.stack(volumes)
+        # reconstruct subvolumes
+        subvolumes = tilt_series.reconstruct_subvolumes_single(
+            tilt_data=images,
+            coords=positions,
+            pixel_size=pixel_size,
+            size=patch_size,
+            apply_ctf=apply_ctf,
+        )
+        # ensure normalization per tilt
+        subvolumes -= einops.reduce(
+            subvolumes, "n d h w -> n 1 1 1", reduction="mean"
+        )
+        subvolumes /= torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
 
         # change channel to batch dimension
-        volumes = einops.rearrange(volumes, "b d h w -> b 1 d h w")
+        subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
         # Get loss and compute backward pass
-        loss = model(volumes)
+        loss = model(subvolumes)
         loss = loss.mean()
         loss.backward()
 
-        print(loss.item())
-
         # Store the loss value
         loss_values.append(loss.item())
-        if patches[0] is None:
-            patches[0] = volumes.detach().cpu()
-        else:
-            patches[1] = volumes.detach().cpu()
 
         return loss
 
@@ -218,63 +205,68 @@ def optimize_shifts_local(
         alignment_optimizer.step(closure)
 
     # remove gradients
-    # tilt_series.sample_translations = initial_alignment + shifts.detach()
+    tilt_series.grid_movement_x.values = (
+        tilt_series.grid_movement_x.values.detach()
+    )
+    tilt_series.grid_movement_y.values = (
+        tilt_series.grid_movement_y.values.detach()
+    )
+    # move back because there were modified in-place
     tilt_series.to("cpu")
     model.to("cpu")
 
-    return (shifts_y, shifts_x), patches
-
-    # return tilt_series, loss_values
+    return tilt_series, loss_values
 
 
-def optimize_shifts(
-    model,
-    tilt_series,
-    positions,
-    patch_size,
-    device,
+def optimize_shifts_global(
+        model: MissAlignment,
+        tilt_series: TiltSeries,
+        images: torch.Tensor,
+        pixel_size: float,
+        positions: torch.Tensor,
+        patch_size: int,
+        apply_ctf: bool,
+        device: str | torch.device,
 ):
     """Find shifts to optimize model score.
 
     Parameters
     ----------
-    model: torch.nn.Module
-        Model that produces the optimization target.
-    tilt_image_dfts: torch.Tensor
-        DFTs of tilt images to use for reconstruction.
-    tilt_rotation_matrices: torch.Tensor:
-        Tilt rotation matrices to use for back projection.
+
 
     Returns
     -------
-    tuple[torch.Tensor, torch.Tensor, list]
+    tuple[torch.Tensor, list]
         - Detected translational alignment.
         - List of loss values for each optimization iteration.
     """
+    # move all modules to device in place
     tilt_series.to(device)
     model.to(device)
     model.freeze()
     model.eval()
+    # move images to device
+    images = images.to(device)
 
     # store the initial tilt_series alignment
-    initial_alignment = tilt_series.sample_translations.clone()
+    initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
+    initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
 
     # create the alignment parameters
-    shifts = torch.zeros_like(
-        tilt_series.sample_translations,
+    shifts_y = torch.zeros_like(
+        initial_tilt_axis_offset_x,
+        requires_grad=True,
+        device=device,
+    )
+    shifts_x = torch.zeros_like(
+        initial_tilt_axis_offset_x,
         requires_grad=True,
         device=device,
     )
     alignment_optimizer = torch.optim.LBFGS(
-        [shifts],
+        [shifts_y, shifts_x],
         line_search_fn="strong_wolfe",
     )
-
-    # set the reference image index, the tilt image closest to 0 degrees
-    # reference_idx = torch.abs(tilt_series.tilt_angles).argmin().item()
-    # Create mask outside the closure
-    # mask = torch.ones_like(shifts, device=device)
-    # mask[reference_idx] = 0.0
 
     # Initialize list to store loss values
     loss_values = []
@@ -283,22 +275,32 @@ def optimize_shifts(
         alignment_optimizer.zero_grad()
 
         # update the alignments
-        # masked_shifts = shifts * mask
-        tilt_series.sample_translations = initial_alignment + shifts
+        tilt_series.tilt_axis_offset_y = (
+            initial_tilt_axis_offset_y + shifts_y
+        )
+        tilt_series.tilt_axis_offset_x = (
+            initial_tilt_axis_offset_x + shifts_x
+        )
 
-        volumes = []
-        for zyx in positions:
-            subtomo = tilt_series.reconstruct_subvolume(zyx, patch_size)
-            mean, std = torch.mean(subtomo), torch.std(subtomo)
-            subtomo = (subtomo - mean) / std
-            volumes.append(subtomo)
-        volumes = torch.stack(volumes)
+        # reconstruct subvolumes
+        subvolumes = tilt_series.reconstruct_subvolumes_single(
+            tilt_data=images,
+            coords=positions,
+            pixel_size=pixel_size,
+            size=patch_size,
+            apply_ctf=apply_ctf,
+        )
+        # ensure normalization per tilt
+        subvolumes -= einops.reduce(
+            subvolumes, "n d h w -> n 1 1 1", reduction="mean"
+        )
+        subvolumes /= torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
 
         # change channel to batch dimension
-        volumes = einops.rearrange(volumes, "b d h w -> b 1 d h w")
+        subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
         # Get loss and compute backward pass
-        loss = model(volumes)
+        loss = model(subvolumes)
         loss = loss.mean()
         loss.backward()
 
@@ -309,11 +311,16 @@ def optimize_shifts(
 
     n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
-        print(f"Optimizing... {x + 1}/{n_iters}")
         alignment_optimizer.step(closure)
 
     # remove gradients
-    tilt_series.sample_translations = initial_alignment + shifts.detach()
+    tilt_series.tilt_axis_offset_y = (
+        initial_tilt_axis_offset_y + shifts_y.detach()
+    )
+    tilt_series.tilt_axis_offset_x = (
+        initial_tilt_axis_offset_x + shifts_x.detach()
+    )
+    # move back because there were modified in-place
     tilt_series.to("cpu")
     model.to("cpu")
 
@@ -321,14 +328,16 @@ def optimize_shifts(
 
 
 def evaluate_tilt_series(
-    model_checkpoint_path: Path,
-    tilt_series_path: Path,
-    patches_per_dim: tuple[int, int, int],
-    patch_size: int,
-    output_directory: Path,
-    ground_truth_path: Optional[Path] = None,
-    device: str = "cpu",
-) -> tuple[Tomogram, list[float]]:
+        model_checkpoint_path: Path,
+        tilt_series_path: Path,
+        patches_per_dim: tuple[int, int, int],
+        patch_size: int,
+        output_directory: Path,
+        image_warp_grid: Optional[tuple[int, int, int]] = None,
+        apply_ctf: bool = True,
+        ground_truth_path: Optional[Path] = None,
+        device: str = "cpu",
+) -> tuple[Path, list[float]]:
     # load the best model and run alignment optimization
     model = MissAlignment.load_from_checkpoint(
         model_checkpoint_path, map_location='cpu',
@@ -339,40 +348,47 @@ def evaluate_tilt_series(
     tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
     tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack()
 
-    d, h, w = tilt_series.volume_dimensions_physical
-    dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
-    pd, ph, pw = patches_per_dim
+    x, y, z = tilt_series.volume_dimensions_physical
+    px, py, pz = patches_per_dim
 
     # get the reconstruction positions to optimize over
-    zs = ((torch.arange(pd) + .5) / pd) * d - dc
-    ys = ((torch.arange(ph) + .5) / ph) * h - hc
-    xs = ((torch.arange(pw) + .5) / pw) * w - wc
+    zs = ((torch.arange(pz) + .5) / pz) * z
+    ys = ((torch.arange(py) + .5) / py) * y
+    xs = ((torch.arange(px) + .5) / px) * x
 
     position_grid = (
-        torch.stack(torch.meshgrid(zs, ys, xs, indexing='ij'), dim=-1)
+        torch.stack(torch.meshgrid(xs, ys, zs, indexing='ij'), dim=-1)
     )
-    # ensure we get a list of zyx positions!!
-    position_grid = einops.rearrange(position_grid, 'd h w zyx -> (d h w) zyx')
+    # ensure we get a list of xyz positions!!
+    position_grid = einops.rearrange(position_grid, 'd h w xyz -> (d h w) xyz')
     
-    # store initial translations, before tilt-series is modifed in-place
+    # store initial translations, before tilt-series is modified in-place
     initial_translations = tilt_series.sample_translations.clone()
 
-    print(f"Aligning {tilt_series_name} on {device}")
-    # return optimize_shifts_local(
-    #     model,
-    #     tilt_series,  # is modified in-place
-    #     position_grid,
-    #     patch_size,
-    #     device,
-    #     tomogram_shape,
-    # )
-    tilt_series, loss = optimize_shifts(
-        model,
-        tilt_series,  # is modified in-place
-        position_grid,
-        patch_size,
-        device,
-    )
+    # determine whether to run global or local alignment
+    if image_warp_grid is not None:
+        tilt_series, loss = optimize_shifts_image_warp(
+            model,
+            tilt_series,
+            images,
+            pixel_size,
+            position_grid,
+            patch_size,
+            image_warp_grid,
+            apply_ctf,
+            device,
+        )
+    else:
+        tilt_series, loss = optimize_shifts_global(
+            model,
+            tilt_series,
+            images,
+            pixel_size,
+            position_grid,
+            patch_size,
+            apply_ctf,
+            device,
+        )
 
     if ground_truth_path is not None:
         print(f"Centering alignment relative to ground truth...")
@@ -423,15 +439,12 @@ def evaluate_tilt_series(
 
         plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
 
-    # mrcfile.write(
-    #     output_directory / f"{tilt_series_name}_reconstruction.mrc",
-    #     aligned_reconstruction.detach().numpy(),
-    #     voxel_size=10,
-    #     overwrite=True,
-    # )
-    tilt_series.to('cpu')
-    save_tomogram_to_pickle(
-        tilt_series, output_directory / f"{tilt_series_name}.pickle"
+    xml_out = output_directory / (tilt_series_data.xml_filename + '.xml')
+    json_out = output_directory / (tilt_series_data.xml_filename + '.json')
+    new_tilt_series_data = (
+        tilt_series_data.replace(xml_metadata_path=xml_out,)
     )
+    new_tilt_series_data.save_metadata_to_xml(tilt_series)
+    new_tilt_series_data.to_json(json_out)
 
-    return tilt_series, loss
+    return json_out, loss

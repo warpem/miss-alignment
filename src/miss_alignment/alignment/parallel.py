@@ -2,6 +2,7 @@ import queue
 import multiprocessing as mp
 import time
 import torch
+import tqdm
 from multiprocessing.managers import BaseProxy
 from pathlib import Path
 from typing import Optional
@@ -47,7 +48,6 @@ def run_alignment_parallel(
         tilt_series_list: list[Path],
         patches_per_dim: tuple[int, int, int],
         patch_size: int,
-        tomogram_shape: tuple[int, int, int],
         output_directory: Path,
         devices_list: list[int],
         ground_truth_list: Optional[list[Path]] = None,
@@ -105,9 +105,11 @@ def run_alignment_parallel(
         ]
         [p.start() for p in procs]
 
+        pbar = tqdm.tqdm(total=len(jobs), desc='tilt-series alignment')
         while True:
             while not result_queue.empty():
                 results.append(result_queue.get_nowait())
+                pbar.update(1)
 
             if len(results) == len(jobs):
                 # its done if all the results from the spawn were send back
@@ -125,5 +127,6 @@ def run_alignment_parallel(
                     )
 
             time.sleep(.1)
+        pbar.close()
 
         [p.join() for p in procs]
