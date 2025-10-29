@@ -22,7 +22,7 @@ class TiltSeriesData:
 
     @property
     def xml_filename(self) -> str:
-        return self.xml_metadata_path.name
+        return self.xml_metadata_path.stem
 
     def load_metadata_and_stack(self) \
             -> tuple[TiltSeries, torch.Tensor, float]:

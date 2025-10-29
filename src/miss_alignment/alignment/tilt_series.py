@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
+import math
 import functools
 import torch
 import einops
@@ -129,6 +130,7 @@ def optimize_shifts_image_warp(
         pixel_size: float,
         positions: torch.Tensor,
         patch_size: int,
+        batch_size: int,
         image_warp_grid: tuple[int, int, int],
         apply_ctf: bool,
         device: str | torch.device,
@@ -171,21 +173,30 @@ def optimize_shifts_image_warp(
 
     def closure():
         alignment_optimizer.zero_grad()
-
-        # reconstruct subvolumes
-        subvolumes = tilt_series.reconstruct_subvolumes_single(
-            tilt_data=images,
-            coords=positions,
-            pixel_size=pixel_size,
-            size=patch_size,
-            apply_ctf=apply_ctf,
-        )
+        
+        batches = int(math.ceil(positions.shape[0] / batch_size))
+        subvolumes = []
+        for b in range(batches):
+            if b == batches - 1:
+                batch_positions = positions[b * batch_size:]
+            else:
+                batch_positions = positions[b * batch_size: (b+1) * batch_size]
+            # reconstruct subvolumes
+            subvolumes.append(tilt_series.reconstruct_subvolumes_single(
+                tilt_data=images,
+                coords=batch_positions,
+                pixel_size=pixel_size,
+                size=patch_size,
+                apply_ctf=apply_ctf,
+            ))
+        subvolumes = torch.cat(subvolumes, dim=0)
         # ensure normalization per tilt
-        subvolumes -= einops.reduce(
+        mean = einops.reduce(
             subvolumes, "n d h w -> n 1 1 1", reduction="mean"
         )
-        subvolumes /= torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-
+        std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+        subvolumes = (subvolumes - mean) / std
+        
         # change channel to batch dimension
         subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
@@ -225,6 +236,7 @@ def optimize_shifts_global(
         pixel_size: float,
         positions: torch.Tensor,
         patch_size: int,
+        batch_size: int,
         apply_ctf: bool,
         device: str | torch.device,
 ):
@@ -282,19 +294,28 @@ def optimize_shifts_global(
             initial_tilt_axis_offset_x + shifts_x
         )
 
-        # reconstruct subvolumes
-        subvolumes = tilt_series.reconstruct_subvolumes_single(
-            tilt_data=images,
-            coords=positions,
-            pixel_size=pixel_size,
-            size=patch_size,
-            apply_ctf=apply_ctf,
-        )
+        batches = int(math.ceil(positions.shape[0] / batch_size))
+        subvolumes = []
+        for b in range(batches):
+            if b == batches - 1:
+                batch_positions = positions[b * batch_size:]
+            else:
+                batch_positions = positions[b * batch_size: (b+1) * batch_size]
+            # reconstruct subvolumes
+            subvolumes.append(tilt_series.reconstruct_subvolumes_single(
+                tilt_data=images,
+                coords=batch_positions,
+                pixel_size=pixel_size,
+                size=patch_size,
+                apply_ctf=apply_ctf,
+            ))
+        subvolumes = torch.cat(subvolumes, dim=0)
         # ensure normalization per tilt
-        subvolumes -= einops.reduce(
+        mean = einops.reduce(
             subvolumes, "n d h w -> n 1 1 1", reduction="mean"
         )
-        subvolumes /= torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+        std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+        subvolumes = (subvolumes - mean) / std
 
         # change channel to batch dimension
         subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
@@ -333,6 +354,7 @@ def evaluate_tilt_series(
         patches_per_dim: tuple[int, int, int],
         patch_size: int,
         output_directory: Path,
+        batch_size: int = 16,
         image_warp_grid: Optional[tuple[int, int, int]] = None,
         apply_ctf: bool = True,
         ground_truth_path: Optional[Path] = None,
@@ -374,6 +396,7 @@ def evaluate_tilt_series(
             pixel_size,
             position_grid,
             patch_size,
+            batch_size,
             image_warp_grid,
             apply_ctf,
             device,
@@ -386,6 +409,7 @@ def evaluate_tilt_series(
             pixel_size,
             position_grid,
             patch_size,
+            batch_size,
             apply_ctf,
             device,
         )
