@@ -4,7 +4,6 @@ general:
   start_at_iteration: 0
   seed: 45132
   download_data: True              # download data from zenodo to folder/iter0 if its empty
-  tomogram_shape: (180, 512, 512)  # this determines the reconstruction area in 3D that is used for training/alignment
 
 model_training:
   # used to initialize model weights

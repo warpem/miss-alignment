@@ -80,8 +80,6 @@ def train_miss_align(
     )
     if general_config['download_data']:
         _download_to_dir(ground_truth_directory)
-    #TODO we would like to estimate the sample thickness
-    TOMOGRAM_SHAPE = general_config["tomogram_shape"]
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
@@ -195,7 +193,7 @@ def train_miss_align(
 
         # get list of all files to process for alignment
         #  + their associated ground truth if available
-        tilt_series_list = list(iteration_directory.glob('*.pickle'))
+        tilt_series_list = list(iteration_directory.glob('*.json'))
         if ground_truth_directory is not None:
             ground_truth_list = [
                 ground_truth_directory / x.name for x in tilt_series_list
@@ -209,7 +207,6 @@ def train_miss_align(
             tilt_series_list,
             alignment_config["patches_per_dim"],
             alignment_config["patch_size"],
-            TOMOGRAM_SHAPE,
             output_directory,
             devices_list,
             ground_truth_list=ground_truth_list,

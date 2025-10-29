@@ -70,15 +70,15 @@ def run_alignment_parallel(
     """
     jobs = []
     for i, tilt_series in enumerate(tilt_series_list):
-        jobs.append((
-            model_checkpoint,
-            tilt_series,
-            patches_per_dim,
-            patch_size,
-            tomogram_shape,
-            output_directory,
-            None if ground_truth_list is None else ground_truth_list[i],
-        ))
+        jobs.append({
+            'model_checkpoint_path': model_checkpoint,
+            'tilt_series_path': tilt_series,
+            'patches_per_dim': patches_per_dim,
+            'patch_size': patch_size,
+            'output_directory': output_directory,
+            'ground_truth_path':
+                None if ground_truth_list is None else ground_truth_list[i],
+        })
 
     results = []
     with mp.Manager() as manager:

@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-import mrcfile
 import torch
 import einops
 import matplotlib.pyplot as plt
@@ -323,25 +321,25 @@ def optimize_shifts(
 
 
 def evaluate_tilt_series(
-    model_checkpoint: Path,
-    tilt_series: Path,
+    model_checkpoint_path: Path,
+    tilt_series_path: Path,
     patches_per_dim: tuple[int, int, int],
     patch_size: int,
-    tomogram_shape: tuple[int, int, int],
     output_directory: Path,
-    tilt_series_ground_truth: Optional[Path] = None,
+    ground_truth_path: Optional[Path] = None,
     device: str = "cpu",
 ) -> tuple[Tomogram, list[float]]:
     # load the best model and run alignment optimization
     model = MissAlignment.load_from_checkpoint(
-        model_checkpoint, map_location='cpu',
+        model_checkpoint_path, map_location='cpu',
     )
 
     # load tilt_series and set its name for output
-    tilt_series_name = tilt_series.stem
-    tilt_series = read_tomogram_from_pickle(tilt_series)
+    tilt_series_name = tilt_series_path.stem
+    tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
+    tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack()
 
-    d, h, w = tomogram_shape
+    d, h, w = tilt_series.volume_dimensions_physical
     dc, hc, wc = d // 2, h // 2, w // 2  # reconstruction center
     pd, ph, pw = patches_per_dim
 
@@ -376,7 +374,7 @@ def evaluate_tilt_series(
         device,
     )
 
-    if tilt_series_ground_truth is not None:
+    if ground_truth_path is not None:
         print(f"Centering alignment relative to ground truth...")
         
         # move back to device for faster reconstruction/cross-correlation
@@ -386,7 +384,7 @@ def evaluate_tilt_series(
             tomogram_shape, 128
         )
 
-        tilt_series_ground_truth = read_tomogram_from_pickle(tilt_series_ground_truth)
+        tilt_series_ground_truth = read_tomogram_from_pickle(ground_truth_path)
         tilt_series_ground_truth.to(device)
         ground_truth_alignment = tilt_series_ground_truth.sample_translations
         n_tilts, _, _ = tilt_series_ground_truth.images.shape
