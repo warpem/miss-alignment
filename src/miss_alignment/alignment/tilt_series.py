@@ -360,6 +360,7 @@ def evaluate_tilt_series(
         device: str = "cpu",
 ) -> tuple[Path, list[float]]:
     # load the best model and run alignment optimization
+    print(model_checkpoint_path)
     model = MissAlignment.load_from_checkpoint(
         model_checkpoint_path, map_location='cpu',
     )

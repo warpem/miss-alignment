@@ -34,7 +34,7 @@ def gpu_runner(
         try:
             task_parameters = task_queue.get_nowait()
             _ = evaluate_tilt_series(
-                *task_parameters,
+                **task_parameters,
                 device=device,
             )
             # place the name of the finished tilt_series
@@ -49,6 +49,9 @@ def run_alignment_parallel(
         patches_per_dim: tuple[int, int, int],
         patch_size: int,
         output_directory: Path,
+        batch_size: int,
+        image_warp_grid: tuple[int, int, int] | None,
+        apply_ctf: bool,
         devices_list: list[int],
         ground_truth_list: Optional[list[Path]] = None,
 ):
@@ -76,6 +79,9 @@ def run_alignment_parallel(
             'patches_per_dim': patches_per_dim,
             'patch_size': patch_size,
             'output_directory': output_directory,
+            'batch_size': batch_size,
+            'image_warp_grid': image_warp_grid,
+            'apply_ctf': apply_ctf,
             'ground_truth_path':
                 None if ground_truth_list is None else ground_truth_list[i],
         })
