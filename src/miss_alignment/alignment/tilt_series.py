@@ -343,7 +343,7 @@ def optimize_shifts(
             # reconstruct subvolumes
             subvolumes.append(tilt_series.reconstruct_subvolumes_single(
                 tilt_data=images,
-                coords=batch_positions,
+                coords=batch_positions.to(device),
                 pixel_size=pixel_size,
                 size=patch_size,
                 apply_ctf=apply_ctf,
