@@ -228,22 +228,28 @@ def optimize_shifts_image_warp(
     return tilt_series, loss_values
 
 
-def optimize_shifts_global(
+def optimize_shifts(
         model: MissAlignment,
         tilt_series: TiltSeries,
         images: torch.Tensor,
         pixel_size: float,
         positions: torch.Tensor,
-        patch_size: int,
-        batch_size: int,
-        apply_ctf: bool,
-        device: str | torch.device,
+        setting: str |
+                 tuple[int, int, int] |
+                 tuple[int, int, int, int] = 'global',
+        patch_size: int = 96,
+        batch_size: int = 16,
+        apply_ctf: bool = True,
+        device: str | torch.device = 'cpu',
 ):
     """Find shifts to optimize model score.
 
     Parameters
     ----------
-
+    setting: type of alingment to run
+        str - 'global': optimizes a single shift per image
+        tuple[int, int, int] - (3, 3, 41): a single 2d field per image
+        tuple[int, int, int, int] - (3, 3, 2, 10): a volume warp grid
 
     Returns
     -------
@@ -259,23 +265,56 @@ def optimize_shifts_global(
     # move images to device
     images = images.to(device)
 
-    # store the initial tilt_series alignment
-    initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
-    initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
+    parameters = None
+    if setting == 'global':
+        # store the initial tilt_series alignment
+        initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
+        initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
 
-    # create the alignment parameters
-    shifts_y = torch.zeros_like(
-        initial_tilt_axis_offset_x,
-        requires_grad=True,
-        device=device,
-    )
-    shifts_x = torch.zeros_like(
-        initial_tilt_axis_offset_x,
-        requires_grad=True,
-        device=device,
-    )
+        # create the alignment parameters
+        shifts_y = torch.zeros_like(
+            initial_tilt_axis_offset_x,
+            requires_grad=True,
+            device=device,
+        )
+        shifts_x = torch.zeros_like(
+            initial_tilt_axis_offset_x,
+            requires_grad=True,
+            device=device,
+        )
+        parameters = [shifts_y, shifts_x]
+    elif len(setting) == 3:
+        # movement grids - these should receive gradients
+        n_params = int(functools.reduce(lambda x, y: x * y, setting))
+        movement_x_leaf = (
+            torch.zeros(n_params, requires_grad=True, device=device)
+        )
+        tilt_series.grid_movement_x = CubicGrid(setting, movement_x_leaf)
+        movement_y_leaf = (
+            torch.zeros(n_params, requires_grad=True, device=device)
+        )
+        tilt_series.grid_movement_y = CubicGrid(setting, movement_y_leaf)
+        parameters = [movement_x_leaf, movement_y_leaf]
+    elif len(setting) == 4:
+        n_params = int(functools.reduce(lambda x, y: x * y, setting))
+        movement_x_leaf = (
+            torch.zeros(n_params, requires_grad=True, device=device)
+        )
+        tilt_series.grid_volume_warp_x = CubicGrid(setting, movement_x_leaf)
+        movement_y_leaf = (
+            torch.zeros(n_params, requires_grad=True, device=device)
+        )
+        tilt_series.grid_volume_warp_y = CubicGrid(setting, movement_y_leaf)
+        movement_z_leaf = (
+            torch.zeros(n_params, requires_grad=True, device=device)
+        )
+        tilt_series.grid_volume_warp_z = CubicGrid(setting, movement_z_leaf)
+        parameters = [movement_x_leaf, movement_y_leaf, movement_z_leaf]
+    else:
+        raise ValueError(f'Invalid setting for alignment optimization: {setting}')
+
     alignment_optimizer = torch.optim.LBFGS(
-        [shifts_y, shifts_x],
+        parameters,
         line_search_fn="strong_wolfe",
     )
 
@@ -286,12 +325,13 @@ def optimize_shifts_global(
         alignment_optimizer.zero_grad()
 
         # update the alignments
-        tilt_series.tilt_axis_offset_y = (
-            initial_tilt_axis_offset_y + shifts_y
-        )
-        tilt_series.tilt_axis_offset_x = (
-            initial_tilt_axis_offset_x + shifts_x
-        )
+        if setting == 'global':
+            tilt_series.tilt_axis_offset_y = (
+                initial_tilt_axis_offset_y + shifts_y
+            )
+            tilt_series.tilt_axis_offset_x = (
+                initial_tilt_axis_offset_x + shifts_x
+            )
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         subvolumes = []
@@ -333,13 +373,33 @@ def optimize_shifts_global(
     for x in range(n_iters):
         alignment_optimizer.step(closure)
 
-    # remove gradients
-    tilt_series.tilt_axis_offset_y = (
-        initial_tilt_axis_offset_y + shifts_y.detach()
-    )
-    tilt_series.tilt_axis_offset_x = (
-        initial_tilt_axis_offset_x + shifts_x.detach()
-    )
+    if setting == 'global':
+        # remove gradients and finalize global shifts
+        tilt_series.tilt_axis_offset_y = (
+            initial_tilt_axis_offset_y + shifts_y.detach()
+        )
+        tilt_series.tilt_axis_offset_x = (
+            initial_tilt_axis_offset_x + shifts_x.detach()
+        )
+    elif len(setting) == 3:
+        # remove gradients
+        tilt_series.grid_movement_x.values = (
+            tilt_series.grid_movement_x.values.detach()
+        )
+        tilt_series.grid_movement_y.values = (
+            tilt_series.grid_movement_y.values.detach()
+        )
+    elif len(setting) == 4:
+        # remove gradients
+        tilt_series.grid_volume_warp_x.values = (
+            tilt_series.grid_volume_warp_x.values.detach()
+        )
+        tilt_series.grid_volume_warp_y.values = (
+            tilt_series.grid_volume_warp_y.values.detach()
+        )
+        tilt_series.grid_volume_warp_z.values = (
+            tilt_series.grid_volume_warp_z.values.detach()
+        )
     # move back because there were modified in-place
     tilt_series.to("cpu")
     model.to("cpu")
@@ -351,10 +411,12 @@ def evaluate_tilt_series(
         model_checkpoint_path: Path,
         tilt_series_path: Path,
         patches_per_dim: tuple[int, int, int],
-        patch_size: int,
         output_directory: Path,
+        setting: str |
+                 tuple[int, int, int] |
+                 tuple[int, int, int, int] = 'global',
+        patch_size: int = 96,
         batch_size: int = 16,
-        image_warp_grid: Optional[tuple[int, int, int]] = None,
         apply_ctf: bool = True,
         ground_truth_path: Optional[Path] = None,
         device: str = "cpu",
@@ -386,32 +448,18 @@ def evaluate_tilt_series(
     # store initial translations, before tilt-series is modified in-place
     #initial_translations = tilt_series.sample_translations.clone()
 
-    # determine whether to run global or local alignment
-    if image_warp_grid is not None:
-        tilt_series, loss = optimize_shifts_image_warp(
-            model,
-            tilt_series,
-            images,
-            pixel_size,
-            position_grid,
-            patch_size,
-            batch_size,
-            image_warp_grid,
-            apply_ctf,
-            device,
-        )
-    else:
-        tilt_series, loss = optimize_shifts_global(
-            model,
-            tilt_series,
-            images,
-            pixel_size,
-            position_grid,
-            patch_size,
-            batch_size,
-            apply_ctf,
-            device,
-        )
+    tilt_series, loss = optimize_shifts(
+        model,
+        tilt_series,
+        images,
+        pixel_size,
+        position_grid,
+        setting=setting,
+        patch_size=patch_size,
+        batch_size=batch_size,
+        apply_ctf=apply_ctf,
+        device=device,
+    )
 
     if ground_truth_path is not None:
         print(f"Centering alignment relative to ground truth...")
