@@ -38,7 +38,7 @@ def gpu_runner(
                 device=device,
             )
             # place the name of the finished tilt_series
-            result_queue.put_nowait(task_parameters[1].name)
+            result_queue.put_nowait(task_parameters['tilt_series_path'].stem)
         except queue.Empty:
             break
 
