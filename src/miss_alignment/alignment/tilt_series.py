@@ -363,7 +363,7 @@ def evaluate_tilt_series(
     position_grid = einops.rearrange(position_grid, 'd h w xyz -> (d h w) xyz')
     
     # store initial translations, before tilt-series is modified in-place
-    initial_translations = tilt_series.sample_translations.clone()
+    #initial_translations = tilt_series.sample_translations.clone()
 
     # determine whether to run global or local alignment
     if image_warp_grid is not None:
