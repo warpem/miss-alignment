@@ -10,7 +10,7 @@ class Compact3DConvNet(nn.Module):
             # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(1, 8, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm3d(8),
-            nn.ReLU(),  # something else? leaky ReLU or smoother function
+            nn.ReLU(),  # something else? ELU might be worth to test
 
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
