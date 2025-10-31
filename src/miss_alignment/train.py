@@ -43,18 +43,13 @@ def train_miss_align(
     # Extract configuration parameters
     general_config = config["general"]
     model_training_config = config["model_training"]
-    data_module_config = config["data_module"]
+    data_module_config = config["data_loading"]
     shift_generation_config = config["shift_generation"]
     alignment_config = config["tilt_series_alignment"]
 
     # track the path to the dataset
-    training_directory = Path(data_module_config["training_directory"])
+    training_directory = Path(general_config["training_directory"])
     training_directory.mkdir(exist_ok=True, parents=True)
-    ground_truth_directory = (
-        Path(alignment_config["ground_truth_directory"])
-        if alignment_config["ground_truth_directory"] is not None
-        else None
-    )
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
@@ -95,7 +90,7 @@ def train_miss_align(
         trainer = Trainer(
             accelerator="gpu",
             devices=devices_list[0:1],  # use the 0 device
-            default_root_dir=model_training_config["output_directory"],
+            default_root_dir=training_directory / "models",
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
             enable_checkpointing=True,
@@ -140,7 +135,7 @@ def train_miss_align(
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
-            apply_ctf=data_module_config["apply_ctf"],
+            apply_ctf=general_config["apply_ctf"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
             monitor=monitor,
         ) as dm:
@@ -173,7 +168,7 @@ def train_miss_align(
         run_alignment_parallel(
             model_training_config["model_checkpoint"],
             tilt_series_list,
-            alignment_config["patches_per_dim"],
+            output_directory,
             alignment_config["patch_size"],
             output_directory,
             devices_list,
