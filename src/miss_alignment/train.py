@@ -58,17 +58,14 @@ def train_miss_align(
 
     start_iter = general_config['start_at_iteration']
     end_iter = start_iter + iterations
-    if not isinstance(model_training_config['learning_rate'], list):
-        learning_rates = [model_training_config["learning_rate"],] * iterations
-    else:
-        learning_rates = model_training_config["learning_rate"]
 
-    for x, lr in zip(range(start_iter, end_iter), learning_rates):
+    for x in range(start_iter, end_iter):
         # ============================================================
         # ================= model training step ======================
         # ============================================================
         iteration_directory = training_directory / ('iter' + str(x))
         iteration_directory.mkdir(parents=True, exist_ok=True)
+        iteration_settings = general_config["iteration_settings"][x]
 
         # Define the early stopping callback
         early_stopping = MAEarlyStopping(
@@ -109,7 +106,7 @@ def train_miss_align(
 
         # Initialize model with parameters from config
         model_params = {
-            "learning_rate": lr,
+            "learning_rate": model_training_config["learning_rate"],
             "margin": model_training_config["loss_margin"],
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
@@ -169,10 +166,11 @@ def train_miss_align(
             model_checkpoint=model_training_config["model_checkpoint"],
             tilt_series_list=tilt_series_list,
             output_directory=output_directory,
-            setting=,
+            setting=iteration_settings["alignment"],
             patch_size=alignment_config["patch_size"],
             batch_size=alignment_config["batch_size"],
             apply_ctf=general_config["apply_ctf"],
+            downsample=alignment_config["downsample"],
             devices_list=devices_list,
         )
 

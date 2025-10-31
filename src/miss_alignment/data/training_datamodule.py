@@ -50,6 +50,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             steps_per_epoch: int = 1000,
             patch_size: int = 64,
             apply_ctf: bool = False,
+            downsample: int = 1,
             monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
@@ -72,6 +73,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         # reconstruction controls
         self.patch_size = patch_size
         self.apply_ctf = apply_ctf
+        self.downsample = downsample
         self.shift_generator = shift_generator
 
         # initialize the dataset and pool attributes
@@ -129,6 +131,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                     'tilt_series_jsons': tilt_series_jsons,
                     'patch_size': self.patch_size,
                     'apply_ctf': self.apply_ctf,
+                    'downsample': self.downsample,
                     'shift_generator': self.shift_generator,
                     'ready_flag': self.ready_flag,
                     'stop_event': self.stop_event,

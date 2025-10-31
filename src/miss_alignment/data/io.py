@@ -3,6 +3,8 @@ import torch
 import mrcfile
 import json
 from pathlib import Path
+
+from torch_fourier_rescale import fourier_rescale_2d
 from warpylib import TiltSeries
 from dataclasses import dataclass, replace, asdict
 
@@ -24,17 +26,18 @@ class TiltSeriesData:
     def xml_filename(self) -> str:
         return self.xml_metadata_path.stem
 
-    def load_metadata_and_stack(self) \
+    def load_metadata_and_stack(self, downsample=1) \
             -> tuple[TiltSeries, torch.Tensor, float]:
-        metadata, images = _load_metadata_and_stack(
+        metadata, images, pixel_size = _load_metadata_and_stack(
             self.xml_metadata_path,
             self.stack_path,
             self.stack_pixel_size,
             self.original_pixel_size,
             self.original_stack_shape,
             self.volume_shape,
+            downsample=downsample
         )
-        return metadata, images, self.stack_pixel_size
+        return metadata, images, pixel_size
 
     def save_metadata_to_xml(self, tilt_series: TiltSeries) -> None:
         tilt_series.save_meta(self.xml_metadata_path)
@@ -73,10 +76,17 @@ def _load_metadata_and_stack(
         original_pixel_size: float,
         original_stack_shape: tuple[int, int],
         volume_shape: tuple[int, int, int],
-) -> tuple[TiltSeries, torch.Tensor]:
+        downsample: int = 1,
+) -> tuple[TiltSeries, torch.Tensor, float]:
     # load the data
     with mrcfile.open(stack_path) as mrc:
         images = torch.tensor(mrc.data)
+
+    pixel_size = stack_pixel_size
+    if downsample > 1:
+        pixel_size = stack_pixel_size * downsample
+        images = fourier_rescale_2d(images, stack_pixel_size, pixel_size)
+
     tilt_series = TiltSeries(metadata_path)
 
     # set original physical image dimensions
@@ -90,7 +100,7 @@ def _load_metadata_and_stack(
     )
 
     # get scaled width and height
-    downsample_factor = stack_pixel_size / original_pixel_size
+    downsample_factor = pixel_size / original_pixel_size
     scaled_width = int(round(original_width / downsample_factor / 2)) * 2
     scaled_height = int(round(original_height / downsample_factor / 2)) * 2
 
@@ -103,7 +113,7 @@ def _load_metadata_and_stack(
         ],
         dtype=torch.float32,
     )
-    return tilt_series, images
+    return tilt_series, images, pixel_size
 
 
 def merge_pickle_and_xml_to_json_helper(

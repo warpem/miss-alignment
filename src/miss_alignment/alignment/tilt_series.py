@@ -232,6 +232,7 @@ def evaluate_tilt_series(
         patch_overlap: float = 0.1,
         batch_size: int = 16,
         apply_ctf: bool = True,
+        downsample: int = 1,
         device: str = "cpu",
 ) -> tuple[Path, list[float]]:
     # load the best model and run alignment optimization
@@ -242,7 +243,9 @@ def evaluate_tilt_series(
     # load tilt_series and set its name for output
     tilt_series_name = tilt_series_path.stem
     tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
-    tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack()
+    tilt_series, images, pixel_size = (
+        tilt_series_data.load_metadata_and_stack(downsample=downsample)
+    )
 
     # generate a position grid to optimize over
     position_grid = generate_position_grid(

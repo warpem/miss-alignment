@@ -26,6 +26,7 @@ class TiltSeriesFetcher:
     tilt_series_jsons: list[Path]
     patch_size: int  # needed for filter calculation in warpylib
     refresh_rate: int
+    downsample: int
     device: str | torch.device
     _counter: int = 0
     _tilt_series: Optional[TiltSeries] = None
@@ -55,7 +56,9 @@ class TiltSeriesFetcher:
             TiltSeriesData.from_json(random.choice(self.tilt_series_jsons))
         )
         tilt_series, images, pixel_size = (
-            tilt_series_data.load_metadata_and_stack()
+            tilt_series_data.load_metadata_and_stack(
+                downsample=self.downsample
+            )
         )
         # run the preprocessing from warp for consistency
         images = preprocess_tilt_data(
@@ -89,6 +92,7 @@ def reconstruction_worker(
         tilt_series_jsons: list[Path],
         patch_size: int,
         apply_ctf: bool,
+        downsample: int,
         shift_generator: Callable,
         ready_flag: mp.Value,
         stop_event: mp.Event,
@@ -139,6 +143,7 @@ def reconstruction_worker(
         tilt_series_jsons=tilt_series_jsons,
         patch_size=patch_size,
         refresh_rate=tilt_series_refresh_rate,
+        downsample=downsample,
         device=device,
     )
 

@@ -53,6 +53,7 @@ def run_alignment_parallel(
         patch_size: int,
         batch_size: int,
         apply_ctf: bool,
+        downsample: int,
         devices_list: list[int],
 ):
     """Run a job in parallel over a single or multiple GPUs. If no volume_splits are
@@ -81,6 +82,7 @@ def run_alignment_parallel(
             'patch_size': patch_size,
             'batch_size': batch_size,
             'apply_ctf': apply_ctf,
+            'downsample': downsample,
         })
 
     results = []
