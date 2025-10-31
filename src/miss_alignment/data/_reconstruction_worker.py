@@ -229,9 +229,9 @@ def _create_pool_reconstruction(
     patch_offset = (patch_size * pixel_size) / 2
     x_dim, y_dim, z_dim = tilt_series.volume_dimensions_physical
     reconstruction_location = [
-        random.uniform(patch_offset, x_dim - patch_offset),
-        random.uniform(patch_offset, y_dim - patch_offset),
-        random.uniform(patch_offset, z_dim - patch_offset),
+        random.uniform(patch_offset, x_dim - patch_offset) if x_dim > 2 * patch_offset else x_dim / 2,
+        random.uniform(patch_offset, y_dim - patch_offset) if y_dim > 2 * patch_offset else y_dim / 2,
+        random.uniform(patch_offset, z_dim - patch_offset) if z_dim > 2 * patch_offset else z_dim / 2,
     ]
     reconstruction_location = (
         torch.tensor(reconstruction_location, device=device)
