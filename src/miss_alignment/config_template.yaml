@@ -3,7 +3,6 @@ general:
   # here you can continue training from a specific iteration
   start_at_iteration: 0
   seed: 45132
-  download_data: True              # download data from zenodo to folder/iter0 if its empty
 
 model_training:
   # used to initialize model weights
@@ -39,6 +38,7 @@ shift_generation:
   fracture_max_shift: 30.0       # (10 A) specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
-  patches_per_dim: [2, 5, 5]    # this should be chosen to fit as many non-overlapping boxes in the tomo shape
-  patch_size: 96                # same as training patch size
-  ground_truth_directory: null  # optional directory to get ground truth, name.pickle should match
+  patch_size: 96      # same as training patch size
+  patch_overlap: 0.1  # tolerated overlap between patches used for optimizing the alignment
+  batch_size: 16      # amount of patches simultaneously reconstructed in memory -> the more the merrier
+  apply_ctf: True     # whether to apply ctf when optimizing the alignments
