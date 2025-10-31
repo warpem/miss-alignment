@@ -166,12 +166,14 @@ def train_miss_align(
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
-            model_training_config["model_checkpoint"],
-            tilt_series_list,
-            output_directory,
-            alignment_config["patch_size"],
-            output_directory,
-            devices_list,
+            model_checkpoint=model_training_config["model_checkpoint"],
+            tilt_series_list=tilt_series_list,
+            output_directory=output_directory,
+            setting=,
+            patch_size=alignment_config["patch_size"],
+            batch_size=alignment_config["batch_size"],
+            apply_ctf=general_config["apply_ctf"],
+            devices_list=devices_list,
         )
 
     return None
