@@ -51,6 +51,7 @@ def run_alignment_parallel(
                  tuple[int, int, int] |
                  tuple[int, int, int, int],
         patch_size: int,
+        patch_overlap: float,
         batch_size: int,
         apply_ctf: bool,
         downsample: int,
@@ -80,6 +81,7 @@ def run_alignment_parallel(
             'output_directory': output_directory,
             'setting': setting,
             'patch_size': patch_size,
+            'patch_overlap': patch_overlap,
             'batch_size': batch_size,
             'apply_ctf': apply_ctf,
             'downsample': downsample,

@@ -99,31 +99,28 @@ def optimize_shifts(
         parameters = [shifts_y, shifts_x]
     elif len(setting) == 3:  #TODO add case of starting from existent grid
         # movement grids - these should receive gradients
-        n_params = int(functools.reduce(lambda x, y: x * y, setting))
-        movement_x_leaf = (
-            torch.zeros(n_params, requires_grad=True, device=device)
-        )
-        tilt_series.grid_movement_x = CubicGrid(setting, movement_x_leaf)
-        movement_y_leaf = (
-            torch.zeros(n_params, requires_grad=True, device=device)
-        )
-        tilt_series.grid_movement_y = CubicGrid(setting, movement_y_leaf)
-        parameters = [movement_x_leaf, movement_y_leaf]
+        tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(new_size=setting).to(device)
+        tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.requires_grad_(True)
+        
+        tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(new_size=setting).to(device)
+        tilt_series.grid_movement_y.values = tilt_series.grid_movement_y.values.requires_grad_(True)
+        
+        parameters = [tilt_series.grid_movement_x.values, tilt_series.grid_movement_y.values]
     elif len(setting) == 4:  #TODO add case of starting from existent grid
-        n_params = int(functools.reduce(lambda x, y: x * y, setting))
-        movement_x_leaf = (
-            torch.zeros(n_params, requires_grad=True, device=device)
-        )
-        tilt_series.grid_volume_warp_x = CubicGrid(setting, movement_x_leaf)
-        movement_y_leaf = (
-            torch.zeros(n_params, requires_grad=True, device=device)
-        )
-        tilt_series.grid_volume_warp_y = CubicGrid(setting, movement_y_leaf)
-        movement_z_leaf = (
-            torch.zeros(n_params, requires_grad=True, device=device)
-        )
-        tilt_series.grid_volume_warp_z = CubicGrid(setting, movement_z_leaf)
-        parameters = [movement_x_leaf, movement_y_leaf, movement_z_leaf]
+        tilt_series.grid_volume_warp_x = tilt_series.grid_volume_warp_x.resize(new_size=setting).to(device)
+        tilt_series.grid_volume_warp_x.values = tilt_series.grid_volume_warp_x.values.requires_grad_(True)
+
+        tilt_series.grid_volume_warp_y = tilt_series.grid_volume_warp_y.resize(new_size=setting).to(device)
+        tilt_series.grid_volume_warp_y.values = tilt_series.grid_volume_warp_y.values.requires_grad_(True)
+
+        tilt_series.grid_volume_warp_z = tilt_series.grid_volume_warp_z.resize(new_size=setting).to(device)
+        tilt_series.grid_volume_warp_z.values = tilt_series.grid_volume_warp_z.values.requires_grad_(True)
+
+        parameters = [
+                tilt_series.grid_volume_warp_x.values,
+                tilt_series.grid_volume_warp_y.values,
+                tilt_series.grid_volume_warp_z.values,
+        ]
     else:
         raise ValueError(f'Invalid setting for alignment optimization: {setting}')
 
