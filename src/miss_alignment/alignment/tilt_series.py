@@ -100,26 +100,31 @@ def optimize_shifts(
     elif len(setting) == 3:  #TODO add case of starting from existent grid
         # movement grids - these should receive gradients
         tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(new_size=setting).to(device)
-        tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.requires_grad_(True)
-        
+        leaf_variable_x = tilt_series.grid_movement_x.values.requires_grad_(True)
+        tilt_series.grid_movement_x = CubicGrid(setting, leaf_variable_x)
+
         tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(new_size=setting).to(device)
-        tilt_series.grid_movement_y.values = tilt_series.grid_movement_y.values.requires_grad_(True)
+        leaf_variable_y = tilt_series.grid_movement_y.values.requires_grad_(True)
+        tilt_series.grid_movement_y = CubicGrid(setting, leaf_variable_y)
         
-        parameters = [tilt_series.grid_movement_x.values, tilt_series.grid_movement_y.values]
+        parameters = [leaf_variable_x, leaf_variable_y]
     elif len(setting) == 4:  #TODO add case of starting from existent grid
         tilt_series.grid_volume_warp_x = tilt_series.grid_volume_warp_x.resize(new_size=setting).to(device)
-        tilt_series.grid_volume_warp_x.values = tilt_series.grid_volume_warp_x.values.requires_grad_(True)
+        leaf_variable_x = tilt_series.grid_volume_warp_x.values.requires_grad_(True)
+        tilt_series.grid_volume_warp_x = CubicGrid(setting, leaf_variable_x)
 
         tilt_series.grid_volume_warp_y = tilt_series.grid_volume_warp_y.resize(new_size=setting).to(device)
-        tilt_series.grid_volume_warp_y.values = tilt_series.grid_volume_warp_y.values.requires_grad_(True)
+        leaf_variable_y = tilt_series.grid_volume_warp_y.values.requires_grad_(True)
+        tilt_series.grid_volume_warp_y = CubicGrid(setting, leaf_variable_y)
 
         tilt_series.grid_volume_warp_z = tilt_series.grid_volume_warp_z.resize(new_size=setting).to(device)
-        tilt_series.grid_volume_warp_z.values = tilt_series.grid_volume_warp_z.values.requires_grad_(True)
+        leaf_variable_z = tilt_series.grid_volume_warp_z.values.requires_grad_(True)
+        tilt_series.grid_volume_warp_z = CubicGrid(setting, leaf_variable_z)
 
         parameters = [
-                tilt_series.grid_volume_warp_x.values,
-                tilt_series.grid_volume_warp_y.values,
-                tilt_series.grid_volume_warp_z.values,
+                leaf_variable_x,
+                leaf_variable_y,
+                leaf_variable_z,
         ]
     else:
         raise ValueError(f'Invalid setting for alignment optimization: {setting}')
