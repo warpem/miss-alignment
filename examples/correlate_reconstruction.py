@@ -1,8 +1,10 @@
 from pathlib import Path
-from miss_alignment.alignment.tilt_series import (
-    calculate_cross_correlation, get_shift_from_correlation_image
+from miss_alignment.alignment.correlation import (
+    calculate_cross_correlation,
+    get_shift_from_correlation_image,
+    project_volume_shift_to_image_alignment,
 )
-from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
+# update file reading from warpylib
 from miss_alignment.data.io import read_tomogram_from_pickle, save_tomogram_to_pickle
 
 
@@ -42,3 +44,13 @@ for start_file, final_file in zip(dir_start, dir_final):
     # write the tilt_series to output_folder
     tilt_series_final.to('cpu')
     save_tomogram_to_pickle(tilt_series_final, out_file)
+
+    fig, ax = plt.subplots(1, 2)
+    ax[0].plot(mean_diff_initial[:, 0], label="initial y")
+    ax[0].plot(mean_diff_final[:, 0], label="final y")
+    ax[1].plot(mean_diff_initial[:, 1], label="initial x")
+    ax[1].plot(mean_diff_final[:, 1], label="final x")
+    ax[0].legend()
+    ax[1].legend()
+
+    plt.savefig(output_directory / f"{tilt_series_name}_yx_diff_per_tilt.png")
