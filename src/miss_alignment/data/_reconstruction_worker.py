@@ -203,7 +203,7 @@ def _create_pool_reconstruction(
 
     # select a random reconstruction position
     _offset = patch_size // 2
-    _region = [x // 2 - _offset for x in tomogram_shape]
+    _region = [max(x // 2 - _offset, 0) for x in tomogram_shape]
     reconstruction_location = tuple([random.randint(-r, r) for r in _region])
 
     # generate aligned and misaligned shifts
