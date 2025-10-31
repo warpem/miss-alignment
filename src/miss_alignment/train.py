@@ -133,6 +133,7 @@ def train_miss_align(
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
             apply_ctf=general_config["apply_ctf"],
+            downsample=iteration_settings["downsample"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
             monitor=monitor,
         ) as dm:
