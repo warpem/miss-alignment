@@ -46,7 +46,6 @@ def gpu_runner(
 def run_alignment_parallel(
         model_checkpoint: Path,
         tilt_series_list: list[Path],
-        patches_per_dim: tuple[int, int, int],
         output_directory: Path,
         setting: str |
                  tuple[int, int, int] |
@@ -55,7 +54,6 @@ def run_alignment_parallel(
         batch_size: int,
         apply_ctf: bool,
         devices_list: list[int],
-        ground_truth_list: Optional[list[Path]] = None,
 ):
     """Run a job in parallel over a single or multiple GPUs. If no volume_splits are
     given the search is parallelized by splitting the angular search. If volume_splits
@@ -78,14 +76,11 @@ def run_alignment_parallel(
         jobs.append({
             'model_checkpoint_path': model_checkpoint,
             'tilt_series_path': tilt_series,
-            'patches_per_dim': patches_per_dim,
             'output_directory': output_directory,
             'setting': setting,
             'patch_size': patch_size,
             'batch_size': batch_size,
             'apply_ctf': apply_ctf,
-            'ground_truth_path':
-                None if ground_truth_list is None else ground_truth_list[i],
         })
 
     results = []

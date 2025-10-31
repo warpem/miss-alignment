@@ -167,14 +167,7 @@ def train_miss_align(
         output_directory.mkdir(parents=True, exist_ok=True)
 
         # get list of all files to process for alignment
-        #  + their associated ground truth if available
         tilt_series_list = list(iteration_directory.glob('*.json'))
-        if ground_truth_directory is not None:
-            ground_truth_list = [
-                ground_truth_directory / x.name for x in tilt_series_list
-            ]
-        else:
-            ground_truth_list = None
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
@@ -184,7 +177,6 @@ def train_miss_align(
             alignment_config["patch_size"],
             output_directory,
             devices_list,
-            ground_truth_list=ground_truth_list,
         )
 
     return None
