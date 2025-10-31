@@ -55,8 +55,6 @@ def train_miss_align(
         if alignment_config["ground_truth_directory"] is not None
         else None
     )
-    if general_config['download_data']:
-        _download_to_dir(ground_truth_directory)
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
