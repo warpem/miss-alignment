@@ -68,9 +68,6 @@ test = ["pytest", "pytest-cov"]
 # add anything else you like to have in your dev environment here
 dev = [
     "ipython",
-    "pdbpp",
-    "requests>=2.32.3", # https://github.com/pdbpp/pdbpp
-    "rich", # https://github.com/Textualize/rich,
     "pre-commit>=4.1.0",
     "ruff>=0.9.9",
     "matplotlib"
@@ -80,6 +77,12 @@ dev = [
 #    {include-group = "dev"},
 #    {include-group = "lint"},
 #]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+extend-select = ["E501"]
 
 [tool.uv]
 default-groups = ["test", "dev"]
