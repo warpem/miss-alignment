@@ -4,7 +4,10 @@ import random
 from unittest.mock import patch
 
 from miss_alignment.data._augmentation import (
-    random_contrast, random_cube_mask, random_mirror, random_edge_mask
+    random_contrast,
+    random_cube_mask,
+    random_mirror,
+    random_edge_mask,
 )
 
 
@@ -94,7 +97,7 @@ class TestRandomMirror:
         result = random_mirror([])
         assert result == []
 
-    @patch('random.choice')
+    @patch("random.choice")
     def test_no_flip_returns_original(self, mock_choice):
         """Test that no flipping returns original volumes."""
         mock_choice.return_value = False  # No flips
@@ -104,7 +107,7 @@ class TestRandomMirror:
 
         torch.testing.assert_close(result[0], volume)
 
-    @patch('random.choice')
+    @patch("random.choice")
     def test_all_dimensions_flipped(self, mock_choice):
         """Test flipping all dimensions."""
         mock_choice.return_value = True  # Flip all dimensions
@@ -140,16 +143,16 @@ class TestRandomCubeMask:
 
         # Should contain mask values in range [-1, 1]
         unique_values = torch.unique(result)
-        has_mask_values = any(abs(val.item()) < 0.6 and val.item() != 1.0
-                              for val in unique_values)
+        has_mask_values = any(
+            abs(val.item()) < 0.6 and val.item() != 1.0 for val in unique_values
+        )
         assert has_mask_values
 
-    @patch('random.random')
+    @patch("random.random")
     def test_mask_application_deterministic(self, mock_random):
         """Test mask application with controlled randomness."""
         # Set up mocks for deterministic behavior
-        mock_random.side_effect = [0.5, 0.2,
-                                   0.1]  # p trigger, size, mask_value
+        mock_random.side_effect = [0.5, 0.2, 0.1]  # p trigger, size, mask_value
 
         volume = torch.zeros(10, 10, 10)
         result = random_cube_mask(volume, p=0.3, size_range=(0.2, 0.4))
@@ -164,15 +167,16 @@ class TestRandomCubeMask:
         volume = torch.ones(20, 20, 20)
 
         # Use p=1.0 to ensure mask is always applied
-        with patch('random.uniform') as mock_uniform, \
-                patch('random.randint') as mock_randint, \
-                patch('random.random') as mock_random:
-            mock_random.side_effect = [0.5,
-                                       0.0]  # Trigger mask, set mask value
+        with (
+            patch("random.uniform") as mock_uniform,
+            patch("random.randint") as mock_randint,
+            patch("random.random") as mock_random,
+        ):
+            mock_random.side_effect = [0.5, 0.0]  # Trigger mask, set mask value
             mock_uniform.return_value = 0.25  # 25% of volume size
             mock_randint.return_value = 0  # Start at origin
 
-            result = random_cube_mask(volume, p=1.0, size_range=(0.2, 0.3))
+            _ = random_cube_mask(volume, p=1.0, size_range=(0.2, 0.3))
 
             # Verify uniform was called with correct range
             mock_uniform.assert_called_once_with(0.2, 0.3)
@@ -194,7 +198,7 @@ class TestRandomEdgeMask:
         result = random_edge_mask(volume, p=0.0)
         torch.testing.assert_close(result, original)
 
-    @patch('random.random')
+    @patch("random.random")
     def test_probability_one_always_applies(self, mock_random):
         """Test that p=1 always applies edge masking."""
         mock_random.side_effect = [0.0, 0.5]  # p, mask_value
@@ -211,19 +215,23 @@ class TestRandomEdgeMask:
         """Test that edge width is within specified range."""
         volume = torch.ones(20, 20, 20)
 
-        with patch('random.random') as mock_random, \
-                patch('random.randint') as mock_randint:
+        with (
+            patch("random.random") as mock_random,
+            patch("random.randint") as mock_randint,
+        ):
             mock_random.return_value = 0.5  # Always apply mask
             mock_randint.return_value = 3  # Fixed width
 
-            result = random_edge_mask(
-                volume, p=1.0, edge_width=(2, 5),
+            _ = random_edge_mask(
+                volume,
+                p=1.0,
+                edge_width=(2, 5),
             )
 
             # Verify randint was called with correct range
             mock_randint.assert_called_once_with(2, 5)
 
-    @patch('random.random')
+    @patch("random.random")
     def test_all_edges_masked(self, mock_random):
         """Test that all 6 faces of the cube are masked."""
         mask_value = 1.0
@@ -231,9 +239,7 @@ class TestRandomEdgeMask:
         volume = torch.ones(10, 10, 10)
         width = 1
 
-        result = random_edge_mask(
-            volume, p=1.0, edge_width=(width, width)
-        )
+        result = random_edge_mask(volume, p=1.0, edge_width=(width, width))
 
         # Check all 6 faces are masked
         assert torch.all(result[:width, :, :] == mask_value)  # Front face

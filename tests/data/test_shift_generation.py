@@ -2,15 +2,20 @@ import pytest
 import torch
 import random
 import warnings
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Import your modules (adjust import path as needed)
 from miss_alignment.data.shift_generation import (
-    ShiftConfig, ShiftGenerator, select_random_indices,
-    generate_shift_trajectory, parabola_from_control_points,
-    TrajectoryGenerator, JitterGenerator,
-    OutlierGenerator, create_default_generator,
-    project_shifts_3d_to_2d
+    ShiftConfig,
+    ShiftGenerator,
+    select_random_indices,
+    generate_shift_trajectory,
+    parabola_from_control_points,
+    TrajectoryGenerator,
+    JitterGenerator,
+    OutlierGenerator,
+    create_default_generator,
+    project_shifts_3d_to_2d,
 )
 
 
@@ -52,7 +57,7 @@ class TestShiftConfig:
         for _ in range(100):
             assert config.should_apply()
 
-    @patch('random.random')
+    @patch("random.random")
     def test_should_apply_probability_logic(self, mock_random):
         """Test probability logic with mocked random."""
 
@@ -111,7 +116,7 @@ class TestShiftGenerator:
         assert result.shape == (10, 3)
         assert torch.allclose(result, torch.zeros((10, 3)))
 
-    @patch('random.choice')
+    @patch("random.choice")
     def test_fallback_mechanism(self, mock_choice):
         """Test fallback when no shifts are selected but ensure_at_least_one=True."""
 
@@ -128,12 +133,11 @@ class TestShiftGenerator:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("default")
-            generator = ShiftGenerator([config1, config2],
-                                       ensure_at_least_one=True)
+            generator = ShiftGenerator([config1, config2], ensure_at_least_one=True)
             assert len(w) == 1
             assert all(["has probability 0." in str(x.message) for x in w])
 
-        with patch.object(config2, 'should_apply', return_value=False):
+        with patch.object(config2, "should_apply", return_value=False):
             result = generator(10)
             assert result.shape == (10, 3)
             # Should use config2 as fallback
@@ -205,8 +209,9 @@ class TestSelectRandomIndices:
 
         # Test multiple times to check edge behavior
         for _ in range(50):
-            indices = select_random_indices(sequence, max_sequence_length=3,
-                                            edge_only=True)
+            indices = select_random_indices(
+                sequence, max_sequence_length=3, edge_only=True
+            )
 
             # Should start at either beginning or end
             start_idx = indices[0].item()
@@ -261,20 +266,16 @@ class TestTrajectoryGeneration:
         assert len(z_pos) == 4
 
         # Test invalid inputs
-        with pytest.raises(ValueError,
-                           match="num_points must be at least 4, got 1"):
+        with pytest.raises(ValueError, match="num_points must be at least 4, got 1"):
             generate_shift_trajectory(1)
 
-        with pytest.raises(ValueError,
-                           match="num_points must be at least 4, got 3"):
+        with pytest.raises(ValueError, match="num_points must be at least 4, got 3"):
             generate_shift_trajectory(3)
 
-        with pytest.raises(ValueError,
-                           match="num_points must be at least 4, got 0"):
+        with pytest.raises(ValueError, match="num_points must be at least 4, got 0"):
             generate_shift_trajectory(0)
 
-        with pytest.raises(ValueError,
-                           match="num_points must be at least 4, got -5"):
+        with pytest.raises(ValueError, match="num_points must be at least 4, got -5"):
             generate_shift_trajectory(-5)
 
 
@@ -287,7 +288,7 @@ class TestGeneratorCreators:
         generator = TrajectoryGenerator(max_shift)
 
         num_points = 20
-        shifts = generator(num_points, 'cpu')
+        shifts = generator(num_points, "cpu")
 
         assert shifts.shape == (num_points, 3)
         assert isinstance(shifts, torch.Tensor)
@@ -302,7 +303,7 @@ class TestGeneratorCreators:
         generator = JitterGenerator(max_std)
 
         num_points = 100
-        shifts = generator(num_points, 'cpu')
+        shifts = generator(num_points, "cpu")
 
         assert shifts.shape == (num_points, 3)
         assert isinstance(shifts, torch.Tensor)
@@ -319,7 +320,7 @@ class TestGeneratorCreators:
         generator = OutlierGenerator(max_shift)
 
         num_points = 50
-        shifts = generator(num_points, 'cpu')
+        shifts = generator(num_points, "cpu")
 
         assert shifts.shape == (num_points, 3)
 
@@ -360,7 +361,7 @@ class TestDefaultGenerator:
                 jitter_probability=1.0,
                 outlier_probability=0.0,
                 fracture_probability=0.0,
-                jitter_max_std=1.0
+                jitter_max_std=1.0,
             )
             assert len(w) == 3
             assert all(["has probability 0." in str(x.message) for x in w])
@@ -381,7 +382,7 @@ class TestDefaultGenerator:
                 trajectory_probability=0.0,
                 jitter_probability=0.0,
                 outlier_probability=0.0,
-                fracture_probability=0.0
+                fracture_probability=0.0,
             )
             assert len(w) == 4
             assert all(["has probability 0." in str(x.message) for x in w])
@@ -396,6 +397,7 @@ class TestDefaultGenerator:
 
 class TestProjectShifts3DTo2D:
     """Test 3D to 2D projection function."""
+
     def test_raise_error_with_wrong_matrix_shape(self):
         shifts_3d = torch.randn((10, 3))
         matrices = torch.randn((10, 3, 3))
@@ -413,7 +415,8 @@ class TestProjectShifts3DTo2D:
         num_points = 10
         shifts_3d = torch.randn((num_points, 3))  # Random 3D shifts
         projection_matrices = torch.randn(
-            (num_points, 2, 3))  # Random projection matrices
+            (num_points, 2, 3)
+        )  # Random projection matrices
 
         shifts_2d = project_shifts_3d_to_2d(shifts_3d, projection_matrices)
 
@@ -424,8 +427,14 @@ class TestProjectShifts3DTo2D:
         """Test projection with identity-like matrices."""
         num_points = 5
         shifts_3d = torch.tensor(
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0],
-             [10.0, 11.0, 12.0], [13.0, 14.0, 15.0]])
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [7.0, 8.0, 9.0],
+                [10.0, 11.0, 12.0],
+                [13.0, 14.0, 15.0],
+            ]
+        )
 
         # Create projection matrices that just take first two dimensions
         projection_matrices = torch.zeros((num_points, 2, 3))
@@ -461,7 +470,7 @@ class TestIntegration:
                 trajectory_probability=1.0,  # Ensure trajectory is applied
                 jitter_probability=0.0,
                 outlier_probability=0.0,
-                fracture_probability=0.0
+                fracture_probability=0.0,
             )
 
             assert len(w) == 3
@@ -474,8 +483,7 @@ class TestIntegration:
         assert shifts_3d.shape == (num_points, 3)
 
         # Create projection matrices
-        projection_matrices = torch.eye(2, 3).unsqueeze(0).repeat(num_points,
-                                                                  1, 1)
+        projection_matrices = torch.eye(2, 3).unsqueeze(0).repeat(num_points, 1, 1)
 
         # Project to 2D
         shifts_2d = project_shifts_3d_to_2d(shifts_3d, projection_matrices)
@@ -538,7 +546,7 @@ def test_generator_output_shapes(num_points):
 def test_trajectory_generator_scaling(max_shift):
     """Test that trajectory generator respects max_shift parameter."""
     generator = TrajectoryGenerator(max_shift)
-    shifts = generator(50, 'cpu')
+    shifts = generator(50, "cpu")
 
     # The actual maximum might be less due to centering, but should be reasonable
     max_observed = torch.max(torch.abs(shifts)).item()
