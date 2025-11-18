@@ -61,6 +61,7 @@ class TiltSeriesData:
         data["xml_metadata_path"] = Path(data["xml_metadata_path"])
         data["stack_path"] = Path(data["stack_path"])
         data["original_stack_shape"] = tuple(data["original_stack_shape"])
+        data["volume_shape"] = tuple(data["volume_shape"])
         return cls(**data)
 
     @classmethod
