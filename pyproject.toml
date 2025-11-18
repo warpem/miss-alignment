@@ -83,6 +83,7 @@ line-length = 88
 
 [tool.ruff.lint]
 extend-select = ["E501"]
+ignore = ["F841"]  # this allows equality comparisons to False for readability
 
 [tool.uv]
 default-groups = ["test", "dev"]
