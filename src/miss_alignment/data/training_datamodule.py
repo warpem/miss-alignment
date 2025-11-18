@@ -59,7 +59,11 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.epoch_size = steps_per_epoch * batch_size
         self.reconstruction_workers = reconstruction_workers
-        if reconstruction_accelerators is not None:
+        if reconstruction_accelerators in [None, []]:
+            self.reconstruction_devices = [
+                "cpu",
+            ] * reconstruction_workers
+        else:
             if len(reconstruction_accelerators) != reconstruction_workers:
                 raise ValueError(
                     "Number of reconstruction workers must match "
@@ -68,10 +72,6 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             self.reconstruction_devices = [
                 "cuda:" + str(x) for x in reconstruction_accelerators
             ]
-        else:
-            self.reconstruction_devices = [
-                "cpu",
-            ] * reconstruction_workers
 
         self.reconstruction_accelerators = reconstruction_accelerators
         self.dataloader_workers = dataloader_workers
