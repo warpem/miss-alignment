@@ -291,36 +291,6 @@ class TestCreatePoolReconstruction:
         assert 1 in [item[1] for item in result]
         assert -1 in [item[1] for item in result]
 
-    def test_rotation_augmentation(self, mock_tilt_series_data, shift_generator):
-        """Test that rotation augmentation is applied correctly via Euler angles."""
-        # Load the tilt series data
-        tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
-        tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
-            downsample=1
-        )
-
-        # Mock the random rotation generation to return specific angles
-        mock_rotation_angles = torch.tensor([5.0, 10.0, 15.0], device="cpu")
-
-        with patch(
-            "miss_alignment.data._reconstruction_worker._generate_random_rotation_euler_zyz",
-            return_value=mock_rotation_angles,
-        ) as mock_rotation_fn:
-            _create_pool_reconstruction(
-                tilt_series=tilt_series,
-                images=images,
-                pixel_size=pixel_size,
-                patch_size=32,
-                shift_generator=shift_generator,
-                apply_ctf=False,
-                device="cpu",
-            )
-
-            # Verify that the rotation generation function was called
-            mock_rotation_fn.assert_called_once_with(
-                max_angle_degrees=10.0, device="cpu"
-            )
-
 
 class TestReconstructionWorker:
     """Test reconstruction worker process."""

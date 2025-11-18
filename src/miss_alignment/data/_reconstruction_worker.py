@@ -218,7 +218,7 @@ def _create_pool_reconstruction(
     # Generate random rotation as Euler angles (ZYZ convention) for data augmentation
     # This rotation is applied to change the coordinate system of the reconstruction
     random_rotation = (random.random() * 2 - 1) * MAX_ANGLE_DEGREES * math.pi / 180
-    rotation_angles = (0.0, random_rotation, 0.0)
+    rotation_angles = torch.tensor([0.0, random_rotation, 0.0], device=device)
 
     # select a random reconstruction position
     patch_offset = (patch_size * pixel_size) / 2
