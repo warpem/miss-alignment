@@ -196,9 +196,7 @@ class TestReconstructionPoolDataset:
 
     def test_pickle_load_error(self, dataset, sample_data):
         """Test behavior when pickle loading fails."""
-        with (
-            patch("builtins.open", new_callable=mock_open),
-            patch("pickle.load", side_effect=pickle.UnpicklingError("Bad pickle")),
+        with (patch("builtins.open", new_callable=mock_open),patch("pickle.load", side_effect=pickle.UnpicklingError("Bad pickle")),
         ):
             with pytest.raises(pickle.UnpicklingError):
                 dataset[0]
