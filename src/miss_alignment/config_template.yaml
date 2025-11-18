@@ -1,10 +1,8 @@
 general:
   # MissAlignment iteratively trains models and realigns the tilt-series
-  # here you can continue training from a specific iteration
   training_directory: /data/set/  # path to directory for writing iteration output
   apply_ctf: True                 # set to True if CTF estimates are available in .xml
-  start_at_iteration: 0           # can be used to restart from a specific iteration
-  iteration_settings:             # iteration dependent settings
+  iteration_settings:             # defines all iterations to run (length determines number of iterations)
     - { downsample: 2, alignment: global }
     - { downsample: 2, alignment: global }
     - { downsample: 1, alignment: global }

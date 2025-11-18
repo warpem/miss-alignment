@@ -21,7 +21,7 @@ def train_miss_align(
     reconstruction_workers: int = 4,
     dataloader_workers: int = 4,
     n_devices: int = 1,
-    iterations: int = 3,
+    start_at_iteration: int = 0,
     monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
@@ -56,8 +56,8 @@ def train_miss_align(
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
-    start_iter = general_config["start_at_iteration"]
-    end_iter = start_iter + iterations
+    start_iter = start_at_iteration
+    end_iter = len(general_config["iteration_settings"])
 
     for x in range(start_iter, end_iter):
         # ============================================================
