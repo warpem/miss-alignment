@@ -165,6 +165,7 @@ def optimize_shifts(
                     pixel_size=pixel_size,
                     size=patch_size,
                     apply_ctf=apply_ctf,
+                    oversampling=2.0,
                 )
             )
         subvolumes = torch.cat(subvolumes, dim=0)

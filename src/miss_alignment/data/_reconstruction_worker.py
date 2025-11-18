@@ -242,24 +242,24 @@ def _create_pool_reconstruction(
         shift_generator, projection_matrices, device=device
     )
 
-    # reconstruct both volumes
+    # reconstruct aligned example
     aligned = tilt_series.reconstruct_subvolumes_single(
         tilt_data=images,
         coords=reconstruction_location,
         pixel_size=pixel_size,
         size=patch_size,
         apply_ctf=apply_ctf,
-    )
+    ).squeeze()
     # add the extra translations for the misaligned example
     tilt_series.tilt_axis_offset_y += translations[:, 0]
     tilt_series.tilt_axis_offset_x += translations[:, 1]
-    misaligned = tilt_series.reconstruct_subvolume(
+    misaligned = tilt_series.reconstruct_subvolumes_single(
         tilt_data=images,
         coords=reconstruction_location,
         pixel_size=pixel_size,
         size=patch_size,
         apply_ctf=apply_ctf,
-    )
+    ).squeeze()
 
     # make tuple with volume and label
     examples = [(aligned.cpu(), 1), (misaligned.cpu(), -1)]

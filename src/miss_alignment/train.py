@@ -167,9 +167,10 @@ def train_miss_align(
             output_directory=output_directory,
             setting=iteration_settings["alignment"],
             patch_size=alignment_config["patch_size"],
+            patch_overlap=alignment_config["patch_overlap"],
             batch_size=alignment_config["batch_size"],
             apply_ctf=general_config["apply_ctf"],
-            downsample=alignment_config["downsample"],
+            downsample=iteration_settings["downsample"],
             devices_list=devices_list,
         )
 

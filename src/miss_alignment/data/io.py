@@ -86,7 +86,11 @@ def _load_metadata_and_stack(
     pixel_size = stack_pixel_size
     if downsample > 1:
         pixel_size = stack_pixel_size * downsample
-        images = fourier_rescale_2d(images, stack_pixel_size, pixel_size)
+        images, _new_pixel_size = fourier_rescale_2d(
+            images, stack_pixel_size, pixel_size
+        )
+        # not correct, but shortcut to deal with unevenly spaced dims
+        pixel_size, _ = _new_pixel_size
 
     tilt_series = TiltSeries(metadata_path)
 
