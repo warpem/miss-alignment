@@ -45,8 +45,9 @@ class TiltSeriesData:
 
     def to_dict(self) -> dict:
         data = asdict(self)
-        data["xml_metadata_path"] = str(self.xml_metadata_path)
-        data["stack_path"] = str(self.stack_path)
+        # Convert to absolute paths while respecting symbolic links
+        data["xml_metadata_path"] = str(self.xml_metadata_path.absolute())
+        data["stack_path"] = str(self.stack_path.absolute())
         return data
 
     def to_json(self, path: Path) -> None:
@@ -147,9 +148,9 @@ def merge_pickle_and_xml_to_json_helper(
     # write all output files
     tilt_series_name = pickle_data_path.stem
     data_directory = pickle_data_path.parent
-    stack_path = data_directory / f"{tilt_series_name}.st"
-    xml_path = data_directory / f"{tilt_series_name}.xml"
-    json_path = data_directory / f"{tilt_series_name}.json"
+    stack_path = (data_directory / f"{tilt_series_name}.st").absolute()
+    xml_path = (data_directory / f"{tilt_series_name}.xml").absolute()
+    json_path = (data_directory / f"{tilt_series_name}.json").absolute()
     with mrcfile.new(stack_path, overwrite=True) as mrc:
         mrc.set_data(images.cpu().numpy())
         mrc.set_voxel = stack_pixel_size
@@ -192,9 +193,9 @@ def convert_pickle_to_json_helper(
     # write all output files
     tilt_series_name = pickle_data_path.stem
     data_directory = pickle_data_path.parent
-    stack_path = data_directory / f"{tilt_series_name}.st"
-    xml_path = data_directory / f"{tilt_series_name}.xml"
-    json_path = data_directory / f"{tilt_series_name}.json"
+    stack_path = (data_directory / f"{tilt_series_name}.st").absolute()
+    xml_path = (data_directory / f"{tilt_series_name}.xml").absolute()
+    json_path = (data_directory / f"{tilt_series_name}.json").absolute()
     with mrcfile.new(stack_path, overwrite=True) as mrc:
         mrc.set_data(images.cpu().numpy())
         mrc.set_voxel = stack_pixel_size

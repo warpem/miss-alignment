@@ -264,8 +264,8 @@ def evaluate_tilt_series(
     )
 
     # write all necessary output
-    xml_out = output_directory / (tilt_series_data.xml_filename + ".xml")
-    json_out = output_directory / (tilt_series_data.xml_filename + ".json")
+    xml_out = (output_directory / (tilt_series_data.xml_filename + ".xml")).absolute()
+    json_out = (output_directory / (tilt_series_data.xml_filename + ".json")).absolute()
     new_tilt_series_data = tilt_series_data.replace(
         xml_metadata_path=xml_out,
     )
