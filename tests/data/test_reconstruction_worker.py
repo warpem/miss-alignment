@@ -204,7 +204,7 @@ class TestGenerateTranslations:
         rotation_matrices = einops.repeat(matrix, "h w -> n h w", n=10)
 
         with pytest.raises(ValueError):
-            translations = _generate_translations(shift_generator, rotation_matrices)
+            _ = _generate_translations(shift_generator, rotation_matrices)
 
     def test_basic_translation_generation(self, shift_generator):
         """Test that translations are generated with correct shape."""
