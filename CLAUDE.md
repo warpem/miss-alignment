@@ -129,6 +129,23 @@ Training is configured via YAML files (template: `src/miss_alignment/config_temp
 - **Temporary files**: `MissAlignmentDataModule` creates a temporary pool directory (`RECON_POOL_SIZE` env var controls size, default 1000)
 - **Package manager**: Currently uses conda/pip for environment installation -> would like to move to uv in the future
 
+## Bug Reporting and Fixes
+
+When working on this codebase, if you encounter potential bugs or implementation issues:
+
+1. **Report the issue**: Clearly explain what you found and why it appears to be a bug
+2. **Suggest a fix**: Provide a proposed solution with reasoning
+3. **Implement if appropriate**: For clear bugs (e.g., missing conversions, type inconsistencies, logic errors), implement the fix
+4. **Let the maintainer decide**: The maintainer will evaluate whether it's truly a bug or was intentional design
+
+**Examples of bugs to report and fix:**
+- Missing data type conversions (e.g., forgetting to convert a list back to tuple in deserialization)
+- Inconsistent behavior between related functions (e.g., `to_dict()` and `from_dict()` not being symmetric)
+- Logic errors or off-by-one errors
+- Missing error handling
+
+**Don't just write tests to conform to buggy behavior** - if the implementation looks wrong, report it and suggest the fix rather than masking it with adjusted test expectations.
+
 ## File Organization
 
 ```
