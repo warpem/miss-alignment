@@ -15,6 +15,7 @@ from warpylib import TiltSeries
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data._reconstruction_worker import (
     _create_pool_reconstruction,
+    _generate_random_rotation_euler_zyz,
     _generate_translations,
     reconstruction_worker,
     TiltSeriesFetcher,
@@ -263,6 +264,119 @@ class TestGenerateTranslations:
         assert torch.all(translations[:, 1] == 0.0)
 
 
+class TestGenerateRandomRotationEulerZYZ:
+    """Test random rotation generation in ZYZ Euler angle convention."""
+
+    def test_output_shape_and_dtype(self):
+        """Test that output has correct shape and dtype."""
+        angles = _generate_random_rotation_euler_zyz(
+            max_angle_degrees=10.0, device="cpu"
+        )
+
+        assert angles.shape == (3,)
+        assert angles.dtype == torch.float32
+
+    def test_device_placement(self):
+        """Test that output is on the correct device."""
+        angles = _generate_random_rotation_euler_zyz(
+            max_angle_degrees=10.0, device="cpu"
+        )
+        assert angles.device.type == "cpu"
+
+    def test_euler_angle_ranges(self):
+        """Test that Euler angles are within expected ranges."""
+        # Run multiple times to check consistency
+        for _ in range(100):
+            angles = _generate_random_rotation_euler_zyz(
+                max_angle_degrees=10.0, device="cpu"
+            )
+            alpha, beta, gamma = angles
+
+            # Alpha (first rotation about Z) should be in [-π, π]
+            assert -torch.pi <= alpha <= torch.pi
+
+            # Beta (rotation about Y) should be in [0, π]
+            assert 0 <= beta <= torch.pi
+
+            # Gamma (second rotation about Z) should be in [-π, π]
+            assert -torch.pi <= gamma <= torch.pi
+
+    def test_rotation_matrix_validity(self):
+        """Test that the rotation produces a valid rotation matrix."""
+        angles = _generate_random_rotation_euler_zyz(
+            max_angle_degrees=10.0, device="cpu"
+        )
+        alpha, beta, gamma = angles
+
+        # Reconstruct rotation matrix from ZYZ Euler angles
+        # R = Rz(α) @ Ry(β) @ Rz(γ)
+        ca, sa = torch.cos(alpha), torch.sin(alpha)
+        cb, sb = torch.cos(beta), torch.sin(beta)
+        cg, sg = torch.cos(gamma), torch.sin(gamma)
+
+        Rz_alpha = torch.tensor(
+            [[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=torch.float32
+        )
+
+        Ry_beta = torch.tensor(
+            [[cb, 0, sb], [0, 1, 0], [-sb, 0, cb]], dtype=torch.float32
+        )
+
+        Rz_gamma = torch.tensor(
+            [[cg, -sg, 0], [sg, cg, 0], [0, 0, 1]], dtype=torch.float32
+        )
+
+        R = Rz_alpha @ Ry_beta @ Rz_gamma
+
+        # Check that R is orthonormal (R^T @ R = I)
+        identity = R.T @ R
+        torch.testing.assert_close(identity, torch.eye(3), atol=1e-5, rtol=1e-5)
+
+        # Check that determinant is 1 (proper rotation)
+        det = torch.linalg.det(R)
+        torch.testing.assert_close(det, torch.tensor(1.0), atol=1e-5, rtol=1e-5)
+
+    def test_rotation_angle_bounded(self):
+        """Test that the total rotation angle is within the specified maximum."""
+        max_angle_degrees = 10.0
+        max_angle_radians = max_angle_degrees * torch.pi / 180
+
+        # Run multiple times to check consistency
+        for _ in range(100):
+            angles = _generate_random_rotation_euler_zyz(
+                max_angle_degrees=max_angle_degrees, device="cpu"
+            )
+            alpha, beta, gamma = angles
+
+            # Reconstruct rotation matrix
+            ca, sa = torch.cos(alpha), torch.sin(alpha)
+            cb, sb = torch.cos(beta), torch.sin(beta)
+            cg, sg = torch.cos(gamma), torch.sin(gamma)
+
+            Rz_alpha = torch.tensor(
+                [[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]], dtype=torch.float32
+            )
+
+            Ry_beta = torch.tensor(
+                [[cb, 0, sb], [0, 1, 0], [-sb, 0, cb]], dtype=torch.float32
+            )
+
+            Rz_gamma = torch.tensor(
+                [[cg, -sg, 0], [sg, cg, 0], [0, 0, 1]], dtype=torch.float32
+            )
+
+            R = Rz_alpha @ Ry_beta @ Rz_gamma
+
+            # Extract rotation angle from rotation matrix
+            # trace(R) = 1 + 2*cos(θ)
+            trace = torch.trace(R)
+            rotation_angle = torch.acos(torch.clamp((trace - 1) / 2, -1.0, 1.0))
+
+            # Check that rotation angle is within bounds (with small
+            # tolerance for numerical errors)
+            assert rotation_angle <= max_angle_radians + 1e-4
+
+
 class TestCreatePoolReconstruction:
     """Test pool reconstruction creation."""
 
@@ -291,17 +405,21 @@ class TestCreatePoolReconstruction:
         assert 1 in [item[1] for item in result]
         assert -1 in [item[1] for item in result]
 
-    def test_tilt_angle_augmentation(self, mock_tilt_series_data, shift_generator):
-        """Test that tilt angles are augmented correctly."""
+    def test_rotation_augmentation(self, mock_tilt_series_data, shift_generator):
+        """Test that rotation augmentation is applied correctly via Euler angles."""
         # Load the tilt series data
         tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
             downsample=1
         )
 
-        original_angles = tilt_series.angles.clone()
+        # Mock the random rotation generation to return specific angles
+        mock_rotation_angles = torch.tensor([5.0, 10.0, 15.0], device="cpu")
 
-        with patch("random.uniform", return_value=5.0):
+        with patch(
+            "miss_alignment.data._reconstruction_worker._generate_random_rotation_euler_zyz",
+            return_value=mock_rotation_angles,
+        ) as mock_rotation_fn:
             _create_pool_reconstruction(
                 tilt_series=tilt_series,
                 images=images,
@@ -312,8 +430,10 @@ class TestCreatePoolReconstruction:
                 device="cpu",
             )
 
-        expected_angles = original_angles + 5.0
-        torch.testing.assert_close(tilt_series.angles, expected_angles)
+            # Verify that the rotation generation function was called
+            mock_rotation_fn.assert_called_once_with(
+                max_angle_degrees=10.0, device="cpu"
+            )
 
 
 class TestReconstructionWorker:

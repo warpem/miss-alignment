@@ -2,6 +2,7 @@ import multiprocessing as mp
 import random
 import tempfile
 import itertools
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
@@ -62,7 +63,6 @@ class TiltSeriesFetcher:
             normalize=True,
             invert=False,
             subvolume_size=self.patch_size,
-            subvolume_padding=2.0,
         )
         tilt_series = tilt_series.to(self.device)
         images = images.to(self.device)
@@ -212,9 +212,11 @@ def _create_pool_reconstruction(
     apply_ctf: bool = True,
     device: str | torch.device = "cpu",
 ) -> list[tuple[torch.Tensor, int]]:
-    # add a random rotation to the sample
-    # TODO instead of full tilt angle offset we should use a subtomo rotation
-    tilt_series.angles += random.uniform(-10, +10)
+    # Generate random rotation as Euler angles (ZYZ convention) for data augmentation
+    # This rotation is applied to change the coordinate system of the reconstruction
+    rotation_angles = _generate_random_rotation_euler_zyz(
+        max_angle_degrees=10.0, device=device
+    )
 
     # select a random reconstruction position
     patch_offset = (patch_size * pixel_size) / 2
@@ -242,23 +244,26 @@ def _create_pool_reconstruction(
         shift_generator, projection_matrices, device=device
     )
 
-    # reconstruct aligned example
+    # reconstruct aligned example with random rotation
     aligned = tilt_series.reconstruct_subvolumes_single(
         tilt_data=images,
         coords=reconstruction_location,
         pixel_size=pixel_size,
         size=patch_size,
         apply_ctf=apply_ctf,
+        angles=rotation_angles,
     ).squeeze()
     # add the extra translations for the misaligned example
     tilt_series.tilt_axis_offset_y += translations[:, 0]
     tilt_series.tilt_axis_offset_x += translations[:, 1]
+    # reconstruct misaligned example with the same rotation
     misaligned = tilt_series.reconstruct_subvolumes_single(
         tilt_data=images,
         coords=reconstruction_location,
         pixel_size=pixel_size,
         size=patch_size,
         apply_ctf=apply_ctf,
+        angles=rotation_angles,
     ).squeeze()
 
     # make tuple with volume and label
@@ -272,6 +277,82 @@ def _create_pool_reconstruction(
     ]
 
     return examples
+
+
+def _generate_random_rotation_euler_zyz(
+    max_angle_degrees: float = 10.0, device: str | torch.device = "cpu"
+) -> torch.Tensor:
+    """
+    Generate random Euler angles (ZYZ convention) representing a rotation
+    with maximum total rotation angle of max_angle_degrees.
+
+    This uses the axis-angle representation to uniformly sample rotations
+    on SO(3) with bounded rotation angle, then converts to ZYZ Euler angles.
+
+    Parameters
+    ----------
+    max_angle_degrees : float
+        Maximum rotation angle in degrees (default: 10.0)
+    device : str | torch.device
+        Device for the output tensor (default: "cpu")
+
+    Returns
+    -------
+    torch.Tensor
+        Euler angles (α, β, γ) in radians, shape (3,)
+    """
+    # Generate random rotation axis (uniformly distributed on unit sphere)
+    phi = random.random() * 2 * math.pi  # azimuthal angle
+    cos_theta = random.random() * 2 - 1  # cosine of polar angle
+    sin_theta = (1 - cos_theta**2) ** 0.5
+
+    axis = torch.tensor(
+        [sin_theta * math.cos(phi), sin_theta * math.sin(phi), cos_theta],
+        device=device,
+        dtype=torch.float32,
+    )
+
+    # Generate random rotation angle uniformly in [-max_angle, +max_angle]
+    angle = (random.random() * 2 - 1) * max_angle_degrees * math.pi / 180
+
+    # Convert axis-angle to rotation matrix using Rodrigues formula
+    # R = I + sin(θ)K + (1-cos(θ))K²
+    # where K is the skew-symmetric matrix of the axis
+    K = torch.tensor(
+        [
+            [0, -axis[2].item(), axis[1].item()],
+            [axis[2].item(), 0, -axis[0].item()],
+            [-axis[1].item(), axis[0].item(), 0],
+        ],
+        device=device,
+        dtype=torch.float32,
+    )
+
+    R = (
+        torch.eye(3, device=device, dtype=torch.float32)
+        + math.sin(angle) * K
+        + (1 - math.cos(angle)) * (K @ K)
+    )
+
+    # Convert rotation matrix to ZYZ Euler angles
+    # For ZYZ convention: R = Rz(α) @ Ry(β) @ Rz(γ)
+    beta = torch.acos(torch.clamp(R[2, 2], -1.0, 1.0))
+
+    # Check for gimbal lock conditions
+    if torch.abs(beta) > 1e-6 and torch.abs(beta - torch.pi) > 1e-6:
+        # Normal case: no gimbal lock
+        alpha = torch.atan2(R[1, 2], R[0, 2])
+        gamma = torch.atan2(R[2, 1], -R[2, 0])
+    else:
+        # Gimbal lock case
+        if torch.abs(beta) < 1e-6:  # beta ≈ 0
+            alpha = torch.atan2(-R[0, 1], R[0, 0])
+            gamma = torch.tensor(0.0, device=device, dtype=torch.float32)
+        else:  # beta ≈ π
+            alpha = torch.atan2(R[0, 1], R[0, 0])
+            gamma = torch.tensor(0.0, device=device, dtype=torch.float32)
+
+    return torch.stack([alpha, beta, gamma])
 
 
 def _generate_translations(
