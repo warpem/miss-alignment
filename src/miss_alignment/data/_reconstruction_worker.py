@@ -15,9 +15,7 @@ from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
 from dataclasses import dataclass
 
 from miss_alignment.data.io import TiltSeriesData
-from miss_alignment.data.shift_generation import (
-    project_shifts_3d_to_2d
-)
+from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 from ._pool_monitor import SimplePoolMonitor
 
 
@@ -48,17 +46,15 @@ class TiltSeriesFetcher:
     def _refresh_alignment(self):
         self._tilt_series.angles = self._tmp_angles.clone()
         self._tilt_series.tilt_axis_angles = self._tmp_tilt_axis_angles.clone()
-        self._tilt_series.tilt_axis_offset_x = (self._tmp_tilt_axis_offset_x.clone())
-        self._tilt_series.tilt_axis_offset_y = (self._tmp_tilt_axis_offset_y.clone())
+        self._tilt_series.tilt_axis_offset_x = self._tmp_tilt_axis_offset_x.clone()
+        self._tilt_series.tilt_axis_offset_y = self._tmp_tilt_axis_offset_y.clone()
 
     def _load_next(self):
-        tilt_series_data = (
-            TiltSeriesData.from_json(random.choice(self.tilt_series_jsons))
+        tilt_series_data = TiltSeriesData.from_json(
+            random.choice(self.tilt_series_jsons)
         )
-        tilt_series, images, pixel_size = (
-            tilt_series_data.load_metadata_and_stack(
-                downsample=self.downsample
-            )
+        tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
+            downsample=self.downsample
         )
         # run the preprocessing from warp for consistency
         images = preprocess_tilt_data(
@@ -86,19 +82,19 @@ class TiltSeriesFetcher:
 
 
 def reconstruction_worker(
-        worker_id: int,
-        assigned_indices: list,
-        pool_dir: Path,
-        tilt_series_jsons: list[Path],
-        patch_size: int,
-        apply_ctf: bool,
-        downsample: int,
-        shift_generator: Callable,
-        ready_flag: mp.Value,
-        stop_event: mp.Event,
-        monitor: Optional[SimplePoolMonitor] = None,
-        tilt_series_refresh_rate: int = 1,
-        device: str | torch.device = 'cpu',
+    worker_id: int,
+    assigned_indices: list,
+    pool_dir: Path,
+    tilt_series_jsons: list[Path],
+    patch_size: int,
+    apply_ctf: bool,
+    downsample: int,
+    shift_generator: Callable,
+    ready_flag: mp.Value,
+    stop_event: mp.Event,
+    monitor: Optional[SimplePoolMonitor] = None,
+    tilt_series_refresh_rate: int = 1,
+    device: str | torch.device = "cpu",
 ):
     """
     Worker process that maintains a subset of the reconstruction pool.
@@ -134,9 +130,7 @@ def reconstruction_worker(
     """
     torch.set_num_threads(1)
 
-    print(
-        f"Worker {worker_id} starting with indices {assigned_indices[:5]}..."
-    )
+    print(f"Worker {worker_id} starting with indices {assigned_indices[:5]}...")
 
     # counter to keep track of how many times reconstructions have been reused
     tilt_series_fetcher = TiltSeriesFetcher(
@@ -150,7 +144,7 @@ def reconstruction_worker(
     # Initial fill of assigned pool slots
     for idx in assigned_indices:
         if stop_event.is_set():
-            print(f'Worker {worker_id} shutting down')
+            print(f"Worker {worker_id} shutting down")
         tilt_series, images, pixel_size = tilt_series_fetcher()
         data_and_labels = _create_pool_reconstruction(
             tilt_series=tilt_series,
@@ -194,10 +188,7 @@ def reconstruction_worker(
         # Atomic replacement using temp file and rename
         file_path = pool_dir / f"recon_{idx}.pickle"
         with tempfile.NamedTemporaryFile(
-                dir=pool_dir,
-                prefix=f"tmp_recon_{idx}_",
-                suffix='.pickle',
-                delete=False
+            dir=pool_dir, prefix=f"tmp_recon_{idx}_", suffix=".pickle", delete=False
         ) as tmp_file:
             tmp_path = Path(tmp_file.name)
             pickle.dump(data_and_labels, tmp_file)
@@ -213,13 +204,13 @@ def reconstruction_worker(
 
 
 def _create_pool_reconstruction(
-        tilt_series: TiltSeries,
-        images: torch.Tensor,
-        pixel_size: float,
-        patch_size: int,
-        shift_generator: Callable,
-        apply_ctf: bool = True,
-        device: str | torch.device = 'cpu',
+    tilt_series: TiltSeries,
+    images: torch.Tensor,
+    pixel_size: float,
+    patch_size: int,
+    shift_generator: Callable,
+    apply_ctf: bool = True,
+    device: str | torch.device = "cpu",
 ) -> list[tuple[torch.Tensor, int]]:
     # add a random rotation to the sample
     # TODO instead of full tilt angle offset we should use a subtomo rotation
@@ -229,25 +220,26 @@ def _create_pool_reconstruction(
     patch_offset = (patch_size * pixel_size) / 2
     x_dim, y_dim, z_dim = tilt_series.volume_dimensions_physical
     reconstruction_location = [
-        random.uniform(patch_offset, x_dim - patch_offset) if x_dim > 2 * patch_offset else x_dim / 2,
-        random.uniform(patch_offset, y_dim - patch_offset) if y_dim > 2 * patch_offset else y_dim / 2,
-        random.uniform(patch_offset, z_dim - patch_offset) if z_dim > 2 * patch_offset else z_dim / 2,
+        random.uniform(patch_offset, x_dim - patch_offset)
+        if x_dim > 2 * patch_offset
+        else x_dim / 2,
+        random.uniform(patch_offset, y_dim - patch_offset)
+        if y_dim > 2 * patch_offset
+        else y_dim / 2,
+        random.uniform(patch_offset, z_dim - patch_offset)
+        if z_dim > 2 * patch_offset
+        else z_dim / 2,
     ]
-    reconstruction_location = (
-        torch.tensor(reconstruction_location, device=device)
-    )
-    reconstruction_location = (
-        einops.rearrange(reconstruction_location, 'xyz -> 1 xyz')
-    )
+    reconstruction_location = torch.tensor(reconstruction_location, device=device)
+    reconstruction_location = einops.rearrange(reconstruction_location, "xyz -> 1 xyz")
 
     # generate a misalignment
     r0 = Ry(tilt_series.angles, zyx=True)
     r1 = Rz(tilt_series.tilt_axis_angles, zyx=True)
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
-    translations = (
-        _generate_translations(shift_generator, projection_matrices,
-                               device=device)
+    translations = _generate_translations(
+        shift_generator, projection_matrices, device=device
     )
 
     # reconstruct both volumes
@@ -273,20 +265,23 @@ def _create_pool_reconstruction(
     examples = [(aligned.cpu(), 1), (misaligned.cpu(), -1)]
 
     # make a triplet example randomly mimick 1 or 2
-    examples += [(aligned.clone().cpu(), 1) if random.random() > 0.5 else (
-        misaligned.clone().cpu(), -1)]
-    
+    examples += [
+        (aligned.clone().cpu(), 1)
+        if random.random() > 0.5
+        else (misaligned.clone().cpu(), -1)
+    ]
+
     return examples
 
 
 def _generate_translations(
-        generate_shifts: Callable,
-        projection_matrices,
-        device: str = 'cpu',
+    generate_shifts: Callable,
+    projection_matrices,
+    device: str = "cpu",
 ) -> torch.Tensor:
     n_tilts, y, x = projection_matrices.shape
     if (y, x) != (2, 3):
-        raise ValueError('Projection matrices must have shape (2, 3)')
+        raise ValueError("Projection matrices must have shape (2, 3)")
     # generate two sets of shifts, 3d shifts zyx
     shifts = generate_shifts(n_tilts, device=device)
     shifts = project_shifts_3d_to_2d(shifts, projection_matrices)

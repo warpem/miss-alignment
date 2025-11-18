@@ -17,12 +17,12 @@ from .data._pool_monitor import SimplePoolMonitor
 
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
-        config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-        reconstruction_workers: int = 4,
-        dataloader_workers: int = 4,
-        n_devices: int = 1,
-        iterations: int = 3,
-        monitor_production_and_consumption: bool = False,
+    config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
+    reconstruction_workers: int = 4,
+    dataloader_workers: int = 4,
+    n_devices: int = 1,
+    iterations: int = 3,
+    monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
@@ -56,14 +56,14 @@ def train_miss_align(
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
-    start_iter = general_config['start_at_iteration']
+    start_iter = general_config["start_at_iteration"]
     end_iter = start_iter + iterations
 
     for x in range(start_iter, end_iter):
         # ============================================================
         # ================= model training step ======================
         # ============================================================
-        iteration_directory = training_directory / ('iter' + str(x))
+        iteration_directory = training_directory / ("iter" + str(x))
         iteration_directory.mkdir(parents=True, exist_ok=True)
         iteration_settings = general_config["iteration_settings"][x]
 
@@ -110,8 +110,7 @@ def train_miss_align(
             "margin": model_training_config["loss_margin"],
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
-            "multistep_lr_scheduler": model_training_config[
-                "multistep_lr_scheduler"],
+            "multistep_lr_scheduler": model_training_config["multistep_lr_scheduler"],
             "monitor": monitor,
             "model_architecture": model_training_config["model_architecture"],
         }
@@ -143,9 +142,8 @@ def train_miss_align(
             trainer.fit(model, train_dataloaders=training_data)
 
         print(
-            f'Best model after '
-            f'training iteration {x}:',
-            trainer.checkpoint_callback.best_model_path
+            f"Best model after training iteration {x}:",
+            trainer.checkpoint_callback.best_model_path,
         )
         # update the config with the trained model
         model_training_config["model_checkpoint"] = (
@@ -156,11 +154,11 @@ def train_miss_align(
         # =============== tilt-series alignment step =================
         # ============================================================
         # get the output directory ready
-        output_directory = training_directory / ('iter' + str(x + 1))
+        output_directory = training_directory / ("iter" + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
 
         # get list of all files to process for alignment
-        tilt_series_list = list(iteration_directory.glob('*.json'))
+        tilt_series_list = list(iteration_directory.glob("*.json"))
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(

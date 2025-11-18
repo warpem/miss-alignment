@@ -26,8 +26,9 @@ class TiltSeriesData:
     def xml_filename(self) -> str:
         return self.xml_metadata_path.stem
 
-    def load_metadata_and_stack(self, downsample=1) \
-            -> tuple[TiltSeries, torch.Tensor, float]:
+    def load_metadata_and_stack(
+        self, downsample=1
+    ) -> tuple[TiltSeries, torch.Tensor, float]:
         metadata, images, pixel_size = _load_metadata_and_stack(
             self.xml_metadata_path,
             self.stack_path,
@@ -35,7 +36,7 @@ class TiltSeriesData:
             self.original_pixel_size,
             self.original_stack_shape,
             self.volume_shape,
-            downsample=downsample
+            downsample=downsample,
         )
         return metadata, images, pixel_size
 
@@ -44,39 +45,39 @@ class TiltSeriesData:
 
     def to_dict(self) -> dict:
         data = asdict(self)
-        data['xml_metadata_path'] = str(self.xml_metadata_path)
-        data['stack_path'] = str(self.stack_path)
+        data["xml_metadata_path"] = str(self.xml_metadata_path)
+        data["stack_path"] = str(self.stack_path)
         return data
 
     def to_json(self, path: Path) -> None:
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'TiltSeriesData':
+    def from_dict(cls, data: dict) -> "TiltSeriesData":
         """Use as: dict = TiltSeriesData.from_dict(some_dict)"""
         data = data.copy()
-        data['xml_metadata_path'] = Path(data['xml_metadata_path'])
-        data['stack_path'] = Path(data['stack_path'])
-        data['original_stack_shape'] = tuple(data['original_stack_shape'])
+        data["xml_metadata_path"] = Path(data["xml_metadata_path"])
+        data["stack_path"] = Path(data["stack_path"])
+        data["original_stack_shape"] = tuple(data["original_stack_shape"])
         return cls(**data)
 
     @classmethod
-    def from_json(cls, path: Path) -> 'TiltSeriesData':
+    def from_json(cls, path: Path) -> "TiltSeriesData":
         """Use as: data = TiltSeriesData.from_json(some_path)"""
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data = json.load(f)
         return cls.from_dict(data)
 
 
 def _load_metadata_and_stack(
-        metadata_path: Path,
-        stack_path: Path,
-        stack_pixel_size: float,
-        original_pixel_size: float,
-        original_stack_shape: tuple[int, int],
-        volume_shape: tuple[int, int, int],
-        downsample: int = 1,
+    metadata_path: Path,
+    stack_path: Path,
+    stack_pixel_size: float,
+    original_pixel_size: float,
+    original_stack_shape: tuple[int, int],
+    volume_shape: tuple[int, int, int],
+    downsample: int = 1,
 ) -> tuple[TiltSeries, torch.Tensor, float]:
     # load the data
     with mrcfile.open(stack_path) as mrc:
@@ -92,8 +93,8 @@ def _load_metadata_and_stack(
     # set original physical image dimensions
     original_width, original_height = original_stack_shape
     tilt_series.image_dimensions_physical = torch.tensor(
-        [s * original_pixel_size for s in original_stack_shape],
-        dtype=torch.float32)
+        [s * original_pixel_size for s in original_stack_shape], dtype=torch.float32
+    )
     tilt_series.volume_dimensions_physical = torch.tensor(
         [s * original_pixel_size for s in volume_shape],
         dtype=torch.float32,
@@ -117,12 +118,12 @@ def _load_metadata_and_stack(
 
 
 def merge_pickle_and_xml_to_json_helper(
-        pickle_data_path: Path,
-        xml_data_path: Path,
-        stack_pixel_size: float,
-        original_pixel_size: float,
-        original_stack_shape: tuple[int, int],
-        volume_shape: tuple[int, int, int],
+    pickle_data_path: Path,
+    xml_data_path: Path,
+    stack_pixel_size: float,
+    original_pixel_size: float,
+    original_stack_shape: tuple[int, int],
+    volume_shape: tuple[int, int, int],
 ) -> tuple[TiltSeriesData, Path]:
     # read the pickle
     with open(pickle_data_path, "rb") as infile:
@@ -148,15 +149,13 @@ def merge_pickle_and_xml_to_json_helper(
     with mrcfile.new(stack_path, overwrite=True) as mrc:
         mrc.set_data(images.cpu().numpy())
         mrc.set_voxel = stack_pixel_size
-    new_tilt_series_data = (
-        TiltSeriesData(
-            xml_metadata_path=xml_path,
-            stack_path=stack_path,
-            stack_pixel_size=stack_pixel_size,
-            original_stack_shape=original_stack_shape,
-            original_pixel_size=original_pixel_size,
-            volume_shape=volume_shape,
-        )
+    new_tilt_series_data = TiltSeriesData(
+        xml_metadata_path=xml_path,
+        stack_path=stack_path,
+        stack_pixel_size=stack_pixel_size,
+        original_stack_shape=original_stack_shape,
+        original_pixel_size=original_pixel_size,
+        volume_shape=volume_shape,
     )
     new_tilt_series_data.save_metadata_to_xml(tilt_series)
     new_tilt_series_data.to_json(json_path)
@@ -164,11 +163,11 @@ def merge_pickle_and_xml_to_json_helper(
 
 
 def convert_pickle_to_json_helper(
-        pickle_data_path: Path,
-        stack_pixel_size: float,
-        original_pixel_size: float,
-        original_stack_shape: tuple[int, int],
-        volume_shape: tuple[int, int, int],
+    pickle_data_path: Path,
+    stack_pixel_size: float,
+    original_pixel_size: float,
+    original_stack_shape: tuple[int, int],
+    volume_shape: tuple[int, int, int],
 ) -> tuple[TiltSeriesData, Path]:
     # read the pickle
     with open(pickle_data_path, "rb") as infile:
@@ -177,7 +176,9 @@ def convert_pickle_to_json_helper(
     n_tilts, _, _ = images.shape
 
     # initialize a fresh warpylib TiltSeries
-    tilt_series = TiltSeries(n_tilts=n_tilts,)
+    tilt_series = TiltSeries(
+        n_tilts=n_tilts,
+    )
     tilt_series.angles = data_dict["tilt_angles"]
     tilt_series.tilt_axis_angles = data_dict["tilt_axis_angle"]
     axis_offsets_angstrom = data_dict["sample_translations"] * stack_pixel_size
@@ -193,15 +194,13 @@ def convert_pickle_to_json_helper(
     with mrcfile.new(stack_path, overwrite=True) as mrc:
         mrc.set_data(images.cpu().numpy())
         mrc.set_voxel = stack_pixel_size
-    new_tilt_series_data = (
-        TiltSeriesData(
-            xml_metadata_path=xml_path,
-            stack_path=stack_path,
-            stack_pixel_size=stack_pixel_size,
-            original_stack_shape=original_stack_shape,
-            original_pixel_size=original_pixel_size,
-            volume_shape=volume_shape,
-        )
+    new_tilt_series_data = TiltSeriesData(
+        xml_metadata_path=xml_path,
+        stack_path=stack_path,
+        stack_pixel_size=stack_pixel_size,
+        original_stack_shape=original_stack_shape,
+        original_pixel_size=original_pixel_size,
+        volume_shape=volume_shape,
     )
     new_tilt_series_data.save_metadata_to_xml(tilt_series)
     new_tilt_series_data.to_json(json_path)

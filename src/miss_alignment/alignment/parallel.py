@@ -5,15 +5,14 @@ import torch
 import tqdm
 from multiprocessing.managers import BaseProxy
 from pathlib import Path
-from typing import Optional
 
 from .tilt_series import evaluate_tilt_series
 
 
 def gpu_runner(
-        device: str,
-        task_queue: BaseProxy,
-        result_queue: BaseProxy,
+    device: str,
+    task_queue: BaseProxy,
+    result_queue: BaseProxy,
 ) -> None:
     """Start a GPU runner, each runner should be initialized to a
     multiprocessing.Process() and manage running jobs on a single GPU. Each runner will
@@ -38,24 +37,22 @@ def gpu_runner(
                 device=device,
             )
             # place the name of the finished tilt_series
-            result_queue.put_nowait(task_parameters['tilt_series_path'].stem)
+            result_queue.put_nowait(task_parameters["tilt_series_path"].stem)
         except queue.Empty:
             break
 
 
 def run_alignment_parallel(
-        model_checkpoint: Path,
-        tilt_series_list: list[Path],
-        output_directory: Path,
-        setting: str |
-                 tuple[int, int, int] |
-                 tuple[int, int, int, int],
-        patch_size: int,
-        patch_overlap: float,
-        batch_size: int,
-        apply_ctf: bool,
-        downsample: int,
-        devices_list: list[int],
+    model_checkpoint: Path,
+    tilt_series_list: list[Path],
+    output_directory: Path,
+    setting: str | tuple[int, int, int] | tuple[int, int, int, int],
+    patch_size: int,
+    patch_overlap: float,
+    batch_size: int,
+    apply_ctf: bool,
+    downsample: int,
+    devices_list: list[int],
 ):
     """Run a job in parallel over a single or multiple GPUs. If no volume_splits are
     given the search is parallelized by splitting the angular search. If volume_splits
@@ -75,17 +72,19 @@ def run_alignment_parallel(
     """
     jobs = []
     for i, tilt_series in enumerate(tilt_series_list):
-        jobs.append({
-            'model_checkpoint_path': model_checkpoint,
-            'tilt_series_path': tilt_series,
-            'output_directory': output_directory,
-            'setting': setting,
-            'patch_size': patch_size,
-            'patch_overlap': patch_overlap,
-            'batch_size': batch_size,
-            'apply_ctf': apply_ctf,
-            'downsample': downsample,
-        })
+        jobs.append(
+            {
+                "model_checkpoint_path": model_checkpoint,
+                "tilt_series_path": tilt_series,
+                "output_directory": output_directory,
+                "setting": setting,
+                "patch_size": patch_size,
+                "patch_overlap": patch_overlap,
+                "batch_size": batch_size,
+                "apply_ctf": apply_ctf,
+                "downsample": downsample,
+            }
+        )
 
     results = []
     with mp.Manager() as manager:
@@ -103,7 +102,7 @@ def run_alignment_parallel(
             mp.Process(
                 target=gpu_runner,
                 args=(
-                    'cuda:' + str(g),
+                    "cuda:" + str(g),
                     task_queue,
                     result_queue,
                 ),
@@ -112,7 +111,7 @@ def run_alignment_parallel(
         ]
         [p.start() for p in procs]
 
-        pbar = tqdm.tqdm(total=len(jobs), desc='tilt-series alignment')
+        pbar = tqdm.tqdm(total=len(jobs), desc="tilt-series alignment")
         while True:
             while not result_queue.empty():
                 results.append(result_queue.get_nowait())
@@ -133,7 +132,7 @@ def run_alignment_parallel(
                         "One or more of the processes stopped unexpectedly."
                     )
 
-            time.sleep(.1)
+            time.sleep(0.1)
         pbar.close()
 
         [p.join() for p in procs]

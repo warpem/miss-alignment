@@ -45,8 +45,7 @@ class AttentionRollout3D:
         # Calculate attention maps for each layer
         attention_maps = {}
         for name in self.layers:
-            weights = torch.mean(self.gradients[name], dim=(2, 3, 4),
-                                 keepdim=True)
+            weights = torch.mean(self.gradients[name], dim=(2, 3, 4), keepdim=True)
             attention = torch.sum(weights * self.activations[name], dim=1)
             attention = F.relu(attention)
             attention = attention / (torch.max(attention) + 1e-10)
@@ -55,15 +54,16 @@ class AttentionRollout3D:
             attention = F.interpolate(
                 attention.unsqueeze(0),
                 size=input_tensor.shape[2:],
-                mode='trilinear',
-                align_corners=False
+                mode="trilinear",
+                align_corners=False,
             ).squeeze(0)
 
             attention_maps[name] = attention
 
         # Combine attention maps (you can use different strategies here)
         combined_attention = torch.zeros_like(
-            attention_maps[list(attention_maps.keys())[0]])
+            attention_maps[list(attention_maps.keys())[0]]
+        )
         for name in attention_maps:
             combined_attention += attention_maps[name]
 
@@ -78,10 +78,7 @@ def visualize_attention(
     output_directory: Path = typer.Option(..., **OPTION_PROMPT_KWARGS),
 ) -> None:
     """Visualize the attention span of MissAlignment."""
-    model = MissAlignment.load_from_checkpoint(
-        model_checkpoint,
-        map_location="cpu"
-    )
+    model = MissAlignment.load_from_checkpoint(model_checkpoint, map_location="cpu")
     model.eval()
 
     layers_track = {}
@@ -96,11 +93,9 @@ def visualize_attention(
 
     for i, n in enumerate(data.mrc_files):
         img1, img2, s = data[i]
-        img1 = einops.rearrange(img1, 'c d h w -> 1 c d h w')
-        img2 = einops.rearrange(img2, 'c d h w -> 1 c d h w')
-        high, low = (
-            (img1, img2) if s < 0 else (img2, img1)
-        )
+        img1 = einops.rearrange(img1, "c d h w -> 1 c d h w")
+        img2 = einops.rearrange(img2, "c d h w -> 1 c d h w")
+        high, low = (img1, img2) if s < 0 else (img2, img1)
         map_name = n.stem
         print(f"model = {map_name}")
         attention1, score1 = rollout.generate_attention_map(high)
@@ -109,22 +104,20 @@ def visualize_attention(
         print(f"Low quality map has a score of {score2.detach()}")
 
         np.save(
-            output_directory.joinpath(f'{map_name}_high_at.npy'),
+            output_directory.joinpath(f"{map_name}_high_at.npy"),
             attention1,
         )
         np.save(
-            output_directory.joinpath(f'{map_name}_high.npy'),
+            output_directory.joinpath(f"{map_name}_high.npy"),
             high.squeeze().squeeze().detach().cpu().numpy(),
         )
         np.save(
-            output_directory.joinpath(f'{map_name}_low_at.npy'),
+            output_directory.joinpath(f"{map_name}_low_at.npy"),
             attention2,
         )
         np.save(
-            output_directory.joinpath(f'{map_name}_low.npy'),
+            output_directory.joinpath(f"{map_name}_low.npy"),
             low.squeeze().squeeze().detach().cpu().numpy(),
         )
 
     return None
-
-

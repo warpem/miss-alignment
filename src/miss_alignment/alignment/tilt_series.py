@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import math
-import functools
 import torch
 import einops
 from warpylib.cubic_grid import CubicGrid
@@ -12,10 +11,10 @@ from miss_alignment.models import MissAlignment
 
 
 def generate_position_grid(
-        volume_dimensions_physical: tuple[float, float, float] | torch.Tensor,
-        pixel_size: float,
-        patch_size: int,
-        patch_overlap: float,
+    volume_dimensions_physical: tuple[float, float, float] | torch.Tensor,
+    pixel_size: float,
+    patch_size: int,
+    patch_overlap: float,
 ) -> torch.Tensor:
     # calculate patches per dimensions
     stride = int(patch_size * (1 - patch_overlap))
@@ -29,32 +28,28 @@ def generate_position_grid(
     x, y, z = volume_dimensions_physical
 
     # get the reconstruction positions to optimize over
-    zs = ((torch.arange(pz) + .5) / pz) * z
-    ys = ((torch.arange(py) + .5) / py) * y
-    xs = ((torch.arange(px) + .5) / px) * x
+    zs = ((torch.arange(pz) + 0.5) / pz) * z
+    ys = ((torch.arange(py) + 0.5) / py) * y
+    xs = ((torch.arange(px) + 0.5) / px) * x
 
     # merge positions in tensor
-    position_grid = (
-        torch.stack(torch.meshgrid(xs, ys, zs, indexing='ij'), dim=-1)
-    )
+    position_grid = torch.stack(torch.meshgrid(xs, ys, zs, indexing="ij"), dim=-1)
     # ensure we get a list of xyz positions!!
-    position_grid = einops.rearrange(position_grid, 'd h w xyz -> (d h w) xyz')
+    position_grid = einops.rearrange(position_grid, "d h w xyz -> (d h w) xyz")
     return position_grid
 
 
 def optimize_shifts(
-        model: MissAlignment,
-        tilt_series: TiltSeries,
-        images: torch.Tensor,
-        pixel_size: float,
-        positions: torch.Tensor,
-        setting: str |
-                 tuple[int, int, int] |
-                 tuple[int, int, int, int] = 'global',
-        patch_size: int = 96,
-        batch_size: int = 16,
-        apply_ctf: bool = True,
-        device: str | torch.device = 'cpu',
+    model: MissAlignment,
+    tilt_series: TiltSeries,
+    images: torch.Tensor,
+    pixel_size: float,
+    positions: torch.Tensor,
+    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "global",
+    patch_size: int = 96,
+    batch_size: int = 16,
+    apply_ctf: bool = True,
+    device: str | torch.device = "cpu",
 ):
     """Find shifts to optimize model score.
 
@@ -80,7 +75,7 @@ def optimize_shifts(
     images = images.to(device)
 
     parameters = None
-    if setting == 'global':
+    if setting == "global":
         # store the initial tilt_series alignment
         initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
         initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
@@ -97,37 +92,47 @@ def optimize_shifts(
             device=device,
         )
         parameters = [shifts_y, shifts_x]
-    elif len(setting) == 3:  #TODO add case of starting from existent grid
+    elif len(setting) == 3:  # TODO add case of starting from existent grid
         # movement grids - these should receive gradients
-        tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(new_size=setting).to(device)
+        tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(
+            new_size=setting
+        ).to(device)
         leaf_variable_x = tilt_series.grid_movement_x.values.requires_grad_(True)
         tilt_series.grid_movement_x = CubicGrid(setting, leaf_variable_x)
 
-        tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(new_size=setting).to(device)
+        tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(
+            new_size=setting
+        ).to(device)
         leaf_variable_y = tilt_series.grid_movement_y.values.requires_grad_(True)
         tilt_series.grid_movement_y = CubicGrid(setting, leaf_variable_y)
-        
+
         parameters = [leaf_variable_x, leaf_variable_y]
-    elif len(setting) == 4:  #TODO add case of starting from existent grid
-        tilt_series.grid_volume_warp_x = tilt_series.grid_volume_warp_x.resize(new_size=setting).to(device)
+    elif len(setting) == 4:  # TODO add case of starting from existent grid
+        tilt_series.grid_volume_warp_x = tilt_series.grid_volume_warp_x.resize(
+            new_size=setting
+        ).to(device)
         leaf_variable_x = tilt_series.grid_volume_warp_x.values.requires_grad_(True)
         tilt_series.grid_volume_warp_x = CubicGrid(setting, leaf_variable_x)
 
-        tilt_series.grid_volume_warp_y = tilt_series.grid_volume_warp_y.resize(new_size=setting).to(device)
+        tilt_series.grid_volume_warp_y = tilt_series.grid_volume_warp_y.resize(
+            new_size=setting
+        ).to(device)
         leaf_variable_y = tilt_series.grid_volume_warp_y.values.requires_grad_(True)
         tilt_series.grid_volume_warp_y = CubicGrid(setting, leaf_variable_y)
 
-        tilt_series.grid_volume_warp_z = tilt_series.grid_volume_warp_z.resize(new_size=setting).to(device)
+        tilt_series.grid_volume_warp_z = tilt_series.grid_volume_warp_z.resize(
+            new_size=setting
+        ).to(device)
         leaf_variable_z = tilt_series.grid_volume_warp_z.values.requires_grad_(True)
         tilt_series.grid_volume_warp_z = CubicGrid(setting, leaf_variable_z)
 
         parameters = [
-                leaf_variable_x,
-                leaf_variable_y,
-                leaf_variable_z,
+            leaf_variable_x,
+            leaf_variable_y,
+            leaf_variable_z,
         ]
     else:
-        raise ValueError(f'Invalid setting for alignment optimization: {setting}')
+        raise ValueError(f"Invalid setting for alignment optimization: {setting}")
 
     alignment_optimizer = torch.optim.LBFGS(
         parameters,
@@ -141,34 +146,30 @@ def optimize_shifts(
         alignment_optimizer.zero_grad()
 
         # update the alignments
-        if setting == 'global':
-            tilt_series.tilt_axis_offset_y = (
-                initial_tilt_axis_offset_y + shifts_y
-            )
-            tilt_series.tilt_axis_offset_x = (
-                initial_tilt_axis_offset_x + shifts_x
-            )
+        if setting == "global":
+            tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y
+            tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         subvolumes = []
         for b in range(batches):
             if b == batches - 1:
-                batch_positions = positions[b * batch_size:]
+                batch_positions = positions[b * batch_size :]
             else:
-                batch_positions = positions[b * batch_size: (b+1) * batch_size]
+                batch_positions = positions[b * batch_size : (b + 1) * batch_size]
             # reconstruct subvolumes
-            subvolumes.append(tilt_series.reconstruct_subvolumes_single(
-                tilt_data=images,
-                coords=batch_positions.to(device),
-                pixel_size=pixel_size,
-                size=patch_size,
-                apply_ctf=apply_ctf,
-            ))
+            subvolumes.append(
+                tilt_series.reconstruct_subvolumes_single(
+                    tilt_data=images,
+                    coords=batch_positions.to(device),
+                    pixel_size=pixel_size,
+                    size=patch_size,
+                    apply_ctf=apply_ctf,
+                )
+            )
         subvolumes = torch.cat(subvolumes, dim=0)
         # ensure normalization per tilt
-        mean = einops.reduce(
-            subvolumes, "n d h w -> n 1 1 1", reduction="mean"
-        )
+        mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
         std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
         subvolumes = (subvolumes - mean) / std
 
@@ -189,22 +190,14 @@ def optimize_shifts(
     for x in range(n_iters):
         alignment_optimizer.step(closure)
 
-    if setting == 'global':
+    if setting == "global":
         # remove gradients and finalize global shifts
-        tilt_series.tilt_axis_offset_y = (
-            initial_tilt_axis_offset_y + shifts_y.detach()
-        )
-        tilt_series.tilt_axis_offset_x = (
-            initial_tilt_axis_offset_x + shifts_x.detach()
-        )
+        tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y.detach()
+        tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x.detach()
     elif len(setting) == 3:
         # remove gradients
-        tilt_series.grid_movement_x.values = (
-            tilt_series.grid_movement_x.values.detach()
-        )
-        tilt_series.grid_movement_y.values = (
-            tilt_series.grid_movement_y.values.detach()
-        )
+        tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.detach()
+        tilt_series.grid_movement_y.values = tilt_series.grid_movement_y.values.detach()
     elif len(setting) == 4:
         # remove gradients
         tilt_series.grid_volume_warp_x.values = (
@@ -224,29 +217,27 @@ def optimize_shifts(
 
 
 def evaluate_tilt_series(
-        model_checkpoint_path: Path,
-        tilt_series_path: Path,
-        output_directory: Path,
-        setting: str |
-                 tuple[int, int, int] |
-                 tuple[int, int, int, int] = 'global',
-        patch_size: int = 96,
-        patch_overlap: float = 0.1,
-        batch_size: int = 16,
-        apply_ctf: bool = True,
-        downsample: int = 1,
-        device: str = "cpu",
+    model_checkpoint_path: Path,
+    tilt_series_path: Path,
+    output_directory: Path,
+    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "global",
+    patch_size: int = 96,
+    patch_overlap: float = 0.1,
+    batch_size: int = 16,
+    apply_ctf: bool = True,
+    downsample: int = 1,
+    device: str = "cpu",
 ) -> tuple[Path, list[float]]:
     # load the best model and run alignment optimization
     model = MissAlignment.load_from_checkpoint(
-        model_checkpoint_path, map_location='cpu',
+        model_checkpoint_path,
+        map_location="cpu",
     )
 
     # load tilt_series and set its name for output
-    tilt_series_name = tilt_series_path.stem
     tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
-    tilt_series, images, pixel_size = (
-        tilt_series_data.load_metadata_and_stack(downsample=downsample)
+    tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
+        downsample=downsample
     )
 
     # generate a position grid to optimize over
@@ -272,10 +263,10 @@ def evaluate_tilt_series(
     )
 
     # write all necessary output
-    xml_out = output_directory / (tilt_series_data.xml_filename + '.xml')
-    json_out = output_directory / (tilt_series_data.xml_filename + '.json')
-    new_tilt_series_data = (
-        tilt_series_data.replace(xml_metadata_path=xml_out,)
+    xml_out = output_directory / (tilt_series_data.xml_filename + ".xml")
+    json_out = output_directory / (tilt_series_data.xml_filename + ".json")
+    new_tilt_series_data = tilt_series_data.replace(
+        xml_metadata_path=xml_out,
     )
     new_tilt_series_data.save_metadata_to_xml(tilt_series)
     new_tilt_series_data.to_json(json_out)

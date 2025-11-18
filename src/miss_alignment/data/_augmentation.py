@@ -5,8 +5,8 @@ import torch
 def random_contrast(volume):
     """Slightly alter the mean and std of a pre-normalised tensor"""
     std_change, mean_change = (
-        torch.normal(1, 0.1, (1,), device=volume.device), 
-        torch.normal(0, 0.1, (1,), device=volume.device)
+        torch.normal(1, 0.1, (1,), device=volume.device),
+        torch.normal(0, 0.1, (1,), device=volume.device),
     )
     return volume * std_change + mean_change
 
@@ -28,7 +28,7 @@ def random_mirror(volumes: list[torch.Tensor]) -> list[torch.Tensor]:
 
 
 def random_cube_mask(
-        volume: torch.Tensor, p=.3, size_range=(0.1, 0.3)
+    volume: torch.Tensor, p=0.3, size_range=(0.1, 0.3)
 ) -> torch.Tensor:
     """Mask out a random cube in a volume with probability p"""
     if random.random() >= 1 - p:
@@ -46,27 +46,27 @@ def random_cube_mask(
         start_w = random.randint(0, w - mask_w)
 
         volume[
-            start_d:start_d + mask_d,
-            start_h:start_h + mask_h,
-            start_w:start_w + mask_w
+            start_d : start_d + mask_d,
+            start_h : start_h + mask_h,
+            start_w : start_w + mask_w,
         ] = 2 * random.random() - 1.0
     return volume
 
 
 def random_edge_mask(
-        volume: torch.Tensor,
-        p: float = 0.5,
-        edge_width: tuple[int, int] = (1, 8),
+    volume: torch.Tensor,
+    p: float = 0.5,
+    edge_width: tuple[int, int] = (1, 8),
 ) -> torch.Tensor:
     """Mask out all edges of a volume with probability p"""
     if random.random() >= 1 - p:
         width = random.randint(edge_width[0], edge_width[1])
 
         # Mask all edges in one line using slicing tricks
-        volume[..., :width, :, :] = volume[..., -width:, :, :] = \
-            volume[..., :, :width, :] = volume[..., :, -width:, :] = \
-            volume[..., :, :, :width] = volume[..., :, :, -width:] = (
-            2 * random.random() - 1.0
-        )
+        volume[..., :width, :, :] = volume[..., -width:, :, :] = volume[
+            ..., :, :width, :
+        ] = volume[..., :, -width:, :] = volume[..., :, :, :width] = volume[
+            ..., :, :, -width:
+        ] = 2 * random.random() - 1.0
 
     return volume
