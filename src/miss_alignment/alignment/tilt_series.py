@@ -5,6 +5,7 @@ import torch
 import einops
 from warpylib.cubic_grid import CubicGrid
 from warpylib import TiltSeries
+from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
 
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.models import MissAlignment
@@ -239,6 +240,13 @@ def evaluate_tilt_series(
     tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
     tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
         downsample=downsample
+    )
+    # run the preprocessing from warp for consistency
+    images = preprocess_tilt_data(
+        tilt_data=images,
+        normalize=True,
+        invert=False,
+        subvolume_size=patch_size,
     )
 
     # generate a position grid to optimize over
