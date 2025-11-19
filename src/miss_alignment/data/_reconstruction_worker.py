@@ -254,6 +254,7 @@ def _create_pool_reconstruction(
         size=patch_size,
         apply_ctf=apply_ctf,
         angles=rotation_angles,
+        oversampling=2.0,
     ).squeeze()
     # add the extra translations for the misaligned example
     tilt_series.tilt_axis_offset_y += translations[:, 0]
@@ -266,6 +267,7 @@ def _create_pool_reconstruction(
         size=patch_size,
         apply_ctf=apply_ctf,
         angles=rotation_angles,
+        oversampling=2.0,
     ).squeeze()
 
     # make tuple with volume and label
