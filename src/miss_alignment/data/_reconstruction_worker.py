@@ -245,6 +245,8 @@ def _create_pool_reconstruction(
     translations = _generate_translations(
         shift_generator, projection_matrices, device=device
     )
+    # express translations in angstrom
+    translations_angstrom = translations * pixel_size
 
     # reconstruct aligned example with random rotation
     aligned = tilt_series.reconstruct_subvolumes_single(
@@ -257,8 +259,8 @@ def _create_pool_reconstruction(
         oversampling=2.0,
     ).squeeze()
     # add the extra translations for the misaligned example
-    tilt_series.tilt_axis_offset_y += translations[:, 0]
-    tilt_series.tilt_axis_offset_x += translations[:, 1]
+    tilt_series.tilt_axis_offset_y += translations_angstrom[:, 0]
+    tilt_series.tilt_axis_offset_x += translations_angstrom[:, 1]
     # reconstruct misaligned example with the same rotation
     misaligned = tilt_series.reconstruct_subvolumes_single(
         tilt_data=images,
