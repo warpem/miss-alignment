@@ -13,19 +13,18 @@ set to .json files for miss-alignment. (each .json files will point to a generat
 
 Create a project folder with the following layout. .json files should be directly copied to the iter0 folder without .xml and .st file as it points to their place on disk:
 
-```text
-./
-+- shrec_benchmark/  # this can have your desired name
-¦  +- iter0/         # this name is strict
-¦  ¦  +- model_0.json
-¦  ¦  +- model_1.json
-¦  ¦  +- ...
-¦  +- ground_truth/
-¦  ¦  +- model_0.json
-¦  ¦  +- model_1.json
-¦  ¦  +- ... 
-¦  +- config.yaml 
-¦  +- init_weights.ckpt
+```
+shrec_benchmark/              # this can have your desired name
+├── iter0/                    # this name is strict
+│   ├── model_0.json
+│   ├── model_1.json
+│   └── ...
+├── ground_truth/
+│   ├── model_0.json
+│   ├── model_1.json
+│   └── ...
+├── config.yaml
+└── init_weights.ckpt
 ```
 
 Fill the config.yaml with this text, while updating the 'training_directory' and 'model_checkpoint':

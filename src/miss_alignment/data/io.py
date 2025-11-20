@@ -186,7 +186,15 @@ def convert_pickle_to_json_helper(
         n_tilts=n_tilts,
     )
     tilt_series.angles = data_dict["tilt_angles"]
-    tilt_series.tilt_axis_angles = data_dict["tilt_axis_angle"]
+
+    # Handle scalar tilt_axis_angle by expanding to array
+    tilt_axis_angle = data_dict["tilt_axis_angle"]
+    if tilt_axis_angle.ndim == 0:  # scalar tensor
+        import torch
+
+        tilt_axis_angle = torch.full((n_tilts,), tilt_axis_angle.item())
+    tilt_series.tilt_axis_angles = tilt_axis_angle
+
     axis_offsets_angstrom = data_dict["sample_translations"] * stack_pixel_size
     tilt_series.tilt_axis_offset_y = axis_offsets_angstrom[:, 0].clone()
     tilt_series.tilt_axis_offset_x = axis_offsets_angstrom[:, 1].clone()
