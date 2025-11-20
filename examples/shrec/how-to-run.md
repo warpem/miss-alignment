@@ -65,16 +65,16 @@ data_loading:
   steps_per_epoch: 1000           # this defines the size of an epoch
 
 # this configures the shift generation for the contrastive training of MissAlignment
-# all parameters are in units of 10A (nm) as we assume to work with tilt-series sampled to 10A
+# all parameters are in units of pixels, thus shifts become larger when downsampling
 shift_generation:
   trajectory_probability: .5      # these make bananas and birds
-  trajectory_max_shift: 10.0      # (10 A) trajectories fall somewhere between +/- f
+  trajectory_max_shift: 10.0      # trajectories fall somewhere between +/- f
   jitter_probability: .5
-  jitter_max_std: 2.0             # (10 A) maximum standard deviation of a normal distribution
+  jitter_max_std: 2.0             # maximum standard deviation of a normal distribution
   outlier_probability: .5
-  outlier_max_shift: 20.0         # (10 A) outlier can maximally go to this value
+  outlier_max_shift: 20.0         # outlier can maximally go to this value
   fracture_probability: .5
-  fracture_max_shift: 30.0       # (10 A) specific strong shifts for high tilt images up to this value
+  fracture_max_shift: 30.0       # specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
   patch_size: 96      # same as training patch size
