@@ -48,7 +48,7 @@ general:
 model_training:
   # used to initialize model weights
   model_architecture: 'default'
-  model_checkpoint: /path/to/project/init_weights.ckpt  # starting weights
+  model_checkpoint: /path/to/init_weights.ckpt  # starting weights
   loss_margin: 0.5
   learning_rate: 1.0e-3
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
@@ -84,17 +84,17 @@ tilt_series_alignment:
 
 ## Starting the program
 
-To run the model use the following command:
+To run the model use the following command (modify resources as necessary):
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 MISS_ALIGNMENT_RECON_POOL_SIZE=200 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment train --config-file /path/to/conf.yaml --reconstruction-workers 3 --dataloader-workers 3 --n-devices 4
+CUDA_VISIBLE_DEVICES=0,1,2,3 MISS_ALIGNMENT_RECON_POOL_SIZE=200 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment train --config-file /path/to/config.yaml --reconstruction-workers 3 --dataloader-workers 3 --n-devices 4
 ```
 
 If you modify the computing resources it can be handy to run with the option `--monitor-production-and-consumption` to track the consumption/production ratio. The value should be around 2. The option does not (yet) robustly work throughout iterations. So, you should only run it for a few epochs to get the gist of the ratio, cancel the program, and restart without the option.
 
 ## Evaluate alignment performance against ground truth
 
-After running you can evaluate the results against the ground truth alignment with the program 'compare_to_ground_truth.py'. The arguments should be self-explanatory.
+After running you can evaluate the results against the ground truth alignment with the program `compare_to_ground_truth.py`. The arguments should be self-explanatory.
 
 ## Check against other results
 
