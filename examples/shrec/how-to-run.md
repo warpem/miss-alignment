@@ -96,3 +96,9 @@ If you modify the computing resources it can be handy to run with the option `--
 
 After running you can evaluate the results against the ground truth alignment with the program 'compare_to_ground_truth.py'. The arguments should be self-explanatory.
 
+## Check against other results
+
+Two files contain the results of the downsampling experiment:
+
+* command line output of `compare_to_ground_truth.py` : shrec_experiment_downsample_result_summary.txt
+* raw shift error per tilt-series written by the script : shrec_experiment_downsample_errors_per_ts.json
