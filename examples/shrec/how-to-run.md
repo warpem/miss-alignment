@@ -11,7 +11,7 @@ set to .json files for miss-alignment (each .json file will point to a generated
 
 ## Setup project
 
-Create a project folder with the following layout. .json files should be directly copied to the iter0 folder without the .xml and .st files, as they point to their location on disk:
+Create a project folder with the following layout. .json files should be directly copied to the iter0 folder without the .xml and .st files, as they point to their location on disk. Ground truth files are not strictly necessary to have here, but might be handy for organisation:
 
 ```
 shrec_benchmark/              # this can have your desired name
