@@ -1,16 +1,23 @@
 general:
   # MissAlignment iteratively trains models and realigns the tilt-series
-  # here you can continue training from a specific iteration
-  start_at_iteration: 0
+  training_directory: /data/set/  # path to directory for writing iteration output
+  apply_ctf: True                 # set to True if CTF estimates are available in .xml
+  iteration_settings:             # defines all iterations to run (length determines number of iterations)
+    - { downsample: 2, alignment: global }
+    - { downsample: 2, alignment: global }
+    - { downsample: 1, alignment: global }
+    - { downsample: 1, alignment: global }
+    - { downsample: 1, alignment: global }
+    - { downsample: 1, alignment: [3, 3, 40] }  # local refinement with a 3x3 image warping grid
   seed: 45132
-  download_data: True              # download data from zenodo to folder/iter0 if its empty
-  tomogram_shape: (180, 512, 512)  # this determines the reconstruction area in 3D that is used for training/alignment
+
+# ====================================================================
+# Don't touch the parameters below unless you know what you are doing!
 
 model_training:
   # used to initialize model weights
   model_architecture: 'default'
   model_checkpoint: /path/to/model.ckpt
-  output_directory: /path/to/   # here model checkpoints are stored in lightning_log directories
   loss_margin: 0.5
   learning_rate: 1.0e-3
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
@@ -21,8 +28,7 @@ model_training:
     milestones: [5, 15]
     gamma: 0.5                  # multiply learning rate by this value at the milestone epochs
 
-data_module:
-  training_directory: /data/set/  # path to dataset location
+data_loading:
   batch_size: 32                  # these value have been used as defaults:
   patch_size: 96                  # batch size 32 | reconstruction size 128 ^ 3
   steps_per_epoch: 1000           # this defines the size of an epoch
@@ -40,6 +46,6 @@ shift_generation:
   fracture_max_shift: 30.0       # (10 A) specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
-  patches_per_dim: [2, 5, 5]    # this should be chosen to fit as many non-overlapping boxes in the tomo shape
-  patch_size: 96                # same as training patch size
-  ground_truth_directory: null  # optional directory to get ground truth, name.pickle should match
+  patch_size: 96      # same as training patch size
+  patch_overlap: 0.1  # tolerated overlap between patches used for optimizing the alignment
+  batch_size: 16      # amount of patches simultaneously reconstructed in memory -> the more the merrier

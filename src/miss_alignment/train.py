@@ -1,8 +1,5 @@
 from pathlib import Path
 import yaml
-import subprocess
-import shutil
-import os
 
 import typer
 import torch
@@ -18,34 +15,14 @@ from .alignment import run_alignment_parallel
 from .data._pool_monitor import SimplePoolMonitor
 
 
-_zenodo_archive = "16574872"
-
-def _download_to_dir(dataset_directory: Path):
-    subprocess.run(
-        [
-            "zenodo_get",
-            _zenodo_archive,  # update value
-            "--output-dir",
-            str(dataset_directory),
-        ]
-    )
-    for archive in ("torch_tiltxcorr.zip", "ground_truth.zip"):
-        zipped_archive = dataset_directory / archive
-        shutil.unpack_archive(
-            zipped_archive,
-            extract_dir=dataset_directory,
-        )
-        os.remove(zipped_archive)
-
-
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
-        config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-        reconstruction_workers: int = 4,
-        dataloader_workers: int = 4,
-        n_devices: int = 1,
-        iterations: int = 3,
-        monitor_production_and_consumption: bool = False,
+    config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
+    reconstruction_workers: int = 4,
+    dataloader_workers: int = 4,
+    n_devices: int = 1,
+    start_at_iteration: int = 0,
+    monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
@@ -66,41 +43,29 @@ def train_miss_align(
     # Extract configuration parameters
     general_config = config["general"]
     model_training_config = config["model_training"]
-    data_module_config = config["data_module"]
+    data_module_config = config["data_loading"]
     shift_generation_config = config["shift_generation"]
     alignment_config = config["tilt_series_alignment"]
 
     # track the path to the dataset
-    training_directory = Path(data_module_config["training_directory"])
+    training_directory = Path(general_config["training_directory"])
     training_directory.mkdir(exist_ok=True, parents=True)
-    ground_truth_directory = (
-        Path(alignment_config["ground_truth_directory"])
-        if alignment_config["ground_truth_directory"] is not None
-        else None
-    )
-    if general_config['download_data']:
-        _download_to_dir(ground_truth_directory)
-    #TODO we would like to estimate the sample thickness
-    TOMOGRAM_SHAPE = general_config["tomogram_shape"]
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
-    start_iter = general_config['start_at_iteration']
-    end_iter = start_iter + iterations
-    if not isinstance(model_training_config['learning_rate'], list):
-        learning_rates = [model_training_config["learning_rate"],] * iterations
-    else:
-        learning_rates = model_training_config["learning_rate"]
+    start_iter = start_at_iteration
+    end_iter = len(general_config["iteration_settings"])
 
-    for x, lr in zip(range(start_iter, end_iter), learning_rates):
+    for x in range(start_iter, end_iter):
         # ============================================================
         # ================= model training step ======================
         # ============================================================
-        iteration_directory = training_directory / ('iter' + str(x))
+        iteration_directory = training_directory / ("iter" + str(x))
         iteration_directory.mkdir(parents=True, exist_ok=True)
+        iteration_settings = general_config["iteration_settings"][x]
 
         # Define the early stopping callback
         early_stopping = MAEarlyStopping(
@@ -122,7 +87,7 @@ def train_miss_align(
         trainer = Trainer(
             accelerator="gpu",
             devices=devices_list[0:1],  # use the 0 device
-            default_root_dir=model_training_config["output_directory"],
+            default_root_dir=training_directory / "models",
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
             enable_checkpointing=True,
@@ -141,12 +106,11 @@ def train_miss_align(
 
         # Initialize model with parameters from config
         model_params = {
-            "learning_rate": lr,
+            "learning_rate": model_training_config["learning_rate"],
             "margin": model_training_config["loss_margin"],
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
-            "multistep_lr_scheduler": model_training_config[
-                "multistep_lr_scheduler"],
+            "multistep_lr_scheduler": model_training_config["multistep_lr_scheduler"],
             "monitor": monitor,
             "model_architecture": model_training_config["model_architecture"],
         }
@@ -167,7 +131,8 @@ def train_miss_align(
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
-            tomogram_shape=TOMOGRAM_SHAPE,
+            apply_ctf=general_config["apply_ctf"],
+            downsample=iteration_settings["downsample"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
             monitor=monitor,
         ) as dm:
@@ -177,9 +142,8 @@ def train_miss_align(
             trainer.fit(model, train_dataloaders=training_data)
 
         print(
-            f'Best model after '
-            f'training iteration {x}:',
-            trainer.checkpoint_callback.best_model_path
+            f"Best model after training iteration {x}:",
+            trainer.checkpoint_callback.best_model_path,
         )
         # update the config with the trained model
         model_training_config["model_checkpoint"] = (
@@ -190,29 +154,24 @@ def train_miss_align(
         # =============== tilt-series alignment step =================
         # ============================================================
         # get the output directory ready
-        output_directory = training_directory / ('iter' + str(x + 1))
+        output_directory = training_directory / ("iter" + str(x + 1))
         output_directory.mkdir(parents=True, exist_ok=True)
 
         # get list of all files to process for alignment
-        #  + their associated ground truth if available
-        tilt_series_list = list(iteration_directory.glob('*.pickle'))
-        if ground_truth_directory is not None:
-            ground_truth_list = [
-                ground_truth_directory / x.name for x in tilt_series_list
-            ]
-        else:
-            ground_truth_list = None
+        tilt_series_list = list(iteration_directory.glob("*.json"))
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
-            model_training_config["model_checkpoint"],
-            tilt_series_list,
-            alignment_config["patches_per_dim"],
-            alignment_config["patch_size"],
-            TOMOGRAM_SHAPE,
-            output_directory,
-            devices_list,
-            ground_truth_list=ground_truth_list,
+            model_checkpoint=model_training_config["model_checkpoint"],
+            tilt_series_list=tilt_series_list,
+            output_directory=output_directory,
+            setting=iteration_settings["alignment"],
+            patch_size=alignment_config["patch_size"],
+            patch_overlap=alignment_config["patch_overlap"],
+            batch_size=alignment_config["batch_size"],
+            apply_ctf=general_config["apply_ctf"],
+            downsample=iteration_settings["downsample"],
+            devices_list=devices_list,
         )
 
     return None

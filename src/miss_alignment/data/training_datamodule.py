@@ -39,39 +39,47 @@ class MissAlignmentDataModule(pl.LightningDataModule):
     Parameters
     ----------
     """
+
     def __init__(
-            self,
-            dataset_directory: os.PathLike,
-            shift_generator: Callable,
-            reconstruction_workers: int = 4,
-            reconstruction_accelerators: Optional[list[int]] = None,
-            dataloader_workers: int = 4,
-            batch_size: int = 4,
-            steps_per_epoch: int = 1000,
-            patch_size: int = 64,
-            tomogram_shape: tuple[int, int, int] = (180, 512, 512),
-            monitor: Optional[SimplePoolMonitor] = None,
+        self,
+        dataset_directory: os.PathLike,
+        shift_generator: Callable,
+        reconstruction_workers: int = 4,
+        reconstruction_accelerators: Optional[list[int]] = None,
+        dataloader_workers: int = 4,
+        batch_size: int = 4,
+        steps_per_epoch: int = 1000,
+        patch_size: int = 64,
+        apply_ctf: bool = False,
+        downsample: int = 1,
+        monitor: Optional[SimplePoolMonitor] = None,
     ):
         super().__init__()
         # data module controls
         self.batch_size = batch_size
         self.epoch_size = steps_per_epoch * batch_size
         self.reconstruction_workers = reconstruction_workers
-        if reconstruction_accelerators is not None:
-            if len(reconstruction_accelerators) != reconstruction_workers:
-                raise ValueError('Number of reconstruction workers must match '
-                                 'number of reconstruction accelerators')
-            self.reconstruction_devices = ['cuda:' + str(x) for x in
-                                           reconstruction_accelerators]
+        if reconstruction_accelerators in [None, []]:
+            self.reconstruction_devices = [
+                "cpu",
+            ] * reconstruction_workers
         else:
-            self.reconstruction_devices = ['cpu',] * reconstruction_workers
+            if len(reconstruction_accelerators) != reconstruction_workers:
+                raise ValueError(
+                    "Number of reconstruction workers must match "
+                    "number of reconstruction accelerators"
+                )
+            self.reconstruction_devices = [
+                "cuda:" + str(x) for x in reconstruction_accelerators
+            ]
 
         self.reconstruction_accelerators = reconstruction_accelerators
         self.dataloader_workers = dataloader_workers
 
         # reconstruction controls
-        self.tomogram_shape = tomogram_shape
         self.patch_size = patch_size
+        self.apply_ctf = apply_ctf
+        self.downsample = downsample
         self.shift_generator = shift_generator
 
         # initialize the dataset and pool attributes
@@ -106,7 +114,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         mp.set_start_method("spawn", force=True)
 
         # Create temporary directory for pool
-        self.pool_dir = Path(tempfile.mkdtemp(prefix='recon_pool_'))
+        self.pool_dir = Path(tempfile.mkdtemp(prefix="recon_pool_"))
         print(f"Created pool directory: {self.pool_dir}")
 
         # Partition indices among workers
@@ -114,31 +122,30 @@ class MissAlignmentDataModule(pl.LightningDataModule):
 
         # Start worker processes
         self.stop_event = mp.Event()
-        self.ready_flag = mp.Value('i', 0)
+        self.ready_flag = mp.Value("i", 0)
 
         # get a list of all the tilt series pickle files
-        tilt_series_pickles = (
-            [x for x in self.dataset_directory.iterdir() if x.suffix =='.pickle']
-        )
+        tilt_series_jsons = list(self.dataset_directory.glob("*.json"))
 
         for worker_id, indices in enumerate(partitions):
             p = mp.Process(
                 target=reconstruction_worker,
-                args=(
-                    worker_id,
-                    indices.tolist(),
-                    self.pool_dir,
-                    tilt_series_pickles,
-                    self.tomogram_shape,
-                    self.patch_size,
-                    self.shift_generator,
-                    self.ready_flag,
-                    self.stop_event,
-                    self.monitor,
-                    10,  # number of times tilt_series is kept in memory
-                    # before fetching the next set
-                    self.reconstruction_devices[worker_id],
-                )
+                kwargs={
+                    "worker_id": worker_id,
+                    "assigned_indices": indices.tolist(),
+                    "pool_dir": self.pool_dir,
+                    "tilt_series_jsons": tilt_series_jsons,
+                    "patch_size": self.patch_size,
+                    "apply_ctf": self.apply_ctf,
+                    "downsample": self.downsample,
+                    "shift_generator": self.shift_generator,
+                    "ready_flag": self.ready_flag,
+                    "stop_event": self.stop_event,
+                    "monitor": self.monitor,
+                    "tilt_series_refresh_rate": 10,  # number of times
+                    # tilt_series is reused before fetching next
+                    "device": self.reconstruction_devices[worker_id],
+                },
             )
             p.start()
             self.pool_processes.append(p)
@@ -162,7 +169,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             shuffle=False,  # data is already randomized by recon workers
             drop_last=True,
             num_workers=self.dataloader_workers,
-            multiprocessing_context='fork',
+            multiprocessing_context="fork",
             persistent_workers=True,
             pin_memory=True,
         )

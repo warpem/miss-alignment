@@ -1,6 +1,5 @@
 import time
 import multiprocessing as mp
-from collections import deque
 
 
 class SimplePoolMonitor:
@@ -14,8 +13,8 @@ class SimplePoolMonitor:
         manager = mp.Manager()
 
         # Total counters - just use manager.Value without locks
-        self.total_produced = manager.Value('Q', 0)
-        self.total_consumed = manager.Value('Q', 0)
+        self.total_produced = manager.Value("Q", 0)
+        self.total_consumed = manager.Value("Q", 0)
 
         self.start_time = time.time()
 
@@ -47,24 +46,27 @@ class SimplePoolMonitor:
         consumption_rate = self.total_consumed.value / elapsed
 
         return {
-            'production_rate': production_rate,
-            'consumption_rate': consumption_rate,
-            'total_produced': self.total_produced.value,
-            'total_consumed': self.total_consumed.value,
-            'uptime': elapsed
+            "production_rate": production_rate,
+            "consumption_rate": consumption_rate,
+            "total_produced": self.total_produced.value,
+            "total_consumed": self.total_consumed.value,
+            "uptime": elapsed,
         }
 
     def print_stats(self):
         """Print current statistics."""
         stats = self.get_rates()
 
-        print(f"\n=== Pool Statistics ===")
+        print("\n=== Pool Statistics ===")
         print(f"Production rate: {stats['production_rate']:.2f} files/sec")
         print(f"Consumption rate: {stats['consumption_rate']:.2f} files/sec")
         print(f"Total produced: {stats['total_produced']}")
         print(f"Total consumed: {stats['total_consumed']}")
         print(f"Uptime: {stats['uptime']:.1f}s")
 
-        ratio = stats['consumption_rate'] / stats['production_rate'] if stats[
-                                                                            'production_rate'] > 0 else 0
+        ratio = (
+            stats["consumption_rate"] / stats["production_rate"]
+            if stats["production_rate"] > 0
+            else 0
+        )
         print(f"Consumption/Production ratio: {ratio:.2f}")

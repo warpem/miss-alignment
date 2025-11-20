@@ -27,6 +27,7 @@ class ReconstructionPoolDataset(Dataset):
     pool_size : int
         Number of reconstructions in the pool
     """
+
     def __init__(self, pool_dir: Path, pool_size: int, epoch_size: int):
         self.pool_dir = pool_dir
         self.pool_size = pool_size
@@ -60,8 +61,9 @@ class ReconstructionPoolDataset(Dataset):
         random.shuffle(examples)
         volumes, labels = zip(*examples)
         if not (1 in labels and -1 in labels and all(i in [1, -1] for i in labels)):
-            raise ValueError("Training examples must contain positive and "
-                             "negative labels.")
+            raise ValueError(
+                "Training examples must contain positive and negative labels."
+            )
         labels = torch.tensor(labels)
 
         # run normalization and augmentation
@@ -71,12 +73,10 @@ class ReconstructionPoolDataset(Dataset):
 
         return *volumes, labels
 
-    def _prep_and_augment(self, volumes: list[torch.Tensor]) -> list[
-        torch.Tensor]:
+    def _prep_and_augment(self, volumes: list[torch.Tensor]) -> list[torch.Tensor]:
         volumes = [self._normalize(v) for v in volumes]
         volumes = [random_contrast(v) for v in volumes]
-        volumes = [random_edge_mask(v, edge_width=(1, 5))
-                   for v in volumes]
+        volumes = [random_edge_mask(v, edge_width=(1, 5)) for v in volumes]
         volumes = [random_cube_mask(v) for v in volumes]
         # random mirror works on list to ensure consistency between triplets
         volumes = random_mirror(volumes)
@@ -85,6 +85,7 @@ class ReconstructionPoolDataset(Dataset):
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)
         if std == 0.0:
-            raise ValueError('Cannot normalize patch because '
-                             'the standard deviation is 0.')
+            raise ValueError(
+                "Cannot normalize patch because the standard deviation is 0."
+            )
         return (volume - mean) / std

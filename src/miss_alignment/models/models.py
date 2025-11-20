@@ -20,12 +20,12 @@ from ..data._pool_monitor import SimplePoolMonitor
 
 
 model_map = {
-    'default': Compact3DConvNet,
-    'gelu': Compact3DConvNetGELU,
-    'spread': Compact3DConvNetSpread,
-    'wide': Compact3DConvNetWide,
-    'deep': Compact3DConvNetDeep,
-    'resnet': CompactResNet3D,
+    "default": Compact3DConvNet,
+    "gelu": Compact3DConvNetGELU,
+    "spread": Compact3DConvNetSpread,
+    "wide": Compact3DConvNetWide,
+    "deep": Compact3DConvNetDeep,
+    "resnet": CompactResNet3D,
 }
 
 
@@ -95,7 +95,7 @@ class MissAlignment(pl.LightningModule):
         warmup_steps: int = 500,
         weight_decay: float = 0,
         margin: float = 0.5,
-            # will be saved as a hyperparameter
+        # will be saved as a hyperparameter
         multistep_lr_scheduler: Optional[dict] = None,
         monitor: Optional[SimplePoolMonitor] = None,
         model_architecture: str = "default",
@@ -151,12 +151,9 @@ class MissAlignment(pl.LightningModule):
         batch: dict,
         batch_idx: int,
     ):
-        (
-            loss,
-            batch_size,
-            score_aligned,
-            score_misaligned
-        ) = self._common_step(batch, batch_idx)
+        (loss, batch_size, score_aligned, score_misaligned) = self._common_step(
+            batch, batch_idx
+        )
 
         self.log(  # add it to progress bar
             name="train_loss",
@@ -276,8 +273,10 @@ class MAEarlyStopping(Callback):
             return True
 
         # Check if module has MultiStepLR configured
-        if not (hasattr(pl_module.hparams, "multistep_lr_scheduler")
-                and pl_module.hparams.multistep_lr_scheduler is not None):
+        if not (
+            hasattr(pl_module.hparams, "multistep_lr_scheduler")
+            and pl_module.hparams.multistep_lr_scheduler is not None
+        ):
             # No scheduler configured, can start early stopping immediately
             self.scheduler_complete = True
             return True
@@ -300,13 +299,12 @@ class MAEarlyStopping(Callback):
 
         logged_metrics = trainer.logged_metrics
 
-        if 'train_loss' in logged_metrics:
-            current_score = logged_metrics['train_loss']
+        if "train_loss" in logged_metrics:
+            current_score = logged_metrics["train_loss"]
         else:
-            raise ValueError('Couldn\'t find train_loss in pl_module')
+            raise ValueError("Couldn't find train_loss in pl_module")
 
-        if (self.best_score is None
-                or current_score < self.best_score - self.min_delta):
+        if self.best_score is None or current_score < self.best_score - self.min_delta:
             self.best_score = current_score
             self.wait_count = 0
         else:
