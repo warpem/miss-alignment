@@ -2,16 +2,16 @@
 
 ## Download and prepare input
 
-Adjust parameters and run the setup.py script. This does the following:
+To download and prepare training input, run preproc.py and specify a `--download-dir` via the script arguments. This does the following:
 
-* download the data from zenodo (specify a download location in the script)
-* use a helper function from miss_alignment.data.io to convert the 
+* download the data from Zenodo
+* use a helper function from miss_alignment.data.io to convert the
 downloaded pickles for both the ground-truth set and the tiltxcorr-aligned
-set to .json files for miss-alignment. (each .json files will point to a generated .xml and .st file)
+set to .json files for miss-alignment (each .json file will point to a generated .xml and .st file)
 
 ## Setup project
 
-Create a project folder with the following layout. .json files should be directly copied to the iter0 folder without .xml and .st file as it points to their place on disk:
+Create a project folder with the following layout. .json files should be directly copied to the iter0 folder without the .xml and .st files, as they point to their location on disk:
 
 ```
 shrec_benchmark/              # this can have your desired name
@@ -27,7 +27,7 @@ shrec_benchmark/              # this can have your desired name
 └── init_weights.ckpt
 ```
 
-Fill the config.yaml with this text, while updating the 'training_directory' and 'model_checkpoint':
+Fill config.yaml with the following text, while updating the 'training_directory' and 'model_checkpoint':
 
 ```yaml
 general:
@@ -45,9 +45,6 @@ general:
     - { downsample: 1, alignment: global }
   seed: 45132
 
-# ====================================================================
-# Don't touch the parameters below unless you know what you are doing!
-
 model_training:
   # used to initialize model weights
   model_architecture: 'default'
@@ -63,7 +60,7 @@ model_training:
     gamma: 0.5                  # multiply learning rate by this value at the milestone epochs
 
 data_loading:
-  batch_size: 32                  # these value have been used as defaults:
+  batch_size: 32                  # these values have been used as defaults:
   patch_size: 96                  # batch size 32 | reconstruction size 128 ^ 3
   steps_per_epoch: 1000           # this defines the size of an epoch
 
@@ -85,5 +82,17 @@ tilt_series_alignment:
   batch_size: 16      # amount of patches simultaneously reconstructed in memory -> the more the merrier 
 ```
 
+## Starting the program
+
+To run the model use the following command:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 MISS_ALIGNMENT_RECON_POOL_SIZE=200 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment train --config-file /path/to/conf.yaml --reconstruction-workers 3 --dataloader-workers 3 --n-devices 4
+```
+
+If you modify the computing resources it can be handy to run with the option `--monitor-production-and-consumption` to track the consumption/production ratio. The value should be around 2. The option does not (yet) robustly work throughout iterations. So, you should only run it for a few epochs to get the gist of the ratio, cancel the program, and restart without the option.
+
 ## Evaluate alignment performance against ground truth
+
+After running you can evaluate the results against the ground truth alignment with the program 'compare_to_ground_truth.py'. The arguments should be self-explanatory.
 
