@@ -32,7 +32,7 @@ Fill config.yaml with the following text, while updating the 'training_directory
 ```yaml
 general:
   # MissAlignment iteratively trains models and realigns the tilt-series
-  training_directory: /path/to/project/  # path to directory for writing iteration output
+  training_directory: /path/to/shrec_benchmark/  # path to directory for writing iteration output
   apply_ctf: False                # set to True if CTF estimates are available in .xml
   iteration_settings:             # defines all iterations to run (length determines number of iterations)
     - { downsample: 2, alignment: global }
