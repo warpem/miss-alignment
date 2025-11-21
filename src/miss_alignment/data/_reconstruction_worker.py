@@ -139,6 +139,7 @@ def reconstruction_worker(
     monitor: Optional[SimplePoolMonitor] = None,
     tilt_series_refresh_rate: int = 1,
     device: str | torch.device = "cpu",
+    num_workers: Optional[int] = None,
 ):
     """
     Worker process that maintains a subset of the reconstruction pool.
@@ -177,8 +178,12 @@ def reconstruction_worker(
     print(f"Worker {worker_id} starting with indices {assigned_indices[:5]}...")
 
     # Divide tilt series among workers to avoid duplicate preprocessing
-    # Each worker gets a subset of tilt series to process
-    assigned_tilt_series = [ts for i, ts in enumerate(tilt_series_jsons) if i % len(assigned_indices) == worker_id % len(assigned_indices)]
+    # Each worker gets a subset of tilt series to process (round-robin)
+    if num_workers is None:
+        # Fallback: use all tilt series if num_workers not provided
+        assigned_tilt_series = tilt_series_jsons
+    else:
+        assigned_tilt_series = [ts for i, ts in enumerate(tilt_series_jsons) if i % num_workers == worker_id]
 
     if not assigned_tilt_series:
         # Fallback: if division resulted in empty list, use all tilt series

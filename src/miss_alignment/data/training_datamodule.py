@@ -145,6 +145,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                     "tilt_series_refresh_rate": 10,  # number of times
                     # tilt_series is reused before fetching next
                     "device": self.reconstruction_devices[worker_id],
+                    "num_workers": self.reconstruction_workers,  # total number of workers
                 },
             )
             p.start()
