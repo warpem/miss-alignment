@@ -3,7 +3,7 @@ from pathlib import Path
 import einops
 import torch
 import random
-import pickle
+import numpy as np
 
 from ._augmentation import (
     random_contrast,
@@ -51,22 +51,30 @@ class ReconstructionPoolDataset(Dataset):
         tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
             Dictionary containing the reconstruction data
         """
-        file_path = self.pool_dir / f"recon_{idx % self.pool_size}.pickle"
+        file_path = self.pool_dir / f"recon_{idx % self.pool_size}.npz"
 
         # This should always succeed due to atomic rename
-        with open(file_path, "rb") as infile:
-            examples = pickle.load(infile)
+        data = np.load(file_path)
 
-        # shuffle the triplet
-        random.shuffle(examples)
-        volumes, labels = zip(*examples)
-        # convert from fp16 storage back to fp32 for training
-        volumes = [v.float() for v in volumes]
+        # Load volumes and labels from npz
+        volumes = [
+            torch.from_numpy(data['vol0']).float(),
+            torch.from_numpy(data['vol1']).float(),
+            torch.from_numpy(data['vol2']).float(),
+        ]
+        labels = torch.from_numpy(data['labels']).long()
+
+        # shuffle the triplet (volumes and labels together)
+        indices = list(range(3))
+        random.shuffle(indices)
+        volumes = [volumes[i] for i in indices]
+        labels = labels[indices]
+
+        # Validate labels
         if not (1 in labels and -1 in labels and all(i in [1, -1] for i in labels)):
             raise ValueError(
                 "Training examples must contain positive and negative labels."
             )
-        labels = torch.tensor(labels)
 
         # run augmentation (volumes already normalized by reconstruction workers)
         volumes = self._prep_and_augment(volumes)

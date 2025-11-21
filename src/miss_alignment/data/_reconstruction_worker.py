@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
 import torch
-import pickle
+import numpy as np
 import einops
 import os
 from torch_affine_utils.transforms_3d import Ry, Rz
@@ -170,11 +170,11 @@ def reconstruction_worker(
         )
 
         # Write directly first time (no temp file needed)
-        file_path = pool_dir / f"recon_{idx}.pickle"
-        with open(file_path, "wb") as outfile:
-            pickle.dump(data_and_labels, outfile)
+        # np.savez adds .npz extension automatically
+        file_path = pool_dir / f"recon_{idx}"
+        np.savez(file_path, **data_and_labels)
         # ensure correct permissions
-        os.chmod(file_path, 0o644)
+        os.chmod(f"{file_path}.npz", 0o644)
 
     # Signal ready after initial fill
     with ready_flag.get_lock():
@@ -199,17 +199,22 @@ def reconstruction_worker(
         )
 
         # Atomic replacement using temp file and rename
-        file_path = pool_dir / f"recon_{idx}.pickle"
-        with tempfile.NamedTemporaryFile(
-            dir=pool_dir, prefix=f"tmp_recon_{idx}_", suffix=".pickle", delete=False
-        ) as tmp_file:
-            tmp_path = Path(tmp_file.name)
-            pickle.dump(data_and_labels, tmp_file)
+        # Create temp file and save with npz
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=pool_dir, prefix=f"tmp_recon_{idx}_", suffix=""
+        )
+        os.close(tmp_fd)  # Close the file descriptor
+        tmp_path = Path(tmp_path_str)
+
+        np.savez(tmp_path, **data_and_labels)
+        # np.savez adds .npz extension
+        tmp_path_npz = Path(f"{tmp_path}.npz")
 
         # fix permissions
-        os.chmod(tmp_path, 0o644)
+        os.chmod(tmp_path_npz, 0o644)
         # Atomic rename (replaces existing file)
-        tmp_path.rename(file_path)
+        final_path = pool_dir / f"recon_{idx}.npz"
+        tmp_path_npz.rename(final_path)
 
         # Record production
         if monitor is not None:
@@ -286,17 +291,19 @@ def _create_pool_reconstruction(
     aligned = _normalize(aligned)
     misaligned = _normalize(misaligned)
 
-    # make tuple with volume and label (convert to fp16 to save storage)
-    examples = [(aligned.half().cpu(), 1), (misaligned.half().cpu(), -1)]
+    # choose third volume randomly (aligned or misaligned)
+    if random.random() > 0.5:
+        vol2, label2 = aligned, 1
+    else:
+        vol2, label2 = misaligned, -1
 
-    # make a triplet example randomly mimick 1 or 2
-    examples += [
-        (aligned.clone().half().cpu(), 1)
-        if random.random() > 0.5
-        else (misaligned.clone().half().cpu(), -1)
-    ]
-
-    return examples
+    # convert to fp16 numpy arrays for efficient storage
+    return {
+        'vol0': aligned.half().cpu().numpy(),
+        'vol1': misaligned.half().cpu().numpy(),
+        'vol2': vol2.half().cpu().numpy(),
+        'labels': np.array([1, -1, label2], dtype=np.int8)
+    }
 
 
 def _generate_translations(
