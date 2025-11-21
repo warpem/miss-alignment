@@ -87,6 +87,7 @@ def train_miss_align(
         trainer = Trainer(
             accelerator="gpu",
             devices=devices_list[0:1],  # use the 0 device
+            precision='16-mixed',  # use automatic mixed precision for faster training
             default_root_dir=training_directory / "models",
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
