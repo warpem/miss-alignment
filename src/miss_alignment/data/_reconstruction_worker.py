@@ -40,6 +40,7 @@ class TiltSeriesFetcher:
     refresh_rate: int
     downsample: int
     device: str | torch.device
+    cache_dir: Optional[Path] = None  # directory for caching preprocessed stacks
     _counter: int = 0
     _tilt_series: Optional[TiltSeries] = None
     _images: Optional[torch.Tensor] = None
@@ -64,19 +65,49 @@ class TiltSeriesFetcher:
         self._tilt_series.tilt_axis_offset_y = self._tmp_tilt_axis_offset_y.clone()
 
     def _load_next(self):
-        tilt_series_data = TiltSeriesData.from_json(
-            random.choice(self.tilt_series_jsons)
-        )
-        tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
-            downsample=self.downsample
-        )
-        # run the preprocessing from warp for consistency
-        images = preprocess_tilt_data(
-            tilt_data=images,
-            normalize=True,
-            invert=False,
-            subvolume_size=self.patch_size,
-        )
+        tilt_series_json = random.choice(self.tilt_series_jsons)
+        tilt_series_data = TiltSeriesData.from_json(tilt_series_json)
+
+        # Generate cache filename with downsample factor
+        if self.cache_dir is not None:
+            tilt_series_name = tilt_series_json.stem  # filename without extension
+            cache_filename = f"preprocessed_{tilt_series_name}_ds{self.downsample}.npz"
+            cache_path = self.cache_dir / cache_filename
+        else:
+            cache_path = None
+
+        # Try to load from cache first
+        if cache_path is not None and cache_path.exists():
+            # Load preprocessed images from cache
+            cached_data = np.load(cache_path)
+            images = torch.from_numpy(cached_data['images'])
+            pixel_size = float(cached_data['pixel_size'])
+            # Load tilt series metadata (lightweight, no image data)
+            tilt_series, _, _ = tilt_series_data.load_metadata_and_stack(
+                downsample=self.downsample
+            )
+        else:
+            # Load and preprocess from scratch
+            tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
+                downsample=self.downsample
+            )
+            # run the preprocessing from warp for consistency
+            images = preprocess_tilt_data(
+                tilt_data=images,
+                normalize=True,
+                invert=False,
+                subvolume_size=self.patch_size,
+            )
+
+            # Save to cache for future use
+            if cache_path is not None:
+                np.savez(
+                    cache_path,
+                    images=images.cpu().numpy(),
+                    pixel_size=pixel_size
+                )
+                os.chmod(cache_path, 0o644)
+
         tilt_series = tilt_series.to(self.device)
         images = images.to(self.device)
         self._tilt_series = tilt_series
@@ -145,13 +176,24 @@ def reconstruction_worker(
 
     print(f"Worker {worker_id} starting with indices {assigned_indices[:5]}...")
 
+    # Divide tilt series among workers to avoid duplicate preprocessing
+    # Each worker gets a subset of tilt series to process
+    assigned_tilt_series = [ts for i, ts in enumerate(tilt_series_jsons) if i % len(assigned_indices) == worker_id % len(assigned_indices)]
+
+    if not assigned_tilt_series:
+        # Fallback: if division resulted in empty list, use all tilt series
+        assigned_tilt_series = tilt_series_jsons
+
+    print(f"Worker {worker_id} assigned {len(assigned_tilt_series)}/{len(tilt_series_jsons)} tilt series")
+
     # counter to keep track of how many times reconstructions have been reused
     tilt_series_fetcher = TiltSeriesFetcher(
-        tilt_series_jsons=tilt_series_jsons,
+        tilt_series_jsons=assigned_tilt_series,
         patch_size=patch_size,
         refresh_rate=tilt_series_refresh_rate,
         downsample=downsample,
         device=device,
+        cache_dir=pool_dir,  # use same directory for caching preprocessed stacks
     )
 
     # Initial fill of assigned pool slots
