@@ -60,6 +60,8 @@ class ReconstructionPoolDataset(Dataset):
         # shuffle the triplet
         random.shuffle(examples)
         volumes, labels = zip(*examples)
+        # convert from fp16 storage back to fp32 for training
+        volumes = [v.float() for v in volumes]
         if not (1 in labels and -1 in labels and all(i in [1, -1] for i in labels)):
             raise ValueError(
                 "Training examples must contain positive and negative labels."

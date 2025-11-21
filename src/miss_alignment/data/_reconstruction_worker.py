@@ -272,14 +272,14 @@ def _create_pool_reconstruction(
         oversampling=2.0,
     ).squeeze()
 
-    # make tuple with volume and label
-    examples = [(aligned.cpu(), 1), (misaligned.cpu(), -1)]
+    # make tuple with volume and label (convert to fp16 to save storage)
+    examples = [(aligned.half().cpu(), 1), (misaligned.half().cpu(), -1)]
 
     # make a triplet example randomly mimick 1 or 2
     examples += [
-        (aligned.clone().cpu(), 1)
+        (aligned.clone().half().cpu(), 1)
         if random.random() > 0.5
-        else (misaligned.clone().cpu(), -1)
+        else (misaligned.clone().half().cpu(), -1)
     ]
 
     return examples
