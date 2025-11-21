@@ -29,6 +29,7 @@ def gpu_runner(
         shared queue from multiprocessing for finished jobs
     """
     torch.set_num_threads(1)
+    torch.set_float32_matmul_precision("high")
     while True:
         try:
             task_parameters = task_queue.get_nowait()
