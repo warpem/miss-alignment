@@ -152,6 +152,7 @@ def optimize_shifts(
             tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
+        total_samples = positions.shape[0]
         total_loss = 0.0
 
         # Use gradient accumulation: process each batch separately
@@ -160,6 +161,8 @@ def optimize_shifts(
                 batch_positions = positions[b * batch_size :]
             else:
                 batch_positions = positions[b * batch_size : (b + 1) * batch_size]
+
+            current_batch_size = batch_positions.shape[0]
 
             # reconstruct subvolumes for this batch
             subvolumes = tilt_series.reconstruct_subvolumes_single(
@@ -183,14 +186,17 @@ def optimize_shifts(
             batch_loss = model(subvolumes)
             batch_loss = batch_loss.mean()
 
+            # Weight by batch size for proper gradient accumulation
+            weighted_loss = batch_loss * (current_batch_size / total_samples)
+
             # Backward pass for this batch (gradients accumulate)
-            batch_loss.backward()
+            weighted_loss.backward()
 
-            # Accumulate total loss for logging
-            total_loss += batch_loss.item()
+            # Accumulate total loss for logging (unweighted for interpretability)
+            total_loss += batch_loss.item() * current_batch_size
 
-        # Average loss across all batches
-        avg_loss = total_loss / batches
+        # Average loss across all samples
+        avg_loss = total_loss / total_samples
         loss_values.append(avg_loss)
 
         return avg_loss
