@@ -257,6 +257,9 @@ def reconstruction_worker(
         # np.savez adds .npz extension
         tmp_path_npz = Path(f"{tmp_path}.npz")
 
+        # Remove the original temp file (without .npz) that mkstemp created
+        tmp_path.unlink()
+
         # fix permissions
         os.chmod(tmp_path_npz, 0o644)
         # Atomic rename (replaces existing file)
