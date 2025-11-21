@@ -235,6 +235,9 @@ def evaluate_tilt_series(
         model_checkpoint_path,
         map_location="cpu",
     )
+    # Compile the network for faster inference (PyTorch 2.0+)
+    # Only compile the underlying network, not the LightningModule wrapper
+    model.net = torch.compile(model.net)
 
     # load tilt_series and set its name for output
     tilt_series_data = TiltSeriesData.from_json(tilt_series_path)

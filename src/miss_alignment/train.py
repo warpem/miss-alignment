@@ -122,6 +122,10 @@ def train_miss_align(
         else:
             model = MissAlignment(**model_params)
 
+        # Compile the network for faster training (PyTorch 2.0+)
+        # Only compile the underlying network, not the LightningModule wrapper
+        model.net = torch.compile(model.net)
+
         # Initialize data module with parameters from config
         with MissAlignmentDataModule(
             iteration_directory,
