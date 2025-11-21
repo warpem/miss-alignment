@@ -236,6 +236,9 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
+        # Compile optimizer for faster parameter updates (PyTorch 2.2+)
+        optimizer.step = torch.compile(optimizer.step, fullgraph=False)
+
         scheduler_config = self.hparams.multistep_lr_scheduler
         multistep = MultiStepLR(
             optimizer,
