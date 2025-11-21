@@ -68,7 +68,7 @@ class ReconstructionPoolDataset(Dataset):
             )
         labels = torch.tensor(labels)
 
-        # run normalization and augmentation
+        # run augmentation (volumes already normalized by reconstruction workers)
         volumes = self._prep_and_augment(volumes)
         # add empty channel dim to all volumes
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
@@ -76,18 +76,10 @@ class ReconstructionPoolDataset(Dataset):
         return *volumes, labels
 
     def _prep_and_augment(self, volumes: list[torch.Tensor]) -> list[torch.Tensor]:
-        volumes = [self._normalize(v) for v in volumes]
+        # volumes are already normalized when saved by reconstruction workers
         volumes = [random_contrast(v) for v in volumes]
         volumes = [random_edge_mask(v, edge_width=(1, 5)) for v in volumes]
         volumes = [random_cube_mask(v) for v in volumes]
         # random mirror works on list to ensure consistency between triplets
         volumes = random_mirror(volumes)
         return volumes
-
-    def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
-        mean, std = torch.mean(volume), torch.std(volume)
-        if std == 0.0:
-            raise ValueError(
-                "Cannot normalize patch because the standard deviation is 0."
-            )
-        return (volume - mean) / std

@@ -23,6 +23,16 @@ from ._pool_monitor import SimplePoolMonitor
 MAX_ANGLE_DEGREES = 10.0
 
 
+def _normalize(volume: torch.Tensor) -> torch.Tensor:
+    """Normalize volume to zero mean and unit standard deviation."""
+    mean, std = torch.mean(volume), torch.std(volume)
+    if std == 0.0:
+        raise ValueError(
+            "Cannot normalize patch because the standard deviation is 0."
+        )
+    return (volume - mean) / std
+
+
 @dataclass
 class TiltSeriesFetcher:
     tilt_series_jsons: list[Path]
@@ -271,6 +281,10 @@ def _create_pool_reconstruction(
         angles=rotation_angles,
         oversampling=2.0,
     ).squeeze()
+
+    # normalize volumes before saving (do once here instead of every time we load)
+    aligned = _normalize(aligned)
+    misaligned = _normalize(misaligned)
 
     # make tuple with volume and label (convert to fp16 to save storage)
     examples = [(aligned.half().cpu(), 1), (misaligned.half().cpu(), -1)]
