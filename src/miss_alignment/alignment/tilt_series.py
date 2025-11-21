@@ -152,41 +152,48 @@ def optimize_shifts(
             tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
-        subvolumes = []
+        total_loss = 0.0
+
+        # Use gradient accumulation: process each batch separately
         for b in range(batches):
             if b == batches - 1:
                 batch_positions = positions[b * batch_size :]
             else:
                 batch_positions = positions[b * batch_size : (b + 1) * batch_size]
-            # reconstruct subvolumes
-            subvolumes.append(
-                tilt_series.reconstruct_subvolumes_single(
-                    tilt_data=images,
-                    coords=batch_positions.to(device),
-                    pixel_size=pixel_size,
-                    size=patch_size,
-                    apply_ctf=apply_ctf,
-                    oversampling=2.0,
-                )
+
+            # reconstruct subvolumes for this batch
+            subvolumes = tilt_series.reconstruct_subvolumes_single(
+                tilt_data=images,
+                coords=batch_positions.to(device),
+                pixel_size=pixel_size,
+                size=patch_size,
+                apply_ctf=apply_ctf,
+                oversampling=2.0,
             )
-        subvolumes = torch.cat(subvolumes, dim=0)
-        # ensure normalization per tilt
-        mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
-        std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-        subvolumes = (subvolumes - mean) / std
 
-        # change channel to batch dimension
-        subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
+            # ensure normalization per subvolume
+            mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
+            std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+            subvolumes = (subvolumes - mean) / std
 
-        # Get loss and compute backward pass
-        loss = model(subvolumes)
-        loss = loss.mean()
-        loss.backward()
+            # change channel to batch dimension
+            subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
-        # Store the loss value
-        loss_values.append(loss.item())
+            # Get loss for this batch and compute backward pass
+            batch_loss = model(subvolumes)
+            batch_loss = batch_loss.mean()
 
-        return loss
+            # Backward pass for this batch (gradients accumulate)
+            batch_loss.backward()
+
+            # Accumulate total loss for logging
+            total_loss += batch_loss.item()
+
+        # Average loss across all batches
+        avg_loss = total_loss / batches
+        loss_values.append(avg_loss)
+
+        return avg_loss
 
     n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
