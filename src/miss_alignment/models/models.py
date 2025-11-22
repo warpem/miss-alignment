@@ -250,7 +250,7 @@ class MissAlignment(pl.LightningModule):
 
         # Compile optimizer for faster parameter updates (PyTorch 2.2+)
         # Do this AFTER creating the scheduler to avoid breaking scheduler wrapping
-        optimizer.step = torch.compile(optimizer.step, fullgraph=False)
+        #optimizer.step = torch.compile(optimizer.step, fullgraph=False)
 
         scheduler = {
             "scheduler": multistep,
