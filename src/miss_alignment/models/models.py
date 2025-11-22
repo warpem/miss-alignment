@@ -200,7 +200,7 @@ class MissAlignment(pl.LightningModule):
         )
 
         # slow down to decrease production/consumption ratio
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         return loss
 
