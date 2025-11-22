@@ -198,7 +198,7 @@ class MissAlignment(pl.LightningModule):
             on_step=True,
             on_epoch=False,
         )
-        
+
         # slow down to decrease production/consumption ratio
         time.sleep(0.5)
 
@@ -240,15 +240,17 @@ class MissAlignment(pl.LightningModule):
                 lr=self.learning_rate,
             )
 
-        # Compile optimizer for faster parameter updates (PyTorch 2.2+)
-        optimizer.step = torch.compile(optimizer.step, fullgraph=False)
-
+        # Create scheduler before compiling (scheduler needs to wrap step method)
         scheduler_config = self.hparams.multistep_lr_scheduler
         multistep = MultiStepLR(
             optimizer,
             milestones=scheduler_config["milestones"],
             gamma=scheduler_config["gamma"],
         )
+
+        # Compile optimizer for faster parameter updates (PyTorch 2.2+)
+        # Do this AFTER creating the scheduler to avoid breaking scheduler wrapping
+        optimizer.step = torch.compile(optimizer.step, fullgraph=False)
 
         scheduler = {
             "scheduler": multistep,
