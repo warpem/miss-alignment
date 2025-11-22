@@ -34,7 +34,7 @@ def train_miss_align(
     # the devices should be limited by CUDA_VISIBLE_DEVICES
     if n_devices < 1:
         raise ValueError("MissAlignment needs at least 1 GPU")
-    devices_list = list(range(n_devices))
+    devices_list = list(range(n_devices)) * (reconstruction_workers + 1)
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
