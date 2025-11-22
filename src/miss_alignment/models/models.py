@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR
 from typing import Optional
 from lightning.pytorch.callbacks import Callback
+import time
 
 # from miss_alignment.models import resnet3d_18
 from miss_alignment.models import (
@@ -197,6 +198,9 @@ class MissAlignment(pl.LightningModule):
             on_step=True,
             on_epoch=False,
         )
+        
+        # slow down to decrease production/consumption ratio
+        time.sleep(0.5)
 
         return loss
 
