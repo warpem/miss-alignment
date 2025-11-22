@@ -28,7 +28,7 @@ class Compact3DConvNet(nn.Module):
         )
 
         # Final regression layer
-        self.regressor = nn.Linear(32, 1)
+        self.regressor = nn.Linear(32, 1, bias=False)
 
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
