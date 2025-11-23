@@ -33,11 +33,13 @@ class Compact3DConvNet(nn.Module):
             nn.SiLU(),
             # Global average pooling: 4x4x4 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
-            nn.BatchNorm1d(256),
-            nn.Linear(256, 32),
-            nn.SiLU(),
-            nn.BatchNorm1d(32),
         )
+
+        # Fully connected layers (applied after flattening)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.fc1 = nn.Linear(256, 32)
+        self.silu = nn.SiLU()
+        self.bn2 = nn.BatchNorm1d(32)
 
         # Final regression layer
         self.regressor = nn.Linear(32, 1, bias=False)
@@ -45,7 +47,11 @@ class Compact3DConvNet(nn.Module):
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
         x = self.conv(x)
-        x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
+        x = x.view(x.size(0), -1)  # Flatten: (batch_size, 256)
+        x = self.bn1(x)
+        x = self.fc1(x)
+        x = self.silu(x)
+        x = self.bn2(x)
         x = self.regressor(x)  # Final output: (batch_size, 1)
         return x
 
