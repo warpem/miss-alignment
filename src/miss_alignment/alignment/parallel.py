@@ -109,7 +109,7 @@ def run_alignment_parallel(
                     result_queue,
                 ),
             )
-            for g in devices_list.unique()
+            for g in set(devices_list)
         ]
         [p.start() for p in procs]
 
