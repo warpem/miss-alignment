@@ -1,8 +1,8 @@
 import multiprocessing as mp
 import random
 import tempfile
-import itertools
 import math
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
@@ -17,10 +17,16 @@ from dataclasses import dataclass
 
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
-from ._pool_monitor import SimplePoolMonitor
+from ._augmentation import MIRROR_COMBINATIONS, apply_mirror
 
 # augmentation parameter
 MAX_ANGLE_DEGREES = 10.0
+
+# sequential ID wrap limit
+MAX_SEQUENTIAL_ID = 1_000_000
+
+# pause polling interval in seconds
+PAUSE_POLL_INTERVAL = 0.05  # 50ms
 
 
 @dataclass
@@ -84,30 +90,34 @@ class TiltSeriesFetcher:
         return self._tilt_series, self._images, self._pixel_size
 
 
+def _count_partition_files(pool_dir: Path, partition_id: int) -> int:
+    """Count the number of files in a partition."""
+    pattern = f"partition_{partition_id}_*.pickle"
+    return len(list(pool_dir.glob(pattern)))
+
+
 def reconstruction_worker(
-    worker_id: int,
-    assigned_indices: list,
+    partition_id: int,
+    partition_size: int,
     pool_dir: Path,
     tilt_series_jsons: list[Path],
     patch_size: int,
     apply_ctf: bool,
     downsample: int,
     shift_generator: Callable,
-    ready_flag: mp.Value,
     stop_event: mp.Event,
-    monitor: Optional[SimplePoolMonitor] = None,
-    tilt_series_refresh_rate: int = 1,
+    tilt_series_refresh_rate: int = 10,
     device: str | torch.device = "cpu",
 ):
     """
-    Worker process that maintains a subset of the reconstruction pool.
+    Worker process that maintains a partition of the reconstruction pool.
 
     Parameters
     ----------
-    worker_id : int
-        ID of this worker
-    assigned_indices : list
-        Pool indices assigned to this worker
+    partition_id : int
+        ID of this worker's partition
+    partition_size : int
+        Maximum number of files to maintain in this partition
     pool_dir : Path
         Directory to store reconstructions
     tilt_series_jsons : list[Path]
@@ -117,14 +127,12 @@ def reconstruction_worker(
         Shape of patches will be: (patch_size, ) * 3
     apply_ctf : bool
         Do CTF correction during reconstruction
+    downsample : int
+        Downsampling factor for reconstructions
     shift_generator : Callable
         Function that generates random sets of shifts in 3D
-    ready_flag : mp.Value
-        Shared flag indicating pool is ready
     stop_event : mp.Event
         Event to signal worker shutdown
-    monitor : Optional[SimplePoolMonitor], default None
-        Pool monitor instance
     tilt_series_refresh_rate: int, default 10
         Number of times a tilt-series is reused before loading a new one,
          prevents repeatedly loading from disk.
@@ -133,9 +141,9 @@ def reconstruction_worker(
     """
     torch.set_num_threads(1)
 
-    print(f"Worker {worker_id} starting with indices {assigned_indices[:5]}...")
+    print(f"Reconstruction worker {partition_id} starting (partition size: {partition_size})")
 
-    # counter to keep track of how many times reconstructions have been reused
+    # Initialize tilt series fetcher
     tilt_series_fetcher = TiltSeriesFetcher(
         tilt_series_jsons=tilt_series_jsons,
         patch_size=patch_size,
@@ -144,41 +152,21 @@ def reconstruction_worker(
         device=device,
     )
 
-    # Initial fill of assigned pool slots
-    for idx in assigned_indices:
-        if stop_event.is_set():
-            print(f"Worker {worker_id} shutting down")
-        tilt_series, images, pixel_size = tilt_series_fetcher()
-        data_and_labels = _create_pool_reconstruction(
-            tilt_series=tilt_series,
-            images=images,
-            pixel_size=pixel_size,
-            patch_size=patch_size,
-            shift_generator=shift_generator,
-            apply_ctf=apply_ctf,
-            device=device,
-        )
+    # Sequential ID counter for this partition
+    sequential_id = 0
 
-        # Write directly first time (no temp file needed)
-        file_path = pool_dir / f"recon_{idx}.pickle"
-        with open(file_path, "wb") as outfile:
-            pickle.dump(data_and_labels, outfile)
-        # ensure correct permissions
-        os.chmod(file_path, 0o644)
-
-    # Signal ready after initial fill
-    with ready_flag.get_lock():
-        ready_flag.value += 1
-
-    # Create cyclic iterator outside the loop
-    idx_cycle = itertools.cycle(assigned_indices)
-
-    # Continuously update pool with new reconstructions
+    # Continuously generate reconstructions
     while not stop_event.is_set():
-        # Randomly select one of our indices to update
-        idx = next(idx_cycle)
+        # Check if partition is full, pause if so
+        while _count_partition_files(pool_dir, partition_id) >= partition_size:
+            if stop_event.is_set():
+                print(f"Reconstruction worker {partition_id} shutting down")
+                return
+            time.sleep(PAUSE_POLL_INTERVAL)
+
+        # Generate reconstruction and 8 mirrored triplets
         tilt_series, images, pixel_size = tilt_series_fetcher()
-        data_and_labels = _create_pool_reconstruction(
+        triplets = _create_pool_reconstruction(
             tilt_series=tilt_series,
             images=images,
             pixel_size=pixel_size,
@@ -188,22 +176,29 @@ def reconstruction_worker(
             device=device,
         )
 
-        # Atomic replacement using temp file and rename
-        file_path = pool_dir / f"recon_{idx}.pickle"
-        with tempfile.NamedTemporaryFile(
-            dir=pool_dir, prefix=f"tmp_recon_{idx}_", suffix=".pickle", delete=False
-        ) as tmp_file:
-            tmp_path = Path(tmp_file.name)
-            pickle.dump(data_and_labels, tmp_file)
+        # Write each triplet to a separate file
+        for triplet in triplets:
+            # Convert to fp16 for storage
+            triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
 
-        # fix permissions
-        os.chmod(tmp_path, 0o644)
-        # Atomic rename (replaces existing file)
-        tmp_path.rename(file_path)
+            # Write with atomic rename
+            file_path = pool_dir / f"partition_{partition_id}_seq_{sequential_id}.pickle"
+            with tempfile.NamedTemporaryFile(
+                dir=pool_dir,
+                prefix=f"tmp_partition_{partition_id}_",
+                suffix=".pickle",
+                delete=False,
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                pickle.dump(triplet_fp16, tmp_file)
 
-        # Record production
-        if monitor is not None:
-            monitor.record_production()
+            os.chmod(tmp_path, 0o644)
+            tmp_path.rename(file_path)
+
+            # Increment and wrap sequential ID
+            sequential_id = (sequential_id + 1) % MAX_SEQUENTIAL_ID
+
+    print(f"Reconstruction worker {partition_id} shutting down")
 
 
 def _create_pool_reconstruction(
@@ -214,7 +209,16 @@ def _create_pool_reconstruction(
     shift_generator: Callable,
     apply_ctf: bool = True,
     device: str | torch.device = "cpu",
-) -> list[tuple[torch.Tensor, int]]:
+) -> list[list[tuple[torch.Tensor, int]]]:
+    """
+    Create 8 mirrored triplets from a single reconstruction.
+
+    Returns
+    -------
+    list[list[tuple[torch.Tensor, int]]]
+        List of 8 triplets, where each triplet is a list of 3 (volume, label) tuples.
+        Positive and negative examples share the same mirror, anchor has a different mirror.
+    """
     # Generate random rotation as Euler angles (ZYZ convention) for data augmentation
     # This rotation is applied to change the coordinate system of the reconstruction
     random_rotation = (random.random() * 2 - 1) * MAX_ANGLE_DEGREES * math.pi / 180
@@ -272,17 +276,34 @@ def _create_pool_reconstruction(
         oversampling=2.0,
     ).squeeze()
 
-    # make tuple with volume and label
-    examples = [(aligned.cpu(), 1), (misaligned.cpu(), -1)]
+    # Create anchor (random copy of aligned or misaligned)
+    if random.random() > 0.5:
+        anchor_base = aligned.clone()
+        anchor_label = 1
+    else:
+        anchor_base = misaligned.clone()
+        anchor_label = -1
 
-    # make a triplet example randomly mimick 1 or 2
-    examples += [
-        (aligned.clone().cpu(), 1)
-        if random.random() > 0.5
-        else (misaligned.clone().cpu(), -1)
-    ]
+    # Generate 8 triplets with all mirror combinations
+    triplets = []
+    for i, mirror_combo in enumerate(MIRROR_COMBINATIONS):
+        # Apply same mirror to positive and negative
+        mirrored_aligned = apply_mirror(aligned.clone(), mirror_combo).cpu()
+        mirrored_misaligned = apply_mirror(misaligned.clone(), mirror_combo).cpu()
 
-    return examples
+        # Pick a different mirror for anchor
+        other_combos = [c for j, c in enumerate(MIRROR_COMBINATIONS) if j != i]
+        anchor_mirror = random.choice(other_combos)
+        mirrored_anchor = apply_mirror(anchor_base.clone(), anchor_mirror).cpu()
+
+        triplet = [
+            (mirrored_aligned, 1),
+            (mirrored_misaligned, -1),
+            (mirrored_anchor, anchor_label),
+        ]
+        triplets.append(triplet)
+
+    return triplets
 
 
 def _generate_translations(

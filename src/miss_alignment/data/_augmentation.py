@@ -1,6 +1,44 @@
 import random
 import torch
 
+# All 8 mirror combinations (flip_z, flip_y, flip_x) for 3D volumes
+MIRROR_COMBINATIONS = [
+    (False, False, False),
+    (True, False, False),
+    (False, True, False),
+    (False, False, True),
+    (True, True, False),
+    (True, False, True),
+    (False, True, True),
+    (True, True, True),
+]
+
+
+def apply_mirror(volume: torch.Tensor, combo: tuple[bool, bool, bool]) -> torch.Tensor:
+    """Apply a specific mirror combination to a volume.
+
+    Parameters
+    ----------
+    volume : torch.Tensor
+        3D volume tensor of shape (D, H, W)
+    combo : tuple[bool, bool, bool]
+        Tuple of (flip_z, flip_y, flip_x) booleans
+
+    Returns
+    -------
+    torch.Tensor
+        Mirrored volume
+    """
+    dims_to_flip = []
+    for i, should_flip in enumerate(combo):
+        if should_flip:
+            dims_to_flip.append(-(3 - i))  # -3, -2, -1 for D, H, W
+
+    if dims_to_flip:
+        volume = torch.flip(volume, dims_to_flip)
+
+    return volume
+
 
 def random_contrast(volume):
     """Slightly alter the mean and std of a pre-normalised tensor"""
