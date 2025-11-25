@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 import torch
 import numpy as np
+import mrcfile
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.alignment.correlation import (
     calculate_cross_correlation,
@@ -116,8 +117,18 @@ def calculate_alignment_error(
     print("  Reconstructing ground truth volume...")
     gt_volume = reconstruct_full_volume(ground_truth_data, device)
 
+    # Save ground truth volume for reference in same folder as test data
+    mrc_path = test_data.xml_metadata_path.parent / f"gt_{ground_truth_data.xml_metadata_path.stem}.mrc"
+    with mrcfile.new(str(mrc_path), overwrite=True) as mrc:
+        mrc.set_data(gt_volume.detach().cpu().numpy().astype('float32'))
+
     print("  Reconstructing test volume...")
     test_volume = reconstruct_full_volume(test_data, device)
+
+    # Save test volume for reference in same folder as test data
+    mrc_path = test_data.xml_metadata_path.parent / f"it_{ground_truth_data.xml_metadata_path.stem}.mrc"
+    with mrcfile.new(str(mrc_path), overwrite=True) as mrc:
+        mrc.set_data(test_volume.detach().cpu().numpy().astype('float32'))
 
     # Calculate cross-correlation to find global shift
     print("  Calculating cross-correlation...")
