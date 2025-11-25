@@ -98,6 +98,8 @@ def run_alignment_parallel(
         [task_queue.put_nowait(j) for j in jobs]  # put all tasks
 
         # set the processes and start them!
+        # if a device occurs multiple times in devices_list,
+        # use it only once to keep memory footprint deterministic per GPU
         procs = [
             mp.Process(
                 target=gpu_runner,
@@ -107,7 +109,7 @@ def run_alignment_parallel(
                     result_queue,
                 ),
             )
-            for g in devices_list
+            for g in devices_list.unique()
         ]
         [p.start() for p in procs]
 

@@ -36,6 +36,21 @@ def train_miss_align(
         raise ValueError("MissAlignment needs at least 1 GPU")
     devices_list = list(range(n_devices))
 
+    devices_training = devices_list[0:1]
+    print(f"Using device {devices_training[0]} for training")
+
+    if len(devices_list) == 1:
+        devices_reconstruction = devices_list * reconstruction_workers
+    else:
+        # distribute remaining devices equally among reconstruction workers,
+        # cycling through devices if there are fewer devices than workers
+        devices_remaining = devices_list[1:]
+        devices_reconstruction = [
+            devices_remaining[i % len(devices_remaining)]
+            for i in range(reconstruction_workers)
+        ]
+    print(f"Using devices {devices_reconstruction} for reconstruction workers")
+
     # Load configuration from YAML file
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -86,7 +101,7 @@ def train_miss_align(
         # Set up trainer with parameters from config
         trainer = Trainer(
             accelerator="gpu",
-            devices=devices_list[0:1],  # use the 0 device
+            devices=devices_training,  # use the 0 device
             default_root_dir=training_directory / "models",
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
@@ -127,7 +142,7 @@ def train_miss_align(
             iteration_directory,
             create_default_generator(**shift_generation_config),
             reconstruction_workers=reconstruction_workers,
-            reconstruction_accelerators=devices_list[1:],
+            reconstruction_accelerators=devices_reconstruction,
             dataloader_workers=dataloader_workers,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
