@@ -46,7 +46,7 @@ dependencies = [
     "torch-tiltxcorr>=0.0.5",
     "torch-cubic-spline-grids",
     "torch-grid-utils>=0.0.5",
-    "torch-tomogram @ git+https://github.com/McHaillet/torch-tomogram.git@use_torch_projectors",
+    "torch-tomogram",
     "tqdm>=4.67.1",
     "scipy",
     "lightning",
