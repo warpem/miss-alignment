@@ -131,7 +131,7 @@ def calculate_alignment_error(
     )
 
     # Get projection matrices for converting 3D shift to 2D image shifts
-    r0 = Ry(gt_tilt_series.angles, zyx=True)
+    r0 = Ry(-gt_tilt_series.angles, zyx=True)
     r1 = Rz(gt_tilt_series.tilt_axis_angles, zyx=True)
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
