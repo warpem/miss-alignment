@@ -114,7 +114,6 @@ def project_volume_shift_to_image_alignment(
     projection_matrices: torch.Tensor,  # (n_tilts, 2, 3)
 ) -> torch.Tensor:  # (n_tilts, 2)  yx shift
     n_tilts = projection_matrices.shape[0]
-    shift_3d = -1 * shift_3d  # get the forward shift for the imaging model
     shift_3d = shift_3d.repeat(n_tilts, 1)
 
     shifts_2d = project_shifts_3d_to_2d(shift_3d, projection_matrices)
