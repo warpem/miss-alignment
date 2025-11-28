@@ -238,7 +238,7 @@ def _create_pool_reconstruction(
     reconstruction_location = einops.rearrange(reconstruction_location, "xyz -> 1 xyz")
 
     # generate a misalignment
-    r0 = Ry(tilt_series.angles, zyx=True)
+    r0 = Ry(- tilt_series.angles, zyx=True)
     r1 = Rz(tilt_series.tilt_axis_angles, zyx=True)
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
