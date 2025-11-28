@@ -166,37 +166,39 @@ def reconstruction_worker(
 
         # Generate reconstruction and 8 mirrored triplets
         tilt_series, images, pixel_size = tilt_series_fetcher()
-        triplets = _create_pool_reconstruction(
-            tilt_series=tilt_series,
-            images=images,
-            pixel_size=pixel_size,
-            patch_size=patch_size,
-            shift_generator=shift_generator,
-            apply_ctf=apply_ctf,
-            device=device,
-        )
 
-        # Write each triplet to a separate file
-        for triplet in triplets:
-            # Convert to fp16 for storage
-            triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
+        for i in range(2):
+            triplets = _create_pool_reconstruction(
+                tilt_series=tilt_series,
+                images=images,
+                pixel_size=pixel_size,
+                patch_size=patch_size,
+                shift_generator=shift_generator,
+                apply_ctf=apply_ctf,
+                device=device,
+            )
 
-            # Write with atomic rename
-            file_path = pool_dir / f"partition_{partition_id}_seq_{sequential_id}.pickle"
-            with tempfile.NamedTemporaryFile(
-                dir=pool_dir,
-                prefix=f"tmp_partition_{partition_id}_",
-                suffix=".pickle",
-                delete=False,
-            ) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                pickle.dump(triplet_fp16, tmp_file)
+            # Write each triplet to a separate file
+            for triplet in triplets:
+                # Convert to fp16 for storage
+                triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
 
-            os.chmod(tmp_path, 0o644)
-            tmp_path.rename(file_path)
+                # Write with atomic rename
+                file_path = pool_dir / f"partition_{partition_id}_seq_{sequential_id}.pickle"
+                with tempfile.NamedTemporaryFile(
+                    dir=pool_dir,
+                    prefix=f"tmp_partition_{partition_id}_",
+                    suffix=".pickle",
+                    delete=False,
+                ) as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+                    pickle.dump(triplet_fp16, tmp_file)
 
-            # Increment and wrap sequential ID
-            sequential_id = (sequential_id + 1) % MAX_SEQUENTIAL_ID
+                os.chmod(tmp_path, 0o644)
+                tmp_path.rename(file_path)
+
+                # Increment and wrap sequential ID
+                sequential_id = (sequential_id + 1) % MAX_SEQUENTIAL_ID
 
     print(f"Reconstruction worker {partition_id} shutting down")
 
@@ -284,9 +286,10 @@ def _create_pool_reconstruction(
         anchor_base = misaligned.clone()
         anchor_label = -1
 
-    # Generate 8 triplets with all mirror combinations
+    # Generate 2 triplets with all mirror combinations
     triplets = []
-    for i, mirror_combo in enumerate(MIRROR_COMBINATIONS):
+    combinations_subset = random.sample(MIRROR_COMBINATIONS, 2)
+    for i, mirror_combo in enumerate(combinations_subset):
         # Apply same mirror to positive and negative
         mirrored_aligned = apply_mirror(aligned.clone(), mirror_combo).cpu()
         mirrored_misaligned = apply_mirror(misaligned.clone(), mirror_combo).cpu()
