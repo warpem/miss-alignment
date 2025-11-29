@@ -78,7 +78,7 @@ shift_generation:
 
 tilt_series_alignment:
   patch_size: 96      # same as training patch size
-  patch_overlap: 0.0  # tolerated overlap between patches used for optimizing the alignment
+  patch_overlap: 0.1  # tolerated overlap between patches used for optimizing the alignment
   batch_size: 16      # amount of patches simultaneously reconstructed in memory -> the more the merrier 
 ```
 
