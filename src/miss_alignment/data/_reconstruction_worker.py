@@ -221,27 +221,21 @@ def _create_pool_reconstruction(
         List of 8 triplets, where each triplet is a list of 3 (volume, label) tuples.
         Positive and negative examples share the same mirror, anchor has a different mirror.
     """
+
+    n_particles = 2
+
     # Generate random rotation as Euler angles (ZYZ convention) for data augmentation
     # This rotation is applied to change the coordinate system of the reconstruction
-    random_rotation = (random.random() * 2 - 1) * MAX_ANGLE_DEGREES * math.pi / 180
-    rotation_angles = torch.tensor([0.0, random_rotation, 0.0], device=device)
+    rotation_angles = torch.zeros([n_particles, 3], device=device)
+    rotation_angles[:, 1] = (torch.rand([n_particles], device=device) * 2 - 1) * MAX_ANGLE_DEGREES * math.pi / 180
 
     # select a random reconstruction position
-    patch_offset = (patch_size * pixel_size) / 2
-    x_dim, y_dim, z_dim = tilt_series.volume_dimensions_physical
-    reconstruction_location = [
-        random.uniform(patch_offset, x_dim - patch_offset)
-        if x_dim > 2 * patch_offset
-        else x_dim / 2,
-        random.uniform(patch_offset, y_dim - patch_offset)
-        if y_dim > 2 * patch_offset
-        else y_dim / 2,
-        random.uniform(patch_offset, z_dim - patch_offset)
-        if z_dim > 2 * patch_offset
-        else z_dim / 2,
-    ]
-    reconstruction_location = torch.tensor(reconstruction_location, device=device)
-    reconstruction_location = einops.rearrange(reconstruction_location, "xyz -> 1 xyz")
+    patch_offset_ang = (patch_size * pixel_size) / 2
+    patch_size_ang = patch_size * pixel_size
+
+    reconstruction_location = (torch.rand([n_particles, 3], device=device) * 
+                               torch.clamp(tilt_series.volume_dimensions_physical - patch_size_ang, min=0) + 
+                               patch_offset_ang)
 
     # generate a misalignment
     r0 = Ry(-tilt_series.angles, zyx=True)
@@ -288,23 +282,24 @@ def _create_pool_reconstruction(
 
     # Generate 2 triplets with all mirror combinations
     triplets = []
-    combinations_subset = random.sample(MIRROR_COMBINATIONS, 2)
-    for i, mirror_combo in enumerate(combinations_subset):
-        # Apply same mirror to positive and negative
-        mirrored_aligned = apply_mirror(aligned.clone(), mirror_combo).cpu()
-        mirrored_misaligned = apply_mirror(misaligned.clone(), mirror_combo).cpu()
+    for i_batch in range(n_particles):
+        combinations_subset = random.sample(MIRROR_COMBINATIONS, 2)
+        for i, mirror_combo in enumerate(combinations_subset):
+            # Apply same mirror to positive and negative
+            mirrored_aligned = apply_mirror(aligned[i_batch].clone(), mirror_combo).cpu()
+            mirrored_misaligned = apply_mirror(misaligned[i_batch].clone(), mirror_combo).cpu()
 
-        # Pick a different mirror for anchor
-        other_combos = [c for j, c in enumerate(MIRROR_COMBINATIONS) if j != i]
-        anchor_mirror = random.choice(other_combos)
-        mirrored_anchor = apply_mirror(anchor_base.clone(), anchor_mirror).cpu()
+            # Pick a different mirror for anchor
+            other_combos = [c for j, c in enumerate(MIRROR_COMBINATIONS) if j != i]
+            anchor_mirror = random.choice(other_combos)
+            mirrored_anchor = apply_mirror(anchor_base[i_batch].clone(), anchor_mirror).cpu()
 
-        triplet = [
-            (mirrored_aligned, 1),
-            (mirrored_misaligned, -1),
-            (mirrored_anchor, anchor_label),
-        ]
-        triplets.append(triplet)
+            triplet = [
+                (mirrored_aligned, 1),
+                (mirrored_misaligned, -1),
+                (mirrored_anchor, anchor_label),
+            ]
+            triplets.append(triplet)
 
     return triplets
 
