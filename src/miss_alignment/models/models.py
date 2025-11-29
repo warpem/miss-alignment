@@ -245,6 +245,12 @@ class MissAlignment(pl.LightningModule):
 
         return [optimizer], [scheduler]
 
+    def configure_model(self):
+        """Configure model with torch.compile for faster training."""
+        # Only compile if not already compiled
+        if not isinstance(self.net, torch._dynamo.eval_frame.OptimizedModule):
+            self.net = torch.compile(self.net)
+
 
 class MAEarlyStopping(Callback):
     """Early stopping callback that waits until MultiStepLR reaches its lowest point.

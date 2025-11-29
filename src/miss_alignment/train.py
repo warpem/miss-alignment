@@ -111,6 +111,7 @@ def train_miss_align(
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback],
             plugins=[SLURMEnvironment(auto_requeue=False)],
+            precision="16-mixed",  # Enable automatic mixed precision
         )
 
         # initialize the monitor for production consumption rate
