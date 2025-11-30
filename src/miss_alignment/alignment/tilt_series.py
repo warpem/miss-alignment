@@ -273,6 +273,11 @@ def run_iterative_anchoring(
 
     all_loss_values = []
 
+    # Track best solution across all iterations
+    best_loss = float("inf")
+    best_offsets_x = None
+    best_offsets_y = None
+
     while n_unreliable_per_side > 0:
         print(f"n_unreliable_per_side: {n_unreliable_per_side}")
         # Define boundaries in sorted index space
@@ -318,7 +323,15 @@ def run_iterative_anchoring(
         # Run optimization
         tilt_series, loss_values = optimize_fn(tilt_series)
         all_loss_values.extend(loss_values)
-        print(f"Loss went from {loss_values[0]} to {loss_values[-1]}")
+        current_loss = loss_values[-1]
+        print(f"Loss went from {loss_values[0]} to {current_loss}")
+
+        # Track best solution (before restoring unreliable tilts)
+        if current_loss < best_loss:
+            best_loss = current_loss
+            best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
+            best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
+            print(f"  -> New best loss: {best_loss}")
 
         # Restore unreliable tilts with chain-like relative offsets
         # Negative side: propagate from boundary outward (high sorted idx to low)
@@ -349,7 +362,17 @@ def run_iterative_anchoring(
     # Final optimization with all tilts reliable
     tilt_series, loss_values = optimize_fn(tilt_series)
     all_loss_values.extend(loss_values)
-    print(f"Last one: loss went from {loss_values[0]} to {loss_values[-1]}")
+    final_loss = loss_values[-1]
+    print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
+
+    # Check if final is the best, if not restore the best solution
+    if final_loss < best_loss:
+        best_loss = final_loss
+        print(f"Final optimization achieved best loss: {best_loss}")
+    elif best_offsets_x is not None:
+        print(f"Restoring best solution with loss {best_loss} (final was {final_loss})")
+        tilt_series.tilt_axis_offset_x = best_offsets_x
+        tilt_series.tilt_axis_offset_y = best_offsets_y
 
     return tilt_series, all_loss_values
 

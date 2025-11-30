@@ -169,3 +169,52 @@ def test_run_iterative_anchoring_boundary_movement_propagates():
         idx = sorted_indices[i]
         # All tilts should have non-zero offset after optimization
         assert result_ts.tilt_axis_offset_x[idx].item() != 0.0
+
+
+def test_run_iterative_anchoring_restores_best_solution():
+    """Test that the best solution is restored if final is worse."""
+    n_tilts = 7
+    ts = TiltSeries(n_tilts=n_tilts)
+    ts.angles = torch.linspace(-30, 30, n_tilts)
+    ts.tilt_axis_offset_x = torch.zeros(n_tilts)
+    ts.tilt_axis_offset_y = torch.zeros(n_tilts)
+
+    call_count = [0]
+    # With 7 tilts and 0.5 fraction: n_reliable=3, n_unreliable_per_side=2
+    # So we get 2 iterations in while loop + 1 final = 3 optimizer calls
+    # Simulate: first iteration gets best loss, subsequent iterations get worse
+    losses_sequence = [0.5, 0.8, 0.9]  # First is best
+
+    def mock_optimizer(tilt_series: TiltSeries):
+        idx = min(call_count[0], len(losses_sequence) - 1)
+        loss = losses_sequence[idx]
+        call_count[0] += 1
+
+        # Each call shifts by different amount so we can verify which solution was kept
+        tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
+        return tilt_series, [loss]
+
+    result_ts, losses = run_iterative_anchoring(
+        tilt_series=ts,
+        optimize_fn=mock_optimizer,
+        initial_reliable_fraction=0.5,
+    )
+
+    # The best loss was 0.5 from the first iteration
+    # After first iteration, offset_x would be 10.0 for all tilts
+    # If best solution is restored, offsets should be 10.0 (from first iteration)
+    # If final solution was kept, offsets would be much larger
+
+    # Check that we got the expected loss values
+    assert losses == [0.5, 0.8, 0.9]
+    assert call_count[0] == 3
+
+    # The solution from the first iteration (loss=0.5) should be restored
+    # At that point offset_x was 10.0 for all tilts (before restoration of unreliable ones)
+    # The best_offsets are captured after optimization but before restoration
+    sorted_indices = ts.indices_sorted_angle()
+    # Central tilt (index 3 in sorted order) should have offset from first iteration
+    central_idx = sorted_indices[3]
+    # After first call: +10
+    # Best was captured after first optimize_fn call, so all tilts had +10
+    assert result_ts.tilt_axis_offset_x[central_idx].item() == 10.0
