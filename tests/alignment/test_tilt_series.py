@@ -2,6 +2,7 @@ import torch
 from warpylib import TiltSeries
 
 from miss_alignment.alignment.tilt_series import (
+    evaluate_catmull_rom_spline,
     generate_position_grid,
     run_iterative_anchoring,
 )
@@ -249,3 +250,53 @@ def test_run_iterative_anchoring_handles_nan():
     sorted_indices = ts.indices_sorted_angle()
     central_idx = sorted_indices[3]
     assert result_ts.tilt_axis_offset_x[central_idx].item() == 40.0
+
+
+def test_catmull_rom_spline_interpolates_at_control_points():
+    """Test that spline passes through control points."""
+    control_values = torch.tensor([0.0, 1.0, 4.0, 9.0, 16.0])  # y = x^2 pattern
+    control_positions = torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0])
+
+    # Query at control point positions
+    result = evaluate_catmull_rom_spline(control_values, control_positions, control_positions)
+
+    # Should match control values exactly (or very close)
+    for i in range(len(control_values)):
+        assert abs(result[i].item() - control_values[i].item()) < 1e-5, (
+            f"Spline doesn't pass through control point {i}: "
+            f"expected {control_values[i].item()}, got {result[i].item()}"
+        )
+
+
+def test_catmull_rom_spline_smooth_interpolation():
+    """Test that spline produces smooth interpolation between control points."""
+    # Linear control values - spline should give approximately linear result
+    control_values = torch.tensor([0.0, 10.0, 20.0, 30.0, 40.0])
+    control_positions = torch.tensor([-60.0, -30.0, 0.0, 30.0, 60.0])
+
+    # Query at midpoints
+    query_positions = torch.tensor([-45.0, -15.0, 15.0, 45.0])
+    result = evaluate_catmull_rom_spline(control_values, control_positions, query_positions)
+
+    # For linear input, output should be approximately linear
+    expected = torch.tensor([5.0, 15.0, 25.0, 35.0])
+    for i in range(len(query_positions)):
+        assert abs(result[i].item() - expected[i].item()) < 1.0, (
+            f"Spline not smooth at query {i}: "
+            f"expected ~{expected[i].item()}, got {result[i].item()}"
+        )
+
+
+def test_catmull_rom_spline_differentiable():
+    """Test that spline is differentiable for gradient-based optimization."""
+    control_values = torch.tensor([0.0, 1.0, 2.0, 3.0], requires_grad=True)
+    control_positions = torch.tensor([0.0, 1.0, 2.0, 3.0])
+    query_positions = torch.tensor([0.5, 1.5, 2.5])
+
+    result = evaluate_catmull_rom_spline(control_values, control_positions, query_positions)
+    loss = result.sum()
+    loss.backward()
+
+    # Gradients should exist and be non-zero
+    assert control_values.grad is not None
+    assert control_values.grad.abs().sum() > 0

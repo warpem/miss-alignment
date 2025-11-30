@@ -3,8 +3,9 @@ general:
   training_directory: /data/set/  # path to directory for writing iteration output
   apply_ctf: True                 # set to True if CTF estimates are available in .xml
   iteration_settings:             # defines all iterations to run (length determines number of iterations)
-    - { downsample: 2, alignment: global }
-    - { downsample: 2, alignment: global }
+    # alignment modes: "global" (single pass), "anchoring" (iterative), "spline" (coarse-to-fine)
+    - { downsample: 2, alignment: spline }
+    - { downsample: 2, alignment: spline }
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }
