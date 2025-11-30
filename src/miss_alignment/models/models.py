@@ -155,6 +155,14 @@ class MissAlignment(pl.LightningModule):
             batch, batch_idx
         )
 
+        # Fail fast on NaN loss to prevent corrupted training
+        if torch.isnan(loss):
+            raise ValueError(
+                f"NaN loss detected at batch {batch_idx}, epoch {self.current_epoch}. "
+                "This may indicate numerical instability. Check your data, learning rate, "
+                "or consider disabling AMP."
+            )
+
         self.log(  # add it to progress bar
             name="train_loss",
             value=loss.item(),
