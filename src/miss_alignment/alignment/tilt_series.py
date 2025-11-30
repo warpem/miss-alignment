@@ -274,6 +274,7 @@ def run_iterative_anchoring(
     all_loss_values = []
 
     while n_unreliable_per_side > 0:
+        print(f"n_unreliable_per_side: {n_unreliable_per_side}")
         # Define boundaries in sorted index space
         # sorted_indices[0] is most negative angle, sorted_indices[-1] most positive
         neg_boundary_sorted_idx = n_unreliable_per_side
@@ -317,6 +318,7 @@ def run_iterative_anchoring(
         # Run optimization
         tilt_series, loss_values = optimize_fn(tilt_series)
         all_loss_values.extend(loss_values)
+        print(f"Loss went from {loss_values[0]} to {loss_values[-1]}")
 
         # Restore unreliable tilts with chain-like relative offsets
         # Negative side: propagate from boundary outward (high sorted idx to low)
@@ -347,6 +349,7 @@ def run_iterative_anchoring(
     # Final optimization with all tilts reliable
     tilt_series, loss_values = optimize_fn(tilt_series)
     all_loss_values.extend(loss_values)
+    print(f"Last one: loss went from {loss_values[0]} to {loss_values[-1]}")
 
     return tilt_series, all_loss_values
 
@@ -429,7 +432,7 @@ def evaluate_tilt_series(
     apply_ctf: bool = True,
     downsample: int = 1,
     device: str = "cpu",
-    iterative: bool = False,
+    iterative: bool = True,
     initial_reliable_fraction: float = 1 / 2,
 ) -> tuple[Path, list[float]]:
     # load the best model and run alignment optimization
