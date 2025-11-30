@@ -60,7 +60,8 @@ def test_run_iterative_anchoring_preserves_relative_offsets():
         # Shift all tilts by 10.0 in x and 5.0 in y
         tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + 10.0
         tilt_series.tilt_axis_offset_y = tilt_series.tilt_axis_offset_y + 5.0
-        return tilt_series, [1.0]  # Return dummy loss
+        # Use decreasing loss so each iteration improves (required for new behavior)
+        return tilt_series, [1.0 / call_count[0]]
 
     # Run with initial_reliable_fraction=0.5 (roughly half reliable)
     # With 11 tilts and 0.5 fraction: n_reliable=5, n_unreliable_total=6, n_unreliable_per_side=3
@@ -148,13 +149,16 @@ def test_run_iterative_anchoring_boundary_movement_propagates():
     ts.tilt_axis_offset_y = torch.zeros(n_tilts)
 
     sorted_indices = ts.indices_sorted_angle()
+    call_count = [0]
 
     def mock_optimizer(tilt_series: TiltSeries):
         """Only shift the reliable (central) tilts."""
+        call_count[0] += 1
         # This simulates what happens when only central tilts can optimize well
         # For simplicity, shift all tilts - the restoration will fix unreliable ones
         tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + 5.0
-        return tilt_series, [1.0]
+        # Use decreasing loss so iterations proceed
+        return tilt_series, [1.0 / call_count[0]]
 
     # With 7 tilts and 0.5 fraction: n_reliable=3, n_unreliable_per_side=2
     result_ts, losses = run_iterative_anchoring(
@@ -171,8 +175,8 @@ def test_run_iterative_anchoring_boundary_movement_propagates():
         assert result_ts.tilt_axis_offset_x[idx].item() != 0.0
 
 
-def test_run_iterative_anchoring_restores_best_solution():
-    """Test that the best solution is restored if final is worse."""
+def test_run_iterative_anchoring_reverts_on_worse_loss():
+    """Test that worse iterations are immediately reverted to best."""
     n_tilts = 7
     ts = TiltSeries(n_tilts=n_tilts)
     ts.angles = torch.linspace(-30, 30, n_tilts)
@@ -182,15 +186,15 @@ def test_run_iterative_anchoring_restores_best_solution():
     call_count = [0]
     # With 7 tilts and 0.5 fraction: n_reliable=3, n_unreliable_per_side=2
     # So we get 2 iterations in while loop + 1 final = 3 optimizer calls
-    # Simulate: first iteration gets best loss, subsequent iterations get worse
-    losses_sequence = [0.5, 0.8, 0.9]  # First is best
+    # First iteration improves, second gets worse (reverts), third improves again
+    losses_sequence = [0.5, 0.8, 0.4]
 
     def mock_optimizer(tilt_series: TiltSeries):
-        idx = min(call_count[0], len(losses_sequence) - 1)
+        idx = call_count[0]
         loss = losses_sequence[idx]
         call_count[0] += 1
 
-        # Each call shifts by different amount so we can verify which solution was kept
+        # Each call shifts by different amount
         tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
         return tilt_series, [loss]
 
@@ -200,21 +204,48 @@ def test_run_iterative_anchoring_restores_best_solution():
         initial_reliable_fraction=0.5,
     )
 
-    # The best loss was 0.5 from the first iteration
-    # After first iteration, offset_x would be 10.0 for all tilts
-    # If best solution is restored, offsets should be 10.0 (from first iteration)
-    # If final solution was kept, offsets would be much larger
-
     # Check that we got the expected loss values
-    assert losses == [0.5, 0.8, 0.9]
+    assert losses == [0.5, 0.8, 0.4]
     assert call_count[0] == 3
 
-    # The solution from the first iteration (loss=0.5) should be restored
-    # At that point offset_x was 10.0 for all tilts (before restoration of unreliable ones)
-    # The best_offsets are captured after optimization but before restoration
+    # Final loss 0.4 is the best, so that solution should be kept
+    # The final call added +30 to whatever state it started from
+    # After call 1: best_offsets = 10.0 (loss=0.5)
+    # After call 2: loss=0.8 >= 0.5, so reverts to 10.0
+    # After call 3: starts from 10.0, adds +30 = 40.0 (loss=0.4 is new best)
     sorted_indices = ts.indices_sorted_angle()
-    # Central tilt (index 3 in sorted order) should have offset from first iteration
     central_idx = sorted_indices[3]
-    # After first call: +10
-    # Best was captured after first optimize_fn call, so all tilts had +10
-    assert result_ts.tilt_axis_offset_x[central_idx].item() == 10.0
+    assert result_ts.tilt_axis_offset_x[central_idx].item() == 40.0
+
+
+def test_run_iterative_anchoring_handles_nan():
+    """Test that NaN values cause immediate revert."""
+    n_tilts = 7
+    ts = TiltSeries(n_tilts=n_tilts)
+    ts.angles = torch.linspace(-30, 30, n_tilts)
+    ts.tilt_axis_offset_x = torch.zeros(n_tilts)
+    ts.tilt_axis_offset_y = torch.zeros(n_tilts)
+
+    call_count = [0]
+    # First iteration works, second produces NaN, third works
+    losses_sequence = [0.5, float("nan"), 0.4]
+
+    def mock_optimizer(tilt_series: TiltSeries):
+        idx = call_count[0]
+        loss = losses_sequence[idx]
+        call_count[0] += 1
+
+        tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
+        return tilt_series, [loss]
+
+    result_ts, losses = run_iterative_anchoring(
+        tilt_series=ts,
+        optimize_fn=mock_optimizer,
+        initial_reliable_fraction=0.5,
+    )
+
+    assert call_count[0] == 3
+    # After NaN, should have reverted to best (10.0), then final adds +30 = 40.0
+    sorted_indices = ts.indices_sorted_angle()
+    central_idx = sorted_indices[3]
+    assert result_ts.tilt_axis_offset_x[central_idx].item() == 40.0

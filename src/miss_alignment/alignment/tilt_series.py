@@ -68,6 +68,11 @@ def optimize_shifts(
         - Detected translational alignment.
         - List of loss values for each optimization iteration.
     """
+    # Use highest precision for optimization to avoid NaN issues
+    # Training uses "medium" and 16-mixed, but optimization needs full precision
+    original_precision = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+
     # move all modules to device in place
     tilt_series.to(device)
     model.to(device)
@@ -144,6 +149,9 @@ def optimize_shifts(
     # Initialize list to store loss values
     loss_values = []
 
+    # Determine device type for autocast
+    device_type = "cuda" if str(device).startswith("cuda") else "cpu"
+
     def closure():
         alignment_optimizer.zero_grad()
 
@@ -156,45 +164,47 @@ def optimize_shifts(
         total_samples = positions.shape[0]
         total_loss = 0.0
 
-        # Use gradient accumulation: process each batch separately
-        for b in range(batches):
-            if b == batches - 1:
-                batch_positions = positions[b * batch_size :]
-            else:
-                batch_positions = positions[b * batch_size : (b + 1) * batch_size]
+        # Disable autocast to ensure full precision during optimization
+        with torch.amp.autocast(device_type=device_type, enabled=False):
+            # Use gradient accumulation: process each batch separately
+            for b in range(batches):
+                if b == batches - 1:
+                    batch_positions = positions[b * batch_size :]
+                else:
+                    batch_positions = positions[b * batch_size : (b + 1) * batch_size]
 
-            current_batch_size = batch_positions.shape[0]
+                current_batch_size = batch_positions.shape[0]
 
-            # reconstruct subvolumes for this batch
-            subvolumes = tilt_series.reconstruct_subvolumes_single(
-                tilt_data=images,
-                coords=batch_positions.to(device),
-                pixel_size=pixel_size,
-                size=patch_size,
-                apply_ctf=apply_ctf,
-                oversampling=2.0,
-            )
+                # reconstruct subvolumes for this batch
+                subvolumes = tilt_series.reconstruct_subvolumes_single(
+                    tilt_data=images,
+                    coords=batch_positions.to(device),
+                    pixel_size=pixel_size,
+                    size=patch_size,
+                    apply_ctf=apply_ctf,
+                    oversampling=2.0,
+                )
 
-            # ensure normalization per subvolume
-            mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
-            std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-            subvolumes = (subvolumes - mean) / std
+                # ensure normalization per subvolume
+                mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
+                std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+                subvolumes = (subvolumes - mean) / std
 
-            # change channel to batch dimension
-            subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
+                # change channel to batch dimension
+                subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
-            # Get loss for this batch and compute backward pass
-            batch_loss = model(subvolumes)
-            batch_loss = batch_loss.mean()
+                # Get loss for this batch and compute backward pass
+                batch_loss = model(subvolumes)
+                batch_loss = batch_loss.mean()
 
-            # Weight by batch size for proper gradient accumulation
-            weighted_loss = batch_loss * (current_batch_size / total_samples)
+                # Weight by batch size for proper gradient accumulation
+                weighted_loss = batch_loss * (current_batch_size / total_samples)
 
-            # Backward pass for this batch (gradients accumulate)
-            weighted_loss.backward()
+                # Backward pass for this batch (gradients accumulate)
+                weighted_loss.backward()
 
-            # Accumulate total loss for logging (unweighted for interpretability)
-            total_loss += batch_loss.item() * current_batch_size
+                # Accumulate total loss for logging (unweighted for interpretability)
+                total_loss += batch_loss.item() * current_batch_size
 
         # Average loss across all samples
         avg_loss = total_loss / total_samples
@@ -228,6 +238,9 @@ def optimize_shifts(
     # move back because there were modified in-place
     tilt_series.to("cpu")
     model.to("cpu")
+
+    # Restore original precision setting
+    torch.set_float32_matmul_precision(original_precision)
 
     return tilt_series, loss_values
 
@@ -273,10 +286,10 @@ def run_iterative_anchoring(
 
     all_loss_values = []
 
-    # Track best solution across all iterations
+    # Track best solution - initialize with current state
     best_loss = float("inf")
-    best_offsets_x = None
-    best_offsets_y = None
+    best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
+    best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
 
     while n_unreliable_per_side > 0:
         print(f"n_unreliable_per_side: {n_unreliable_per_side}")
@@ -326,35 +339,50 @@ def run_iterative_anchoring(
         current_loss = loss_values[-1]
         print(f"Loss went from {loss_values[0]} to {current_loss}")
 
-        # Track best solution (before restoring unreliable tilts)
-        if current_loss < best_loss:
+        # Check for NaN or worse loss - immediately revert if so
+        if math.isnan(current_loss) or current_loss >= best_loss:
+            if math.isnan(current_loss):
+                print(f"  -> NaN detected, reverting to best (loss={best_loss})")
+            else:
+                print(f"  -> Loss worse ({current_loss:.4f} >= {best_loss:.4f}), reverting")
+            # Restore best solution and skip anchoring restoration
+            tilt_series.tilt_axis_offset_x = best_offsets_x.clone()
+            tilt_series.tilt_axis_offset_y = best_offsets_y.clone()
+        else:
+            # New best - update and apply anchoring restoration
             best_loss = current_loss
             best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
             best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
-            print(f"  -> New best loss: {best_loss}")
+            print(f"  -> New best loss: {best_loss:.4f}")
 
-        # Restore unreliable tilts with chain-like relative offsets
-        # Negative side: propagate from boundary outward (high sorted idx to low)
-        for i in range(n_unreliable_per_side - 1, -1, -1):
-            curr_tilt_idx = sorted_indices[i]
-            next_tilt_idx = sorted_indices[i + 1]
-            tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
-                tilt_series.tilt_axis_offset_x[next_tilt_idx] + neg_relative_offsets_x[i]
-            )
-            tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
-                tilt_series.tilt_axis_offset_y[next_tilt_idx] + neg_relative_offsets_y[i]
-            )
+            # Restore unreliable tilts with chain-like relative offsets
+            # Negative side: propagate from boundary outward (high sorted idx to low)
+            for i in range(n_unreliable_per_side - 1, -1, -1):
+                curr_tilt_idx = sorted_indices[i]
+                next_tilt_idx = sorted_indices[i + 1]
+                tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
+                    tilt_series.tilt_axis_offset_x[next_tilt_idx]
+                    + neg_relative_offsets_x[i]
+                )
+                tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
+                    tilt_series.tilt_axis_offset_y[next_tilt_idx]
+                    + neg_relative_offsets_y[i]
+                )
 
-        # Positive side: propagate from boundary outward (low sorted idx to high)
-        for i, sorted_i in enumerate(range(pos_boundary_sorted_idx + 1, n_tilts)):
-            curr_tilt_idx = sorted_indices[sorted_i]
-            prev_tilt_idx = sorted_indices[sorted_i - 1]
-            tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
-                tilt_series.tilt_axis_offset_x[prev_tilt_idx] + pos_relative_offsets_x[i]
-            )
-            tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
-                tilt_series.tilt_axis_offset_y[prev_tilt_idx] + pos_relative_offsets_y[i]
-            )
+            # Positive side: propagate from boundary outward (low sorted idx to high)
+            for i, sorted_i in enumerate(
+                range(pos_boundary_sorted_idx + 1, n_tilts)
+            ):
+                curr_tilt_idx = sorted_indices[sorted_i]
+                prev_tilt_idx = sorted_indices[sorted_i - 1]
+                tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
+                    tilt_series.tilt_axis_offset_x[prev_tilt_idx]
+                    + pos_relative_offsets_x[i]
+                )
+                tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
+                    tilt_series.tilt_axis_offset_y[prev_tilt_idx]
+                    + pos_relative_offsets_y[i]
+                )
 
         # Expand reliable set by 1 tilt per side
         n_unreliable_per_side -= 1
@@ -365,14 +393,18 @@ def run_iterative_anchoring(
     final_loss = loss_values[-1]
     print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
 
-    # Check if final is the best, if not restore the best solution
-    if final_loss < best_loss:
-        best_loss = final_loss
-        print(f"Final optimization achieved best loss: {best_loss}")
-    elif best_offsets_x is not None:
-        print(f"Restoring best solution with loss {best_loss} (final was {final_loss})")
+    # Check for NaN or worse than best
+    if math.isnan(final_loss) or final_loss >= best_loss:
+        if math.isnan(final_loss):
+            print(f"Final produced NaN, restoring best (loss={best_loss:.4f})")
+        else:
+            print(
+                f"Final worse ({final_loss:.4f} >= {best_loss:.4f}), restoring best"
+            )
         tilt_series.tilt_axis_offset_x = best_offsets_x
         tilt_series.tilt_axis_offset_y = best_offsets_y
+    else:
+        print(f"Final optimization achieved best loss: {final_loss:.4f}")
 
     return tilt_series, all_loss_values
 
