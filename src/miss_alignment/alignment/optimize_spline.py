@@ -156,6 +156,9 @@ def optimize_shifts_spline(
 
     loss_values = []
 
+    # Determine device type for autocast
+    device_type = "cuda" if str(device).startswith("cuda") else "cpu"
+
     def closure():
         alignment_optimizer.zero_grad()
 
@@ -173,42 +176,54 @@ def optimize_shifts_spline(
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         total_samples = positions.shape[0]
-        total_loss = 0.0
+        total_weighted_score = 0.0
+        total_precision = 0.0
 
-        for b in range(batches):
-            if b == batches - 1:
-                batch_positions = positions[b * batch_size :]
-            else:
-                batch_positions = positions[b * batch_size : (b + 1) * batch_size]
+        # Disable autocast to ensure full precision during optimization
+        with torch.amp.autocast(device_type=device_type, enabled=False):
+            for b in range(batches):
+                if b == batches - 1:
+                    batch_positions = positions[b * batch_size :]
+                else:
+                    batch_positions = positions[b * batch_size : (b + 1) * batch_size]
 
-            current_batch_size = batch_positions.shape[0]
+                current_batch_size = batch_positions.shape[0]
 
-            subvolumes = tilt_series.reconstruct_subvolumes_single(
-                tilt_data=images,
-                coords=batch_positions.to(device),
-                pixel_size=pixel_size,
-                size=patch_size,
-                apply_ctf=apply_ctf,
-                oversampling=2.0,
-            )
+                subvolumes = tilt_series.reconstruct_subvolumes_single(
+                    tilt_data=images,
+                    coords=batch_positions.to(device),
+                    pixel_size=pixel_size,
+                    size=patch_size,
+                    apply_ctf=apply_ctf,
+                    oversampling=2.0,
+                )
 
-            mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
-            std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-            subvolumes = (subvolumes - mean) / std
-            subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
+                mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
+                std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+                subvolumes = (subvolumes - mean) / std
+                subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
-            batch_loss = model(subvolumes)
-            batch_loss = batch_loss.mean()
+                # Get score and precision for this batch
+                batch_scores, batch_log_precisions = model(subvolumes)
+                batch_precisions = batch_log_precisions.exp()
 
-            weighted_loss = batch_loss * (current_batch_size / total_samples)
-            weighted_loss.backward()
+                # Precision-weighted average score for this batch
+                batch_weighted_score = (batch_scores * batch_precisions).sum()
+                batch_precision_sum = batch_precisions.sum()
 
-            total_loss += batch_loss.item() * current_batch_size
+                # Weight by batch size for proper gradient accumulation
+                weighted_loss = batch_weighted_score * (current_batch_size / total_samples)
+                weighted_loss.backward()
 
-        avg_loss = total_loss / total_samples
-        loss_values.append(avg_loss)
+                # Accumulate for precision-weighted average
+                total_weighted_score += batch_weighted_score.item()
+                total_precision += batch_precision_sum.item()
 
-        return avg_loss
+        # Precision-weighted average score
+        avg_score = total_weighted_score / total_precision if total_precision > 0 else 0.0
+        loss_values.append(avg_score)
+
+        return avg_score
 
     n_iters = 1
     for _ in range(n_iters):

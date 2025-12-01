@@ -7,7 +7,6 @@ from torch.optim.lr_scheduler import MultiStepLR
 from typing import Optional
 from lightning.pytorch.callbacks import Callback
 
-# from miss_alignment.models import resnet3d_18
 from miss_alignment.models import (
     Compact3DConvNet,
     Compact3DConvNetGELU,
@@ -31,7 +30,10 @@ model_map = {
 
 class TripletMarginRankingLoss(nn.Module):
     """
-    Triplet Margin Loss with explicit triplet ordering based on indices.
+    Precision-weighted Triplet Margin Loss with explicit triplet ordering.
+
+    The loss is weighted by the predicted precision (inverse variance) of each
+    sample, allowing the model to express uncertainty about uninformative regions.
 
     Parameters
     ----------
@@ -40,49 +42,84 @@ class TripletMarginRankingLoss(nn.Module):
     reduction : str, optional
         Specifies the reduction to apply to the output:
         'none' | 'mean' | 'sum'. Default: 'mean'
+    precision_reg_weight : float, optional
+        Weight for precision regularization to prevent collapse. Default: 0.01
     """
 
-    def __init__(self, margin=1.0, reduction="mean"):
+    def __init__(self, margin=1.0, reduction="mean", precision_reg_weight=0.01):
         super(TripletMarginRankingLoss, self).__init__()
         self.margin = margin
         self.reduction = reduction
+        self.precision_reg_weight = precision_reg_weight
 
-    def forward(self, embeddings, triplet_indices):
+    def forward(self, scores, log_precisions, triplet_indices):
         """
         Forward pass using triplet indices to organize samples.
 
         Parameters
         ----------
-        embeddings : torch.Tensor
-            Tensor of shape (batch_size, 3)
+        scores : torch.Tensor
+            Tensor of shape (batch_size, 3) - alignment scores
+        log_precisions : torch.Tensor
+            Tensor of shape (batch_size, 3) - log precision for each score
         triplet_indices : torch.Tensor
             Tensor of shape (batch_size, 3) where each row contains indices
             for [anchor_idx, positive_idx, negative_idx]
 
         Returns
         -------
-        torch.Tensor
-            Computed loss
+        tuple[torch.Tensor, torch.Tensor]
+            (triplet_loss, precision_reg) - weighted triplet loss and precision
+            regularization term
         """
-        example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
-        close = embeddings[triplet_indices == example_type]  # (b, 2)
-        close = einops.rearrange(close, "(b n) -> b n", n=2)
-        distant = embeddings[triplet_indices != example_type]  # (b, 1)
-        distant = einops.rearrange(distant, "b -> b 1")
+        # Convert log precision to precision (always positive)
+        precisions = log_precisions.exp()
 
-        dist_pos = torch.abs(close[..., 0] - close[..., 1])
-        dist_neg = torch.min((close - distant) * example_type, dim=-1).values
+        # Identify example types and compute distances
+        example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
+        close_mask = triplet_indices == example_type
+        distant_mask = triplet_indices != example_type
+
+        # Extract scores for close pair (aligned) and distant (misaligned)
+        close_scores = scores[close_mask]  # (b * 2,)
+        close_scores = einops.rearrange(close_scores, "(b n) -> b n", n=2)
+        distant_scores = scores[distant_mask]  # (b,)
+        distant_scores = einops.rearrange(distant_scores, "b -> b 1")
+
+        # Extract precisions for weighting
+        close_precisions = precisions[close_mask]
+        close_precisions = einops.rearrange(close_precisions, "(b n) -> b n", n=2)
+        distant_precisions = precisions[distant_mask]
+        distant_precisions = einops.rearrange(distant_precisions, "b -> b 1")
+
+        # Compute distances
+        dist_pos = torch.abs(close_scores[..., 0] - close_scores[..., 1])
+        dist_neg = torch.min(
+            (close_scores - distant_scores) * example_type, dim=-1
+        ).values
 
         # Compute triplet loss with margin
-        losses = F.relu(dist_pos + dist_neg + self.margin)
+        triplet_losses = F.relu(dist_pos + dist_neg + self.margin)
 
-        # Apply reduction
+        # Weight by geometric mean of precisions in the triplet
+        # This downweights triplets where any member has low precision
+        all_precisions = torch.cat([close_precisions, distant_precisions], dim=-1)
+        triplet_precision = all_precisions.prod(dim=-1).pow(1 / 3)  # geometric mean
+        weighted_losses = triplet_losses * triplet_precision
+
+        # Precision regularization: penalize low precision to prevent collapse
+        # Using mean of log_precisions (equivalent to log of geometric mean)
+        precision_reg = -log_precisions.mean() * self.precision_reg_weight
+
+        # Apply reduction to weighted losses
         if self.reduction == "mean":
-            return losses.mean()
+            loss = weighted_losses.mean()
         elif self.reduction == "sum":
-            return losses.sum()
+            loss = weighted_losses.sum()
         else:  # 'none'
-            return losses
+            loss = weighted_losses
+
+        return loss, precision_reg
 
 
 class MissAlignment(pl.LightningModule):
@@ -95,6 +132,7 @@ class MissAlignment(pl.LightningModule):
         warmup_steps: int = 500,
         weight_decay: float = 0,
         margin: float = 0.5,
+        precision_reg_weight: float = 0.01,
         # will be saved as a hyperparameter
         multistep_lr_scheduler: Optional[dict] = None,
         monitor: Optional[SimplePoolMonitor] = None,
@@ -110,16 +148,19 @@ class MissAlignment(pl.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
 
-        self.criterion = TripletMarginRankingLoss(margin=margin)
+        self.criterion = TripletMarginRankingLoss(
+            margin=margin, precision_reg_weight=precision_reg_weight
+        )
 
         model = model_map[model_architecture]
-        self.net = model()  # resnet3d_18()
+        self.net = model()
 
         self.monitor = monitor
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        out = self.net(image)
-        return out
+    def forward(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass returning score and log_precision."""
+        score, log_precision = self.net(image)
+        return score, log_precision
 
     def _common_step(self, batch, batch_idx):
         # get the batch data
@@ -134,39 +175,84 @@ class MissAlignment(pl.LightningModule):
             if batch_idx % 50 == 0 and batch_idx > 0:
                 self.monitor.print_stats()
 
-        # calculate scores and loss
-        scores = torch.stack((self(img1), self(img2), self(img3)))
-        scores = einops.rearrange(scores, "d b 1 -> b d")
-        loss = self.criterion(scores, target)
+        # calculate scores and log_precisions for all three images
+        score1, log_prec1 = self(img1)
+        score2, log_prec2 = self(img2)
+        score3, log_prec3 = self(img3)
+
+        # Stack into (batch, 3) format
+        scores = torch.stack((score1, score2, score3), dim=1)
+        scores = einops.rearrange(scores, "b d 1 -> b d")
+        log_precisions = torch.stack((log_prec1, log_prec2, log_prec3), dim=1)
+        log_precisions = einops.rearrange(log_precisions, "b d 1 -> b d")
+
+        # Compute precision-weighted triplet loss
+        loss, precision_reg = self.criterion(scores, log_precisions, target)
+        total_loss = loss + precision_reg
 
         # find back the actual assigned scores to aligned/misaligned volume
         # to report back in the logs
         score_aligned = torch.mean(scores[target == 1])
         score_misaligned = torch.mean(scores[target == -1])
 
-        return loss, batch_size, score_aligned, score_misaligned
+        # Compute mean precision for logging
+        mean_precision = log_precisions.exp().mean()
+
+        return (
+            total_loss,
+            loss,
+            precision_reg,
+            batch_size,
+            score_aligned,
+            score_misaligned,
+            mean_precision,
+        )
 
     def training_step(
         self,
         batch: dict,
         batch_idx: int,
     ):
-        (loss, batch_size, score_aligned, score_misaligned) = self._common_step(
-            batch, batch_idx
-        )
+        (
+            total_loss,
+            triplet_loss,
+            precision_reg,
+            batch_size,
+            score_aligned,
+            score_misaligned,
+            mean_precision,
+        ) = self._common_step(batch, batch_idx)
 
         # Fail fast on NaN loss to prevent corrupted training
-        if torch.isnan(loss):
+        if torch.isnan(total_loss):
             raise ValueError(
                 f"NaN loss detected at batch {batch_idx}, epoch {self.current_epoch}. "
                 "This may indicate numerical instability. Check your data, learning rate, "
                 "or consider disabling AMP."
             )
 
-        self.log(  # add it to progress bar
+        self.log(
             name="train_loss",
-            value=loss.item(),
+            value=total_loss.item(),
             prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
+        self.log(
+            name="triplet_loss",
+            value=triplet_loss.item(),
+            prog_bar=False,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
+        self.log(
+            name="precision_reg",
+            value=precision_reg.item(),
+            prog_bar=False,
             on_step=False,
             on_epoch=True,
             logger=True,
@@ -190,6 +276,16 @@ class MissAlignment(pl.LightningModule):
             logger=True,
         )
 
+        # Log mean precision to monitor uncertainty learning
+        self.log(
+            name="mean_precision",
+            value=mean_precision.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
         # Log the learning rate
         current_lr = self.optimizers().param_groups[0]["lr"]
         self.log(
@@ -200,7 +296,7 @@ class MissAlignment(pl.LightningModule):
             on_epoch=False,
         )
 
-        return loss
+        return total_loss
 
     # Learning rate warm-up
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):

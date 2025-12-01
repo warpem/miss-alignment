@@ -153,7 +153,8 @@ def optimize_shifts(
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         total_samples = positions.shape[0]
-        total_loss = 0.0
+        total_weighted_score = 0.0
+        total_precision = 0.0
 
         # Disable autocast to ensure full precision during optimization
         with torch.amp.autocast(device_type=device_type, enabled=False):
@@ -184,24 +185,29 @@ def optimize_shifts(
                 # change channel to batch dimension
                 subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
-                # Get loss for this batch and compute backward pass
-                batch_loss = model(subvolumes)
-                batch_loss = batch_loss.mean()
+                # Get score and precision for this batch
+                batch_scores, batch_log_precisions = model(subvolumes)
+                batch_precisions = batch_log_precisions.exp()
+
+                # Precision-weighted average score for this batch
+                batch_weighted_score = (batch_scores * batch_precisions).sum()
+                batch_precision_sum = batch_precisions.sum()
 
                 # Weight by batch size for proper gradient accumulation
-                weighted_loss = batch_loss * (current_batch_size / total_samples)
+                weighted_loss = batch_weighted_score * (current_batch_size / total_samples)
 
                 # Backward pass for this batch (gradients accumulate)
                 weighted_loss.backward()
 
-                # Accumulate total loss for logging (unweighted for interpretability)
-                total_loss += batch_loss.item() * current_batch_size
+                # Accumulate for precision-weighted average
+                total_weighted_score += batch_weighted_score.item()
+                total_precision += batch_precision_sum.item()
 
-        # Average loss across all samples
-        avg_loss = total_loss / total_samples
-        loss_values.append(avg_loss)
+        # Precision-weighted average score
+        avg_score = total_weighted_score / total_precision if total_precision > 0 else 0.0
+        loss_values.append(avg_score)
 
-        return avg_loss
+        return avg_score
 
     n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
