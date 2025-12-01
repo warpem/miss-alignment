@@ -1,5 +1,6 @@
 import torch
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
+from warpylib import rescale
 
 
 def calculate_cross_correlation(
@@ -36,77 +37,80 @@ def calculate_cross_correlation(
     return result
 
 
-def get_shift_from_correlation_image(correlation_image: torch.Tensor) -> torch.Tensor:
+def get_shift_from_correlation_image(
+    correlation_image: torch.Tensor,
+    patch_size: int = 16,
+    upsample_size: int = 512,
+) -> torch.Tensor:
     """
     Extract shift from 3D correlation volume.
 
     The shift should be applied to img2 to align with img1.
-    Uses parabolic interpolation for sub-voxel accuracy.
+    Uses Fourier upsampling for sub-voxel accuracy: extracts a region around the
+    integer peak, upsamples it using bandwidth-limited Fourier rescaling, and finds
+    the peak position in the upsampled volume.
 
     Parameters
     ----------
     correlation_image : torch.Tensor
         3D correlation volume
+    patch_size : int
+        Size of the cubic region to extract around the integer peak (must be even).
+        Default is 16.
+    upsample_size : int
+        Size to upsample the extracted region to (must be even). Default is 512.
 
     Returns
     -------
     torch.Tensor
         3D shift vector [z, y, x]
     """
-    d, h, w = correlation_image.shape
     dtype, device = correlation_image.dtype, correlation_image.device
+    shape = torch.tensor(correlation_image.shape, device=device, dtype=dtype)
+    center = torch.div(shape, 2, rounding_mode="floor")
 
-    image_shape = torch.as_tensor(correlation_image.shape, device=device, dtype=dtype)
-    center = torch.divide(image_shape, 2, rounding_mode="floor")
-
-    # Find peak location
+    # Find integer peak location
     flat_idx = torch.argmax(correlation_image)
-    peak_z = flat_idx // (h * w)
-    peak_y = (flat_idx % (h * w)) // w
-    peak_x = flat_idx % w
-
-    # Check if peak is on border
-    if (
-        peak_z == 0
-        or peak_z == d - 1
-        or peak_y == 0
-        or peak_y == h - 1
-        or peak_x == 0
-        or peak_x == w - 1
-    ):
-        shift = (
-            torch.tensor([peak_z, peak_y, peak_x], device=device, dtype=dtype) - center
-        )
-        return shift
-
-    # Parabolic interpolation in z direction
-    f_z0 = correlation_image[peak_z - 1, peak_y, peak_x]
-    f_z1 = correlation_image[peak_z, peak_y, peak_x]
-    f_z2 = correlation_image[peak_z + 1, peak_y, peak_x]
-    subpixel_peak_z = peak_z + 0.5 * (f_z0 - f_z2) / (f_z0 - 2 * f_z1 + f_z2)
-
-    # Parabolic interpolation in y direction
-    f_y0 = correlation_image[peak_z, peak_y - 1, peak_x]
-    f_y1 = correlation_image[peak_z, peak_y, peak_x]
-    f_y2 = correlation_image[peak_z, peak_y + 1, peak_x]
-    subpixel_peak_y = peak_y + 0.5 * (f_y0 - f_y2) / (f_y0 - 2 * f_y1 + f_y2)
-
-    # Parabolic interpolation in x direction
-    f_x0 = correlation_image[peak_z, peak_y, peak_x - 1]
-    f_x1 = correlation_image[peak_z, peak_y, peak_x]
-    f_x2 = correlation_image[peak_z, peak_y, peak_x + 1]
-    subpixel_peak_x = peak_x + 0.5 * (f_x0 - f_x2) / (f_x0 - 2 * f_x1 + f_x2)
-
-    subpixel_shift = (
-        torch.tensor(
-            [subpixel_peak_z, subpixel_peak_y, subpixel_peak_x],
-            device=device,
-            dtype=dtype,
-        )
-        - center
+    peak_coords = torch.tensor(
+        torch.unravel_index(flat_idx, correlation_image.shape),
+        device=device,
+        dtype=dtype,
     )
 
-    return subpixel_shift
+    half_patch = patch_size // 2
+
+    # Check if we can extract a full patch around the peak
+    if torch.any(peak_coords < half_patch) or torch.any(
+        peak_coords >= shape - half_patch
+    ):
+        return peak_coords - center
+
+    # Extract patch around peak
+    pz, py, px = peak_coords.int().tolist()
+    patch = correlation_image[
+        pz - half_patch : pz + half_patch,
+        py - half_patch : py + half_patch,
+        px - half_patch : px + half_patch,
+    ]
+
+    # Upsample using Fourier rescaling
+    upsampled = rescale(patch, size=(upsample_size, upsample_size, upsample_size))
+
+    # Find peak in upsampled volume
+    up_flat_idx = torch.argmax(upsampled)
+    up_peak_coords = torch.tensor(
+        torch.unravel_index(up_flat_idx, upsampled.shape),
+        device=device,
+        dtype=dtype,
+    )
+
+    # Convert upsampled peak position back to original coordinates
+    upsample_factor = upsample_size / patch_size
+    up_center = upsample_size / 2
+    offset = (up_peak_coords - up_center) / upsample_factor
+    subpixel_peak = peak_coords + offset
+
+    return subpixel_peak - center
 
 
 def project_volume_shift_to_image_alignment(
