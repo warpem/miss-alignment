@@ -1,6 +1,6 @@
 import torch
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
-from warpylib import rescale
+from warpylib.ops import rescale
 
 
 def calculate_cross_correlation(
@@ -40,7 +40,7 @@ def calculate_cross_correlation(
 def get_shift_from_correlation_image(
     correlation_image: torch.Tensor,
     patch_size: int = 16,
-    upsample_size: int = 512,
+    upsample_size: int = 1024,
 ) -> torch.Tensor:
     """
     Extract shift from 3D correlation volume.
