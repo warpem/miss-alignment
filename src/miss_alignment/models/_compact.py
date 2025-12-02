@@ -47,13 +47,24 @@ class FourierDownsample3d(nn.Module):
             padded_size[1] // factor,
             padded_size[2] // factor,
         )
+
+        # cuFFT only supports power-of-two sizes for fp16, so convert to fp32
+        input_dtype = x.dtype
+        if input_dtype != torch.float32:
+            x = x.float()
+
         x = rescale(x, size=downsampled_size)
+
+        # Convert back to original dtype
+        if input_dtype != torch.float32:
+            x = x.to(input_dtype)
 
         # Crop to remove padding (factor voxels -> 1 voxel after downsampling)
         final_size = (d // factor, h // factor, w // factor)
         x = resize(x, size=final_size)
 
         x = x.view(b, c, *final_size)
+
         return x
 
 
