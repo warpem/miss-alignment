@@ -15,7 +15,8 @@ def test_generate_position_grid():
         patch_size=96,
         patch_overlap=0.1,
     )
-    assert grid.shape == (50, 3)
+    # With full coverage: ceil((512-96)/86)+1 = 6 patches per X and Y, 2 for Z
+    assert grid.shape == (72, 3)
 
     grid = generate_position_grid(
         volume_dimensions_physical=(5120, 5120, 1800),

@@ -42,6 +42,11 @@ def generate_position_grid(
 ) -> torch.Tensor:
     """Generate a grid of 3D positions for reconstruction.
 
+    Ensures full coverage of the volume by rounding up the number of patches
+    needed and adjusting stride to distribute them evenly. This guarantees
+    the entire volume range is covered, even if patches end up closer together
+    than the requested overlap.
+
     Parameters
     ----------
     volume_dimensions_physical : tuple[float, float, float] | torch.Tensor
@@ -58,21 +63,49 @@ def generate_position_grid(
     torch.Tensor
         Grid of (x, y, z) positions, shape (n_positions, 3).
     """
-    # calculate patches per dimensions
-    stride = int(patch_size * (1 - patch_overlap))
+    import math
+
+    # calculate requested stride from overlap
+    requested_stride = int(patch_size * (1 - patch_overlap))
+
     patches_per_dim = []
     for s in volume_dimensions_physical:
-        dim = s // pixel_size
-        patches_per_dim += [max(int(dim // stride), 1)]
+        dim_pixels = s / pixel_size  # dimension in pixels
+
+        # Calculate minimum number of patches to cover dimension
+        # Patches are centered such that first is at patch_size/2 from edge
+        # and last is at patch_size/2 from opposite edge
+        # Distance between first and last center: dim_pixels - patch_size
+        # Number of gaps between centers: n_patches - 1
+        # So: (n_patches - 1) * stride >= dim_pixels - patch_size
+        if dim_pixels <= patch_size:
+            n_patches = 1
+        else:
+            n_patches = math.ceil((dim_pixels - patch_size) / requested_stride) + 1
+
+        patches_per_dim.append(n_patches)
 
     # extract patches per dim and physical size
     px, py, pz = patches_per_dim
     x, y, z = volume_dimensions_physical
+    patch_size_physical = patch_size * pixel_size
 
-    # get the reconstruction positions to optimize over
-    zs = ((torch.arange(pz) + 0.5) / pz) * z
-    ys = ((torch.arange(py) + 0.5) / py) * y
-    xs = ((torch.arange(px) + 0.5) / px) * x
+    # Generate patch center positions with adjusted stride for full coverage
+    def generate_positions(n_patches: int, physical_size: float) -> torch.Tensor:
+        if n_patches == 1:
+            # Single patch at center
+            return torch.tensor([physical_size / 2])
+        else:
+            # Distribute evenly from first to last valid position
+            # First center: patch_size_physical / 2
+            # Last center: physical_size - patch_size_physical / 2
+            start = patch_size_physical / 2
+            end = physical_size - patch_size_physical / 2
+            return torch.linspace(start, end, n_patches)
+
+    xs = generate_positions(px, x)
+    ys = generate_positions(py, y)
+    zs = generate_positions(pz, z)
 
     # merge positions in tensor
     position_grid = torch.stack(torch.meshgrid(xs, ys, zs, indexing="ij"), dim=-1)
