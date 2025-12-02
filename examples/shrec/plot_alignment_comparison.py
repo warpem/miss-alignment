@@ -40,9 +40,11 @@ def load_and_compute_magnitudes(json_path: Path) -> dict[str, np.ndarray]:
     return magnitudes
 
 
-def compute_average_per_tilt(magnitudes: dict[str, np.ndarray]) -> np.ndarray:
+def compute_stats_per_tilt(
+    magnitudes: dict[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute average error magnitude per tilt across all models.
+    Compute average, min, and max error magnitude per tilt across all models.
 
     Parameters
     ----------
@@ -51,12 +53,15 @@ def compute_average_per_tilt(magnitudes: dict[str, np.ndarray]) -> np.ndarray:
 
     Returns
     -------
-    np.ndarray
-        Average error magnitude for each tilt index
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Average, min, and max error magnitude for each tilt index
     """
     # Stack all magnitude arrays (assuming all have same length)
     all_magnitudes = np.stack(list(magnitudes.values()), axis=0)
-    return np.mean(all_magnitudes, axis=0)
+    avg = np.mean(all_magnitudes, axis=0)
+    min_val = np.min(all_magnitudes, axis=0)
+    max_val = np.max(all_magnitudes, axis=0)
+    return avg, min_val, max_val
 
 
 def main():
@@ -91,9 +96,11 @@ def main():
     print(f"Loading aligned data from {args.aligned}")
     aligned_magnitudes = load_and_compute_magnitudes(args.aligned)
 
-    # Compute averages per tilt
-    unaligned_avg = compute_average_per_tilt(unaligned_magnitudes)
-    aligned_avg = compute_average_per_tilt(aligned_magnitudes)
+    # Compute stats per tilt
+    unaligned_avg, unaligned_min, unaligned_max = compute_stats_per_tilt(
+        unaligned_magnitudes
+    )
+    aligned_avg, aligned_min, aligned_max = compute_stats_per_tilt(aligned_magnitudes)
 
     # Create tilt indices (assuming 0-indexed)
     n_tilts = len(unaligned_avg)
@@ -102,8 +109,17 @@ def main():
     # Plot
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    ax.plot(tilt_indices, unaligned_avg, label="Unaligned", linewidth=2)
-    ax.plot(tilt_indices, aligned_avg, label="Aligned", linewidth=2)
+    # Plot min-max ranges as shaded regions
+    ax.fill_between(
+        tilt_indices, unaligned_min, unaligned_max, alpha=0.2, color="C0"
+    )
+    ax.fill_between(
+        tilt_indices, aligned_min, aligned_max, alpha=0.2, color="C1"
+    )
+
+    # Plot average curves
+    ax.plot(tilt_indices, unaligned_avg, label="Unaligned", linewidth=2, color="C0")
+    ax.plot(tilt_indices, aligned_avg, label="Aligned", linewidth=2, color="C1")
 
     ax.set_xlabel("Tilt Index")
     ax.set_ylabel("Average Alignment Error (Å)")
