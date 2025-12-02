@@ -1,78 +1,91 @@
 import torch
 import torch.nn as nn
-from warpylib.ops import rescale, resize
+import torch.nn.functional as F
 
 
-class FourierDownsample3d(nn.Module):
+class BlurPool3D(nn.Module):
     """
-    Downsample 3D tensors using Fourier-space rescaling to avoid aliasing.
+    3D BlurPool for anti-aliased downsampling.
 
-    Pads the input before downsampling and crops after to handle edge effects.
+    Applies a low-pass filter before subsampling to reduce aliasing artifacts.
+    Based on "Making Convolutional Networks Shift-Invariant Again" (Zhang, 2019).
 
     Parameters
     ----------
-    factor : int
-        Downsampling factor (e.g., 2 means halve each spatial dimension)
+    channels : int
+        Number of input channels
+    pad_type : str
+        Padding type: 'replicate' or 'zero'
+    filt_size : int
+        Size of the binomial filter (1-7)
+    stride : int
+        Downsampling stride
+    pad_off : int
+        Additional padding offset
     """
 
-    def __init__(self, factor: int):
+    def __init__(
+        self,
+        channels: int,
+        pad_type: str = "replicate",
+        filt_size: int = 4,
+        stride: int = 2,
+        pad_off: int = 0,
+    ):
         super().__init__()
-        self.factor = factor
+        self.filt_size = filt_size
+        self.pad_off = pad_off
+        self.stride = stride
+        self.channels = channels
+
+        # Padding for 3D: (left, right, top, bottom, front, back)
+        pad_size_low = int((filt_size - 1) / 2)
+        pad_size_high = int((filt_size - 1) / 2 + 0.5)
+        self.pad_sizes = [
+            pad_size_low + pad_off,
+            pad_size_high + pad_off,
+        ] * 3
+
+        # Binomial filter coefficients (Pascal's triangle)
+        coeffs = {
+            1: [1.0],
+            2: [1.0, 1.0],
+            3: [1.0, 2.0, 1.0],
+            4: [1.0, 3.0, 3.0, 1.0],
+            5: [1.0, 4.0, 6.0, 4.0, 1.0],
+            6: [1.0, 5.0, 10.0, 10.0, 5.0, 1.0],
+            7: [1.0, 6.0, 15.0, 20.0, 15.0, 6.0, 1.0],
+        }
+        a = torch.tensor(coeffs[filt_size])
+
+        # Create 3D filter as outer product of 1D filters
+        filt = a[:, None, None] * a[None, :, None] * a[None, None, :]
+        filt = filt / filt.sum()
+        self.register_buffer("filt", filt[None, None, :, :, :].repeat(channels, 1, 1, 1, 1))
+
+        # Padding layer
+        if pad_type in ["repl", "replicate"]:
+            self.pad = nn.ReplicationPad3d(self.pad_sizes)
+        elif pad_type == "zero":
+            self.pad = nn.ConstantPad3d(self.pad_sizes, 0)
+        else:
+            raise ValueError(f"Pad type [{pad_type}] not supported for 3D")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Downsample input tensor.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input tensor of shape (B, C, D, H, W)
-
-        Returns
-        -------
-        torch.Tensor
-            Downsampled tensor of shape (B, C, D//factor, H//factor, W//factor)
-        """
-        b, c, d, h, w = x.shape
-        factor = self.factor
-
-        # Pad by factor voxels on each side
-        padded_size = (d + 2 * factor, h + 2 * factor, w + 2 * factor)
-        x = x.view(b * c, d, h, w)
-        x = resize(x, size=padded_size, padding_mode="replicate")
-
-        # Downsample using Fourier rescaling
-        downsampled_size = (
-            padded_size[0] // factor,
-            padded_size[1] // factor,
-            padded_size[2] // factor,
-        )
-
-        # cuFFT only supports power-of-two sizes for fp16, so convert to fp32
-        input_dtype = x.dtype
-        if input_dtype != torch.float32:
-            x = x.float()
-
-        x = rescale(x, size=downsampled_size)
-
-        # Convert back to original dtype
-        if input_dtype != torch.float32:
-            x = x.to(input_dtype)
-
-        # Crop to remove padding (factor voxels -> 1 voxel after downsampling)
-        final_size = (d // factor, h // factor, w // factor)
-        x = resize(x, size=final_size)
-
-        x = x.view(b, c, *final_size)
-
-        return x
+        if self.filt_size == 1:
+            if self.pad_off == 0:
+                return x[:, :, :: self.stride, :: self.stride, :: self.stride]
+            else:
+                return self.pad(x)[:, :, :: self.stride, :: self.stride, :: self.stride]
+        else:
+            return F.conv3d(self.pad(x), self.filt, stride=self.stride, groups=x.shape[1])
 
 
 class Compact3DConvNet(nn.Module):
     def __init__(self):
         super(Compact3DConvNet, self).__init__()
 
-        # Feature extraction with progressive downsampling using Fourier rescaling
+        # Feature extraction with progressive downsampling using BlurPool
         self.conv = nn.Sequential(
             # Layer 0: 64x64x64 -> 64x64x64
             nn.Conv3d(1, 8, kernel_size=3, stride=1, padding=1),
@@ -82,22 +95,22 @@ class Compact3DConvNet(nn.Module):
             nn.Conv3d(8, 16, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm3d(16),
             nn.SiLU(),
-            FourierDownsample3d(factor=2),
+            BlurPool3D(channels=16),
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm3d(32),
             nn.SiLU(),
-            FourierDownsample3d(factor=2),
+            BlurPool3D(channels=32),
             # Layer 3: 16x16x16 -> 8x8x8
             nn.Conv3d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm3d(64),
             nn.SiLU(),
-            FourierDownsample3d(factor=2),
+            BlurPool3D(channels=64),
             # Layer 4: 8x8x8 -> 4x4x4
             nn.Conv3d(64, 64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm3d(64),
             nn.SiLU(),
-            FourierDownsample3d(factor=2),
+            BlurPool3D(channels=64),
             # Layer 5: 4x4x4 -> 2x2x2
             nn.Conv3d(64, 64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm3d(64),
