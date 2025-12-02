@@ -8,6 +8,10 @@ miss-alignment is a deep learning package for tilt-series alignment in cryo-elec
 
 **Key concept**: The system alternates between (1) training a model to score reconstruction quality and (2) using that model to optimize tilt-series alignment parameters through gradient descent.
 
+### Scientific publication
+
+This software is a research project. It will be written up in a manuscript. Therefore, consider for anything you write in the paper/ folder that it should adhere to scientific principles with an emphasis on clarity and simplicity.
+
 ## Environment Setup
 
 This project has specific CUDA and PyTorch dependencies. Use the conda environment setup from README.md:
