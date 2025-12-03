@@ -1,3 +1,17 @@
+"""
+This script describes the conversion of the SHREC dataset as present on
+DataverseNL (https://dataverse.nl/dataset.xhtml?persistentId=doi:10.34894/XRTJMA),
+specifically shrec21_full_dataset_no_mirroring.zip .
+
+The following was done to the tilt-series:
+* downsample from 10A to 5A with Fourier cropping
+* coarse cross-correlation based alignment with torch-tiltxcorr
+* saving the data as .pickle files (a deprecated format of miss-alignment)
+  - both a ground_truth file and a tiltxcorr file
+
+The converted data were uploaded to Zenodo at: https://zenodo.org/records/16574872
+how-to-run.md describes processing from the Zenodo archive
+"""
 from pathlib import Path
 
 import napari
@@ -19,9 +33,11 @@ def _read_shrec_alignment(file: Path) -> tuple[list]:
 
 
 if __name__ == "__main__":
-    ground_truth_folder = Path("rescaled/ground_truth")
+    ground_truth_folder = Path(
+        "../../dataset_prep/shrec/rescaled/ground_truth")
     ground_truth_folder.mkdir(parents=True, exist_ok=True)
-    xcorr_alignment_folder = Path("rescaled/xcorr_alignment/")
+    xcorr_alignment_folder = Path(
+        "../../dataset_prep/shrec/rescaled/xcorr_alignment/")
     xcorr_alignment_folder.mkdir(parents=True, exist_ok=True)
     reconstruct_and_show = False
 
