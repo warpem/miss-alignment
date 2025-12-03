@@ -118,7 +118,7 @@ def evaluate_tilt_series(
     model_checkpoint_path: Path,
     tilt_series_path: Path,
     output_directory: Path,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "anchoring",
+    setting: str | tuple[int, int] | tuple[int, int, int, int] = "anchoring",
     patch_size: int = 96,
     patch_overlap: float = 0.1,
     batch_size: int = 16,
@@ -143,7 +143,7 @@ def evaluate_tilt_series(
         - "global": per-tilt 2D shifts (single pass)
         - "anchoring": iterative anchoring with per-tilt shifts (default)
         - "spline": smooth spline + per-tilt fine adjustment (coarse-to-fine)
-        - tuple(int, int, int): 2D warping field per image
+        - tuple(int, int): 2D warping field per image
         - tuple(int, int, int, int): 3D volume warp grid
     patch_size : int
         Size of reconstruction patches.
