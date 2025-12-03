@@ -1,4 +1,5 @@
 from pathlib import Path
+from shutil import copyfile
 import yaml
 
 import typer
@@ -78,8 +79,6 @@ def train_miss_align(
         # ============================================================
         # ================= model training step ======================
         # ============================================================
-        iteration_directory = training_directory / ("iter" + str(x))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
         iteration_settings = general_config["iteration_settings"][x]
 
         # Define the early stopping callback
@@ -140,7 +139,7 @@ def train_miss_align(
 
         # Initialize data module with parameters from config
         with MissAlignmentDataModule(
-            iteration_directory,
+            training_directory,
             create_default_generator(**shift_generation_config),
             n_workers=n_workers,
             reconstruction_accelerators=devices_reconstruction,
@@ -167,18 +166,15 @@ def train_miss_align(
         # ============================================================
         # =============== tilt-series alignment step =================
         # ============================================================
-        # get the output directory ready
-        output_directory = training_directory / ("iter" + str(x + 1))
-        output_directory.mkdir(parents=True, exist_ok=True)
 
         # get list of all files to process for alignment
-        tilt_series_list = list(iteration_directory.glob("*.json"))
+        tilt_series_list = list(training_directory.glob("*.xml"))
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
             model_checkpoint=model_training_config["model_checkpoint"],
             tilt_series_list=tilt_series_list,
-            output_directory=output_directory,
+            output_directory=training_directory,
             setting=iteration_settings["alignment"],
             patch_size=alignment_config["patch_size"],
             patch_overlap=alignment_config["patch_overlap"],
@@ -187,5 +183,12 @@ def train_miss_align(
             downsample=iteration_settings["downsample"],
             devices_list=devices_list,
         )
+
+        # make copies of the updated xml files in separate iteration folder
+        iteration_directory = training_directory / ("iter" + str(x))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+        for xml_file in training_directory.glob("*.xml"):
+            destination = iteration_directory / xml_file.name
+            copyfile(xml_file, destination)
 
     return None
