@@ -135,7 +135,7 @@ def evaluate_tilt_series(
     model_checkpoint_path : Path
         Path to trained model checkpoint.
     tilt_series_path : Path
-        Path to tilt series JSON file.
+        Path to tilt series XML file.
     output_directory : Path
         Directory to write output files.
     setting : str | tuple
@@ -174,7 +174,7 @@ def evaluate_tilt_series(
     )
 
     # load tilt_series and set its name for output
-    tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
+    tilt_series_data = TiltSeriesData(xml_metadata_path=tilt_series_path)
     tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
         downsample=downsample
     )
