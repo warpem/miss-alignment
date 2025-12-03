@@ -104,7 +104,6 @@ python -m pip install -e .[dev,test]
 ### Dependencies on External Libraries
 
 - **`warpylib`**: Provides `TiltSeries` and `CubicGrid` for tilt-series geometry and warping
-- **`torch-tomogram`**: Used for tomographic reconstruction operations
 - **`torch-fourier-*`**: Suite of PyTorch-based Fourier transform utilities (rescale, slice, shift, filter)
 - **`torch-tiltxcorr`**: Cross-correlation utilities for tilt-series
 - **`torch-grid-utils`** and **`torch-cubic-spline-grids`**: Grid manipulation utilities
@@ -122,6 +121,140 @@ Training is configured via YAML files (template: `src/miss_alignment/config_temp
 
 1. **Training**: Dataset JSON files (`.json`) → Reconstruction workers → Pool directory (`.pickle` patches triplet) → DataLoader → Model
 2. **Alignment**: Trained model checkpoint → Load tilt-series data → Gradient-based optimization → Output aligned parameters (`.json`)
+
+## Working with Tilt-Series Data
+
+This project uses `warpylib.TiltSeries` as the primary representation of tilt-series metadata. Data is stored in JSON files that reference both the metadata (`.xml`) and image stack (`.st` or `.mrc`).
+
+**Note**: `torch-tomogram` is a dependency only for backward compatibility. Use `warpylib` for all tilt-series operations.
+
+### Loading Tilt-Series Data
+
+```python
+from pathlib import Path
+from miss_alignment.data.io import TiltSeriesData
+
+# Load metadata from JSON file
+tilt_series_data = TiltSeriesData.from_json(Path("path/to/data.json"))
+
+# Load the actual TiltSeries object, images, and pixel size
+tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
+    downsample=1  # optional downsampling factor
+)
+
+# Access tilt-series metadata (all torch tensors)
+angles = tilt_series.angles  # tilt angles in degrees
+tilt_axis_angles = tilt_series.tilt_axis_angles  # tilt axis rotation per image
+tilt_axis_offset_x = tilt_series.tilt_axis_offset_x  # X shifts in Angstroms
+tilt_axis_offset_y = tilt_series.tilt_axis_offset_y  # Y shifts in Angstroms
+```
+
+### TiltSeries Key Attributes
+
+The `warpylib.TiltSeries` object contains:
+- **`angles`**: Tilt angles in degrees (shape: `[n_tilts]`)
+- **`tilt_axis_angles`**: Rotation of tilt axis for each image in degrees (shape: `[n_tilts]`)
+- **`tilt_axis_offset_x`**: X-axis shifts in Angstroms (shape: `[n_tilts]`)
+- **`tilt_axis_offset_y`**: Y-axis shifts in Angstroms (shape: `[n_tilts]`)
+- **`image_dimensions_physical`**: Physical image dimensions in Angstroms (shape: `[2]`)
+- **`volume_dimensions_physical`**: Physical volume dimensions in Angstroms (shape: `[3]`)
+
+All attributes are `torch.Tensor` objects.
+
+### Performing Reconstructions
+
+```python
+import torch
+from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
+
+# Preprocess images (normalize, optionally invert)
+images = preprocess_tilt_data(
+    tilt_data=images,
+    normalize=True,
+    invert=False,
+    subvolume_size=64,  # patch size for filter calculation
+)
+
+# Define reconstruction position (in Angstroms, in volume coordinate system)
+reconstruction_location = torch.tensor([[x, y, z]], device="cuda")
+
+# Perform reconstruction at a specific location
+patch_size = 64  # size of output volume (cubic)
+reconstruction = tilt_series.reconstruct_subvolumes_single(
+    tilt_data=images,
+    coords=reconstruction_location,  # shape: (1, 3) in Angstroms
+    pixel_size=pixel_size,
+    size=patch_size,
+    apply_ctf=True,  # apply CTF correction
+    angles=torch.tensor([0.0, 0.0, 0.0]),  # optional rotation (ZYZ Euler)
+    oversampling=2.0,  # reconstruction oversampling factor
+)
+# Output shape: (1, patch_size, patch_size, patch_size)
+```
+
+### Modifying Alignment Parameters
+
+```python
+# Modify shifts (all operations in Angstroms)
+tilt_series.tilt_axis_offset_x += shift_x  # add X shifts
+tilt_series.tilt_axis_offset_y += shift_y  # add Y shifts
+
+# Modify angles
+tilt_series.angles = new_angles  # set new tilt angles
+tilt_series.tilt_axis_angles = new_tilt_axis_angles  # set tilt axis rotation
+```
+
+### Saving Updated Metadata
+
+```python
+# Save updated TiltSeries metadata back to XML
+tilt_series_data.save_metadata_to_xml(tilt_series)
+
+# Or save to a new JSON file
+new_tilt_series_data = tilt_series_data.replace(
+    xml_metadata_path=Path("path/to/new_metadata.xml")
+)
+new_tilt_series_data.save_metadata_to_xml(tilt_series)
+new_tilt_series_data.to_json(Path("path/to/new_data.json"))
+```
+
+### Adding Synthetic Shifts for Testing
+
+```python
+from miss_alignment.data.shift_generation import (
+    JitterGenerator,
+    TrajectoryGenerator,
+    OutlierGenerator,
+    FractureGenerator,
+)
+
+# Create shift generators
+n_tilts = len(tilt_series.angles)
+device = tilt_series.angles.device
+
+# Generate shifts (returned in pixels, shape: [n_tilts, 3] for ZYX)
+jitter_shifts = JitterGenerator(jitter_max_std=2.0)(n_tilts, device)
+trajectory_shifts = TrajectoryGenerator(trajectory_max_shift=10.0)(n_tilts, device)
+outlier_shifts = OutlierGenerator(outlier_max_shift=20, max_sequence_length=3)(n_tilts, device)
+fracture_shifts = FractureGenerator(fracture_max_shift=30)(n_tilts, device)
+
+# Convert to 2D shifts and apply (need projection matrices)
+from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
+from torch_affine_utils.transforms_3d import Ry, Rz
+
+r0 = Ry(-tilt_series.angles, zyx=True)
+r1 = Rz(tilt_series.tilt_axis_angles, zyx=True)
+rotation_matrices = r1 @ r0
+projection_matrices = rotation_matrices[..., 1:3, :3]
+
+# Project 3D shifts to 2D (shape: [n_tilts, 2] for YX)
+shifts_2d = project_shifts_3d_to_2d(jitter_shifts, projection_matrices)
+shifts_angstrom = shifts_2d * pixel_size
+
+# Apply shifts
+tilt_series.tilt_axis_offset_y += shifts_angstrom[:, 0]
+tilt_series.tilt_axis_offset_x += shifts_angstrom[:, 1]
+```
 
 ## Development Notes
 
