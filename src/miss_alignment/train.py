@@ -163,6 +163,12 @@ def train_miss_align(
             trainer.checkpoint_callback.best_model_path
         )
 
+        # copy best model to training directory as model.ckpt
+        best_model_path = Path(trainer.checkpoint_callback.best_model_path)
+        training_model_path = training_directory / "model.ckpt"
+        copyfile(best_model_path, training_model_path)
+        print(f"Copied best model to {training_model_path}")
+
         # ============================================================
         # =============== tilt-series alignment step =================
         # ============================================================
@@ -190,5 +196,10 @@ def train_miss_align(
         for xml_file in training_directory.glob("*.xml"):
             destination = iteration_directory / xml_file.name
             copyfile(xml_file, destination)
+
+        # copy best model to iteration directory as model.ckpt
+        iteration_model_path = iteration_directory / "model.ckpt"
+        copyfile(best_model_path, iteration_model_path)
+        print(f"Copied best model to {iteration_model_path}")
 
     return None
