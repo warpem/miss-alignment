@@ -95,7 +95,7 @@ def convert_pickles_to_json(download_dir: Path):
                 # Write .rawtlt file with inverted angles
                 rawtlt_path = tilt_series_data.xml_metadata_path.with_suffix('.rawtlt')
                 with open(rawtlt_path, 'w') as f:
-                    for angle in angles * -1:
+                    for angle in angles:
                         f.write(f"{angle}\n")
                 print(f"    Created {rawtlt_path.name}")
             except Exception as e:
@@ -129,7 +129,7 @@ def convert_pickles_to_json(download_dir: Path):
                 # Write .rawtlt file with inverted angles
                 rawtlt_path = tilt_series_data.xml_metadata_path.with_suffix('.rawtlt')
                 with open(rawtlt_path, 'w') as f:
-                    for angle in angles * -1:
+                    for angle in angles:
                         f.write(f"{angle}\n")
                 print(f"    Created {rawtlt_path.name}")
             except Exception as e:
