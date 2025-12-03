@@ -26,7 +26,7 @@ def optimize_shifts(
     images: torch.Tensor,
     pixel_size: float,
     positions: torch.Tensor,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "global",
+    setting: str | tuple[int, int] | tuple[int, int, int, int] = "global",
     patch_size: int = 96,
     batch_size: int = 16,
     apply_ctf: bool = True,
@@ -50,7 +50,7 @@ def optimize_shifts(
     setting : str | tuple
         Type of alignment to run:
         - 'global': optimizes a single shift per image
-        - tuple(int, int, int) e.g. (3, 3, 41): a single 2D field per image
+        - tuple(int, int) e.g. (3, 3): a single 2D field per tilt image
         - tuple(int, int, int, int) e.g. (3, 3, 2, 10): a volume warp grid
     patch_size : int
         Size of reconstruction patches.
@@ -209,10 +209,10 @@ def _optimize_shifts_inner(
             device=device,
         )
         parameters = [shifts_y, shifts_x]
-    elif len(setting) == 3:  # TODO add case of starting from existent grid
+    elif len(setting) == 2:  # TODO add case of starting from existent grid
         # movement grids - these should receive gradients
         tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(
-            new_size=setting
+            new_size=[setting[0], setting[1], tilt_series.n_tilts]
         ).to(device)
         leaf_variable_x = tilt_series.grid_movement_x.values.requires_grad_(True)
         tilt_series.grid_movement_x = CubicGrid(setting, leaf_variable_x)
