@@ -18,9 +18,9 @@ from .data._pool_monitor import SimplePoolMonitor
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
     config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-    reconstruction_workers: int = 4,
-    dataloader_workers: int = 4,
+    n_workers: int = 4,
     n_devices: int = 1,
+    pool_size: int = 1000,
     start_at_iteration: int = 0,
     monitor_production_and_consumption: bool = False,
 ) -> None:
@@ -35,6 +35,21 @@ def train_miss_align(
     if n_devices < 1:
         raise ValueError("MissAlignment needs at least 1 GPU")
     devices_list = list(range(n_devices))
+
+    devices_training = devices_list[0:1]
+    print(f"Using device {devices_training[0]} for training")
+
+    if len(devices_list) == 1:
+        devices_reconstruction = devices_list * n_workers
+    else:
+        # distribute remaining devices equally among reconstruction workers,
+        # cycling through devices if there are fewer devices than workers
+        devices_remaining = devices_list[1:]
+        devices_reconstruction = [
+            devices_remaining[i % len(devices_remaining)]
+            for i in range(n_workers)
+        ]
+    print(f"Using devices {devices_reconstruction} for reconstruction workers")
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
@@ -86,7 +101,7 @@ def train_miss_align(
         # Set up trainer with parameters from config
         trainer = Trainer(
             accelerator="gpu",
-            devices=devices_list[0:1],  # use the 0 device
+            devices=devices_training,  # use the 0 device
             default_root_dir=training_directory / "models",
             max_epochs=model_training_config["max_epochs_per_iteration"],
             log_every_n_steps=50,
@@ -96,6 +111,7 @@ def train_miss_align(
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback],
             plugins=[SLURMEnvironment(auto_requeue=False)],
+            precision="16-mixed",  # Enable automatic mixed precision
         )
 
         # initialize the monitor for production consumption rate
@@ -126,17 +142,15 @@ def train_miss_align(
         with MissAlignmentDataModule(
             iteration_directory,
             create_default_generator(**shift_generation_config),
-            reconstruction_workers=reconstruction_workers,
-            reconstruction_accelerators=devices_list[1:],
-            dataloader_workers=dataloader_workers,
+            n_workers=n_workers,
+            reconstruction_accelerators=devices_reconstruction,
             batch_size=data_module_config["batch_size"],
             patch_size=data_module_config["patch_size"],
             apply_ctf=general_config["apply_ctf"],
             downsample=iteration_settings["downsample"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
-            monitor=monitor,
+            pool_size=pool_size,
         ) as dm:
-            dm.wait_for_pool_to_fill()
             training_data = dm.train_dataloader()
             # enter datamodule context to start the reconstruction worker pool
             trainer.fit(model, train_dataloaders=training_data)

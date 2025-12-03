@@ -35,10 +35,8 @@ general:
   training_directory: /path/to/shrec_benchmark/  # path to directory for writing iteration output
   apply_ctf: False                # set to True if CTF estimates are available in .xml
   iteration_settings:             # defines all iterations to run (length determines number of iterations)
-    - { downsample: 2, alignment: global }
-    - { downsample: 2, alignment: global }
-    - { downsample: 2, alignment: global }
-    - { downsample: 2, alignment: global }
+    - { downsample: 2, alignment: anchoring }
+    - { downsample: 2, alignment: anchoring }
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }

@@ -1,14 +1,37 @@
+"""Tilt series alignment optimization.
+
+This module provides the main entry point for evaluating and optimizing
+tilt series alignment using trained models.
+"""
+
 from pathlib import Path
 
-import math
-import torch
 import einops
-from warpylib.cubic_grid import CubicGrid
-from warpylib import TiltSeries
+import torch
 from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
 
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.models import MissAlignment
+
+# Re-export optimization functions for backwards compatibility
+from .optimize_global import optimize_shifts
+from .optimize_iterative import optimize_shifts_iterative, run_iterative_anchoring
+from .optimize_spline import (
+    evaluate_catmull_rom_spline,
+    optimize_shifts_coarse_to_fine,
+    optimize_shifts_spline,
+)
+
+__all__ = [
+    "generate_position_grid",
+    "evaluate_tilt_series",
+    "optimize_shifts",
+    "optimize_shifts_iterative",
+    "optimize_shifts_spline",
+    "optimize_shifts_coarse_to_fine",
+    "run_iterative_anchoring",
+    "evaluate_catmull_rom_spline",
+]
 
 
 def generate_position_grid(
@@ -17,21 +40,72 @@ def generate_position_grid(
     patch_size: int,
     patch_overlap: float,
 ) -> torch.Tensor:
-    # calculate patches per dimensions
-    stride = int(patch_size * (1 - patch_overlap))
+    """Generate a grid of 3D positions for reconstruction.
+
+    Ensures full coverage of the volume by rounding up the number of patches
+    needed and adjusting stride to distribute them evenly. This guarantees
+    the entire volume range is covered, even if patches end up closer together
+    than the requested overlap.
+
+    Parameters
+    ----------
+    volume_dimensions_physical : tuple[float, float, float] | torch.Tensor
+        Physical dimensions of the volume (x, y, z) in Angstroms.
+    pixel_size : float
+        Pixel size in Angstroms.
+    patch_size : int
+        Size of reconstruction patches in pixels.
+    patch_overlap : float
+        Fractional overlap between patches (0 to 1).
+
+    Returns
+    -------
+    torch.Tensor
+        Grid of (x, y, z) positions, shape (n_positions, 3).
+    """
+    import math
+
+    # calculate requested stride from overlap
+    requested_stride = int(patch_size * (1 - patch_overlap))
+
     patches_per_dim = []
     for s in volume_dimensions_physical:
-        dim = s // pixel_size
-        patches_per_dim += [max(int(dim // stride), 1)]
+        dim_pixels = s / pixel_size  # dimension in pixels
+
+        # Calculate minimum number of patches to cover dimension
+        # Patches are centered such that first is at patch_size/2 from edge
+        # and last is at patch_size/2 from opposite edge
+        # Distance between first and last center: dim_pixels - patch_size
+        # Number of gaps between centers: n_patches - 1
+        # So: (n_patches - 1) * stride >= dim_pixels - patch_size
+        if dim_pixels <= patch_size:
+            n_patches = 1
+        else:
+            n_patches = math.ceil((dim_pixels - patch_size) / requested_stride) + 1
+
+        patches_per_dim.append(n_patches)
 
     # extract patches per dim and physical size
     px, py, pz = patches_per_dim
     x, y, z = volume_dimensions_physical
+    patch_size_physical = patch_size * pixel_size
 
-    # get the reconstruction positions to optimize over
-    zs = ((torch.arange(pz) + 0.5) / pz) * z
-    ys = ((torch.arange(py) + 0.5) / py) * y
-    xs = ((torch.arange(px) + 0.5) / px) * x
+    # Generate patch center positions with adjusted stride for full coverage
+    def generate_positions(n_patches: int, physical_size: float) -> torch.Tensor:
+        if n_patches == 1:
+            # Single patch at center
+            return torch.tensor([physical_size / 2])
+        else:
+            # Distribute evenly from first to last valid position
+            # First center: patch_size_physical / 2
+            # Last center: physical_size - patch_size_physical / 2
+            start = patch_size_physical / 2
+            end = physical_size - patch_size_physical / 2
+            return torch.linspace(start, end, n_patches)
+
+    xs = generate_positions(px, x)
+    ys = generate_positions(py, y)
+    zs = generate_positions(pz, z)
 
     # merge positions in tensor
     position_grid = torch.stack(torch.meshgrid(xs, ys, zs, indexing="ij"), dim=-1)
@@ -40,209 +114,59 @@ def generate_position_grid(
     return position_grid
 
 
-def optimize_shifts(
-    model: MissAlignment,
-    tilt_series: TiltSeries,
-    images: torch.Tensor,
-    pixel_size: float,
-    positions: torch.Tensor,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "global",
-    patch_size: int = 96,
-    batch_size: int = 16,
-    apply_ctf: bool = True,
-    device: str | torch.device = "cpu",
-):
-    """Find shifts to optimize model score.
-
-    Parameters
-    ----------
-    setting: type of alingment to run
-        str - 'global': optimizes a single shift per image
-        tuple[int, int, int] - (3, 3, 41): a single 2d field per image
-        tuple[int, int, int, int] - (3, 3, 2, 10): a volume warp grid
-
-    Returns
-    -------
-    tuple[torch.Tensor, list]
-        - Detected translational alignment.
-        - List of loss values for each optimization iteration.
-    """
-    # move all modules to device in place
-    tilt_series.to(device)
-    model.to(device)
-    model.freeze()
-    model.eval()
-    # move images to device
-    images = images.to(device)
-
-    parameters = None
-    if setting == "global":
-        # store the initial tilt_series alignment
-        initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
-        initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
-
-        # create the alignment parameters
-        shifts_y = torch.zeros_like(
-            initial_tilt_axis_offset_x,
-            requires_grad=True,
-            device=device,
-        )
-        shifts_x = torch.zeros_like(
-            initial_tilt_axis_offset_x,
-            requires_grad=True,
-            device=device,
-        )
-        parameters = [shifts_y, shifts_x]
-    elif len(setting) == 3:  # TODO add case of starting from existent grid
-        # movement grids - these should receive gradients
-        tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(
-            new_size=setting
-        ).to(device)
-        leaf_variable_x = tilt_series.grid_movement_x.values.requires_grad_(True)
-        tilt_series.grid_movement_x = CubicGrid(setting, leaf_variable_x)
-
-        tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(
-            new_size=setting
-        ).to(device)
-        leaf_variable_y = tilt_series.grid_movement_y.values.requires_grad_(True)
-        tilt_series.grid_movement_y = CubicGrid(setting, leaf_variable_y)
-
-        parameters = [leaf_variable_x, leaf_variable_y]
-    elif len(setting) == 4:  # TODO add case of starting from existent grid
-        tilt_series.grid_volume_warp_x = tilt_series.grid_volume_warp_x.resize(
-            new_size=setting
-        ).to(device)
-        leaf_variable_x = tilt_series.grid_volume_warp_x.values.requires_grad_(True)
-        tilt_series.grid_volume_warp_x = CubicGrid(setting, leaf_variable_x)
-
-        tilt_series.grid_volume_warp_y = tilt_series.grid_volume_warp_y.resize(
-            new_size=setting
-        ).to(device)
-        leaf_variable_y = tilt_series.grid_volume_warp_y.values.requires_grad_(True)
-        tilt_series.grid_volume_warp_y = CubicGrid(setting, leaf_variable_y)
-
-        tilt_series.grid_volume_warp_z = tilt_series.grid_volume_warp_z.resize(
-            new_size=setting
-        ).to(device)
-        leaf_variable_z = tilt_series.grid_volume_warp_z.values.requires_grad_(True)
-        tilt_series.grid_volume_warp_z = CubicGrid(setting, leaf_variable_z)
-
-        parameters = [
-            leaf_variable_x,
-            leaf_variable_y,
-            leaf_variable_z,
-        ]
-    else:
-        raise ValueError(f"Invalid setting for alignment optimization: {setting}")
-
-    alignment_optimizer = torch.optim.LBFGS(
-        parameters,
-        line_search_fn="strong_wolfe",
-    )
-
-    # Initialize list to store loss values
-    loss_values = []
-
-    def closure():
-        alignment_optimizer.zero_grad()
-
-        # update the alignments
-        if setting == "global":
-            tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y
-            tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x
-
-        batches = int(math.ceil(positions.shape[0] / batch_size))
-        total_samples = positions.shape[0]
-        total_loss = 0.0
-
-        # Use gradient accumulation: process each batch separately
-        for b in range(batches):
-            if b == batches - 1:
-                batch_positions = positions[b * batch_size :]
-            else:
-                batch_positions = positions[b * batch_size : (b + 1) * batch_size]
-
-            current_batch_size = batch_positions.shape[0]
-
-            # reconstruct subvolumes for this batch
-            subvolumes = tilt_series.reconstruct_subvolumes_single(
-                tilt_data=images,
-                coords=batch_positions.to(device),
-                pixel_size=pixel_size,
-                size=patch_size,
-                apply_ctf=apply_ctf,
-                oversampling=2.0,
-            )
-
-            # ensure normalization per subvolume
-            mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
-            std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-            subvolumes = (subvolumes - mean) / std
-
-            # change channel to batch dimension
-            subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
-
-            # Get loss for this batch and compute backward pass
-            batch_loss = model(subvolumes)
-            batch_loss = batch_loss.mean()
-
-            # Weight by batch size for proper gradient accumulation
-            weighted_loss = batch_loss * (current_batch_size / total_samples)
-
-            # Backward pass for this batch (gradients accumulate)
-            weighted_loss.backward()
-
-            # Accumulate total loss for logging (unweighted for interpretability)
-            total_loss += batch_loss.item() * current_batch_size
-
-        # Average loss across all samples
-        avg_loss = total_loss / total_samples
-        loss_values.append(avg_loss)
-
-        return avg_loss
-
-    n_iters = 1  # 5 iterations should give convergence
-    for x in range(n_iters):
-        alignment_optimizer.step(closure)
-
-    if setting == "global":
-        # remove gradients and finalize global shifts
-        tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y.detach()
-        tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x.detach()
-    elif len(setting) == 3:
-        # remove gradients
-        tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.detach()
-        tilt_series.grid_movement_y.values = tilt_series.grid_movement_y.values.detach()
-    elif len(setting) == 4:
-        # remove gradients
-        tilt_series.grid_volume_warp_x.values = (
-            tilt_series.grid_volume_warp_x.values.detach()
-        )
-        tilt_series.grid_volume_warp_y.values = (
-            tilt_series.grid_volume_warp_y.values.detach()
-        )
-        tilt_series.grid_volume_warp_z.values = (
-            tilt_series.grid_volume_warp_z.values.detach()
-        )
-    # move back because there were modified in-place
-    tilt_series.to("cpu")
-    model.to("cpu")
-
-    return tilt_series, loss_values
-
-
 def evaluate_tilt_series(
     model_checkpoint_path: Path,
     tilt_series_path: Path,
     output_directory: Path,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "global",
+    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "anchoring",
     patch_size: int = 96,
     patch_overlap: float = 0.1,
     batch_size: int = 16,
     apply_ctf: bool = True,
     downsample: int = 1,
     device: str = "cpu",
+    initial_reliable_fraction: float = 1 / 2,
+    n_control_points: int = 7,
 ) -> tuple[Path, list[float]]:
+    """Evaluate and optimize tilt series alignment using trained model.
+
+    Parameters
+    ----------
+    model_checkpoint_path : Path
+        Path to trained model checkpoint.
+    tilt_series_path : Path
+        Path to tilt series JSON file.
+    output_directory : Path
+        Directory to write output files.
+    setting : str | tuple
+        Optimization mode:
+        - "global": per-tilt 2D shifts (single pass)
+        - "anchoring": iterative anchoring with per-tilt shifts (default)
+        - "spline": smooth spline + per-tilt fine adjustment (coarse-to-fine)
+        - tuple(int, int, int): 2D warping field per image
+        - tuple(int, int, int, int): 3D volume warp grid
+    patch_size : int
+        Size of reconstruction patches.
+    patch_overlap : float
+        Overlap between patches.
+    batch_size : int
+        Batch size for reconstruction.
+    apply_ctf : bool
+        Whether to apply CTF correction.
+    downsample : int
+        Downsampling factor for tilt images.
+    device : str
+        Device to run optimization on.
+    initial_reliable_fraction : float
+        Initial reliable fraction for "anchoring" setting.
+    n_control_points : int
+        Number of spline control points for "spline" setting.
+
+    Returns
+    -------
+    tuple[Path, list[float]]
+        Path to output JSON and list of loss values.
+    """
     # load the best model and run alignment optimization
     model = MissAlignment.load_from_checkpoint(
         model_checkpoint_path,
@@ -271,18 +195,48 @@ def evaluate_tilt_series(
     )
 
     # run alignment optimization with the model
-    tilt_series, loss = optimize_shifts(
-        model,
-        tilt_series,
-        images,
-        pixel_size,
-        position_grid,
-        setting=setting,
-        patch_size=patch_size,
-        batch_size=batch_size,
-        apply_ctf=apply_ctf,
-        device=device,
-    )
+    if setting == "anchoring":
+        # Iterative anchoring with per-tilt shifts
+        tilt_series, loss = optimize_shifts_iterative(
+            model=model,
+            tilt_series=tilt_series,
+            images=images,
+            pixel_size=pixel_size,
+            positions=position_grid,
+            patch_size=patch_size,
+            batch_size=batch_size,
+            apply_ctf=apply_ctf,
+            device=device,
+            initial_reliable_fraction=initial_reliable_fraction,
+        )
+    elif setting == "spline":
+        # Coarse-to-fine: smooth spline followed by per-tilt adjustment
+        tilt_series, loss = optimize_shifts_coarse_to_fine(
+            model=model,
+            tilt_series=tilt_series,
+            images=images,
+            pixel_size=pixel_size,
+            positions=position_grid,
+            patch_size=patch_size,
+            batch_size=batch_size,
+            apply_ctf=apply_ctf,
+            device=device,
+            n_control_points=n_control_points,
+        )
+    else:
+        # "global" or tuple settings for 2D/3D warping
+        tilt_series, loss = optimize_shifts(
+            model,
+            tilt_series,
+            images,
+            pixel_size,
+            position_grid,
+            setting=setting,
+            patch_size=patch_size,
+            batch_size=batch_size,
+            apply_ctf=apply_ctf,
+            device=device,
+        )
 
     # write all necessary output
     xml_out = (output_directory / (tilt_series_data.xml_filename + ".xml")).absolute()

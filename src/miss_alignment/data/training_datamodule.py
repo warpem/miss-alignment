@@ -1,80 +1,115 @@
 # standard libraries
 import tempfile
 import multiprocessing as mp
-import os
 import shutil
 from pathlib import Path
 from collections.abc import Callable
 from typing import Optional
-import numpy as np
-import time
 
 # deep learning packages
+import torch
 import lightning.pytorch as pl
 from torch.utils.data import DataLoader
 
 from ._reconstruction_worker import reconstruction_worker
-from ._pool_monitor import SimplePoolMonitor
 from .training_dataset import ReconstructionPoolDataset
 
-if "MISS_ALIGNMENT_RECON_POOL_SIZE" in os.environ:
-    RECON_POOL_SIZE = int(os.environ["MISS_ALIGNMENT_RECON_POOL_SIZE"])
-else:
-    RECON_POOL_SIZE = 1000
+# Default pool size
+DEFAULT_POOL_SIZE = 1000
+
+
+def _worker_init_fn(worker_id: int):
+    """Initialize DataLoader worker with its partition ID."""
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is not None:
+        dataset = worker_info.dataset
+        dataset.partition_id = worker_id
 
 
 class MissAlignmentDataModule(pl.LightningDataModule):
     """
-    Training datamodule assumes the following directory layout:
+    Training datamodule with coupled reconstruction and data loading workers.
+
+    Each reconstruction worker is paired 1:1 with a DataLoader worker, sharing
+    a partition of the pool. Reconstruction workers pause when their partition
+    is full, and DataLoader workers pause when their partition is too empty.
+
+    Directory layout:
 
     dataset_directory/
     +- iter0/  # this is the initial state
-    ¦  +- model_0.pickle  # stores a Tomogram object as a pickle
-    ¦  +- model_1.pickle
+    ¦  +- model_0.json  # stores tilt series metadata
+    ¦  +- model_1.json
     ¦  +- ...
     +- iter1/  # this is where the updated alignments are stored
-    ¦  +- model_0.pickle
+    ¦  +- model_0.json
     etc...
 
     Parameters
     ----------
+    dataset_directory : os.PathLike
+        Directory containing tilt series JSON files
+    shift_generator : Callable
+        Function that generates synthetic alignment shifts
+    n_workers : int, default 4
+        Number of reconstruction/DataLoader worker pairs
+    reconstruction_accelerators : Optional[list[int]], default None
+        GPU device IDs for reconstruction workers
+    batch_size : int, default 4
+        Batch size for training
+    steps_per_epoch : int, default 1000
+        Number of steps per training epoch
+    patch_size : int, default 64
+        Size of 3D patches (patch_size^3)
+    apply_ctf : bool, default False
+        Apply CTF correction during reconstruction
+    downsample : int, default 1
+        Downsampling factor for reconstructions
+    pool_size : int, default 1000
+        Total size of reconstruction pool (divided among partitions)
     """
 
     def __init__(
         self,
-        dataset_directory: os.PathLike,
+        dataset_directory,
         shift_generator: Callable,
-        reconstruction_workers: int = 4,
+        n_workers: int = 4,
         reconstruction_accelerators: Optional[list[int]] = None,
-        dataloader_workers: int = 4,
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
         patch_size: int = 64,
         apply_ctf: bool = False,
         downsample: int = 1,
-        monitor: Optional[SimplePoolMonitor] = None,
+        pool_size: int = DEFAULT_POOL_SIZE,
     ):
         super().__init__()
         # data module controls
         self.batch_size = batch_size
         self.epoch_size = steps_per_epoch * batch_size
-        self.reconstruction_workers = reconstruction_workers
+        self.n_workers = n_workers
+        self.pool_size = pool_size
+
+        # Validate pool size
+        self.partition_size = pool_size // n_workers
+        if self.partition_size < 2 * batch_size:
+            raise ValueError(
+                f"Pool size {pool_size} with {n_workers} workers gives "
+                f"partition_size={self.partition_size}, which is less than "
+                f"2 * batch_size ({2 * batch_size}). Increase pool_size or "
+                f"decrease n_workers/batch_size."
+            )
+
+        # Set up reconstruction devices
         if reconstruction_accelerators in [None, []]:
-            self.reconstruction_devices = [
-                "cpu",
-            ] * reconstruction_workers
+            self.reconstruction_devices = ["cpu"] * n_workers
         else:
-            if len(reconstruction_accelerators) != reconstruction_workers:
+            if len(reconstruction_accelerators) != n_workers:
                 raise ValueError(
-                    "Number of reconstruction workers must match "
-                    "number of reconstruction accelerators"
+                    "Number of reconstruction accelerators must match n_workers"
                 )
             self.reconstruction_devices = [
-                "cuda:" + str(x) for x in reconstruction_accelerators
+                f"cuda:{x}" for x in reconstruction_accelerators
             ]
-
-        self.reconstruction_accelerators = reconstruction_accelerators
-        self.dataloader_workers = dataloader_workers
 
         # reconstruction controls
         self.patch_size = patch_size
@@ -88,10 +123,6 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.pool_dir = None
         self.pool_processes: list = []
         self.stop_event: Optional[mp.Event] = None
-        self.ready_flag: Optional[mp.Event] = None
-
-        # timing production and consumption rates
-        self.monitor = monitor
 
     def __enter__(self):
         """Enter context manager and setup pool."""
@@ -117,34 +148,27 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.pool_dir = Path(tempfile.mkdtemp(prefix="recon_pool_"))
         print(f"Created pool directory: {self.pool_dir}")
 
-        # Partition indices among workers
-        partitions = np.array_split(range(RECON_POOL_SIZE), self.reconstruction_workers)
-
         # Start worker processes
         self.stop_event = mp.Event()
-        self.ready_flag = mp.Value("i", 0)
 
-        # get a list of all the tilt series pickle files
+        # get a list of all the tilt series json files
         tilt_series_jsons = list(self.dataset_directory.glob("*.json"))
 
-        for worker_id, indices in enumerate(partitions):
+        for partition_id in range(self.n_workers):
             p = mp.Process(
                 target=reconstruction_worker,
                 kwargs={
-                    "worker_id": worker_id,
-                    "assigned_indices": indices.tolist(),
+                    "partition_id": partition_id,
+                    "partition_size": self.partition_size,
                     "pool_dir": self.pool_dir,
                     "tilt_series_jsons": tilt_series_jsons,
                     "patch_size": self.patch_size,
                     "apply_ctf": self.apply_ctf,
                     "downsample": self.downsample,
                     "shift_generator": self.shift_generator,
-                    "ready_flag": self.ready_flag,
                     "stop_event": self.stop_event,
-                    "monitor": self.monitor,
-                    "tilt_series_refresh_rate": 10,  # number of times
-                    # tilt_series is reused before fetching next
-                    "device": self.reconstruction_devices[worker_id],
+                    "tilt_series_refresh_rate": 10,
+                    "device": self.reconstruction_devices[partition_id],
                 },
             )
             p.start()
@@ -152,14 +176,8 @@ class MissAlignmentDataModule(pl.LightningDataModule):
 
         # Create dataset
         self.train_dataset = ReconstructionPoolDataset(
-            self.pool_dir, RECON_POOL_SIZE, self.epoch_size
+            self.pool_dir, self.batch_size, self.epoch_size
         )
-
-    def wait_for_pool_to_fill(self):
-        print("Waiting for pool to be filled...")
-        while self.ready_flag.value < self.reconstruction_workers:
-            time.sleep(0.1)
-        print("Pool ready!")
 
     def train_dataloader(self):
         """Return DataLoader for training data."""
@@ -168,7 +186,8 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,  # data is already randomized by recon workers
             drop_last=True,
-            num_workers=self.dataloader_workers,
+            num_workers=self.n_workers,
+            worker_init_fn=_worker_init_fn,
             multiprocessing_context="fork",
             persistent_workers=True,
             pin_memory=True,
@@ -190,10 +209,3 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             shutil.rmtree(self.pool_dir)
             print(f"Cleaned up pool directory: {self.pool_dir}")
         print("Cleanup complete")
-
-        if self.monitor is not None:
-            # Print final statistics
-            print("\n" + "=" * 50)
-            print("FINAL STATISTICS")
-            print("=" * 50)
-            self.monitor.print_stats()

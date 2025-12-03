@@ -8,6 +8,8 @@ from miss_alignment.data._augmentation import (
     random_cube_mask,
     random_mirror,
     random_edge_mask,
+    apply_mirror,
+    MIRROR_COMBINATIONS,
 )
 
 
@@ -285,3 +287,100 @@ class TestAugmentationEdgeCases:
 
         # Volume should be modified
         assert not torch.allclose(volume, original)
+
+
+class TestApplyMirror:
+    """Test suite for apply_mirror function."""
+
+    def test_shape_preservation(self):
+        """Test that output shape matches input shape."""
+        volume = torch.randn(16, 32, 64)
+        result = apply_mirror(volume, (False, False, False))
+        assert result.shape == volume.shape
+
+    def test_no_flip_returns_original(self):
+        """Test that no flipping returns identical tensor."""
+        volume = torch.randn(8, 16, 16)
+        result = apply_mirror(volume, (False, False, False))
+        torch.testing.assert_close(result, volume)
+
+    def test_flip_z_only(self):
+        """Test flipping only the z dimension."""
+        volume = torch.randn(8, 16, 16)
+        result = apply_mirror(volume, (True, False, False))
+        expected = torch.flip(volume, [-3])
+        torch.testing.assert_close(result, expected)
+
+    def test_flip_y_only(self):
+        """Test flipping only the y dimension."""
+        volume = torch.randn(8, 16, 16)
+        result = apply_mirror(volume, (False, True, False))
+        expected = torch.flip(volume, [-2])
+        torch.testing.assert_close(result, expected)
+
+    def test_flip_x_only(self):
+        """Test flipping only the x dimension."""
+        volume = torch.randn(8, 16, 16)
+        result = apply_mirror(volume, (False, False, True))
+        expected = torch.flip(volume, [-1])
+        torch.testing.assert_close(result, expected)
+
+    def test_flip_all_dimensions(self):
+        """Test flipping all dimensions."""
+        volume = torch.randn(8, 16, 16)
+        result = apply_mirror(volume, (True, True, True))
+        expected = torch.flip(volume, [-3, -2, -1])
+        torch.testing.assert_close(result, expected)
+
+    def test_flip_two_dimensions(self):
+        """Test flipping two dimensions (z and y)."""
+        volume = torch.randn(8, 16, 16)
+        result = apply_mirror(volume, (True, True, False))
+        expected = torch.flip(volume, [-3, -2])
+        torch.testing.assert_close(result, expected)
+
+    @pytest.mark.parametrize("combo", MIRROR_COMBINATIONS)
+    def test_all_combinations(self, combo):
+        """Test all 8 mirror combinations work correctly."""
+        volume = torch.randn(4, 8, 8)
+        result = apply_mirror(volume, combo)
+
+        # Build expected result
+        dims_to_flip = []
+        for i, should_flip in enumerate(combo):
+            if should_flip:
+                dims_to_flip.append(-(3 - i))
+
+        if dims_to_flip:
+            expected = torch.flip(volume, dims_to_flip)
+        else:
+            expected = volume
+
+        torch.testing.assert_close(result, expected)
+
+
+class TestMirrorCombinations:
+    """Test the MIRROR_COMBINATIONS constant."""
+
+    def test_has_8_combinations(self):
+        """Test that there are exactly 8 mirror combinations (2^3)."""
+        assert len(MIRROR_COMBINATIONS) == 8
+
+    def test_all_unique(self):
+        """Test that all combinations are unique."""
+        assert len(set(MIRROR_COMBINATIONS)) == 8
+
+    def test_includes_no_flip(self):
+        """Test that no-flip combination is included."""
+        assert (False, False, False) in MIRROR_COMBINATIONS
+
+    def test_includes_all_flip(self):
+        """Test that all-flip combination is included."""
+        assert (True, True, True) in MIRROR_COMBINATIONS
+
+    def test_all_boolean_tuples(self):
+        """Test that all combinations are 3-element boolean tuples."""
+        for combo in MIRROR_COMBINATIONS:
+            assert isinstance(combo, tuple)
+            assert len(combo) == 3
+            assert all(isinstance(b, bool) for b in combo)

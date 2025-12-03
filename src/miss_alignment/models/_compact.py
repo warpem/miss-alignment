@@ -7,35 +7,55 @@ class Compact3DConvNet(nn.Module):
 
         # Feature extraction with progressive downsampling
         self.conv = nn.Sequential(
-            # Layer 1: 64x64x64 -> 32x32x32
-            nn.Conv3d(1, 8, kernel_size=3, stride=2, padding=1),
+            # Layer 0: 64x64x64 -> 64x64x64
+            nn.Conv3d(1, 8, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm3d(8),
-            nn.ReLU(),  # something else? ELU might be worth to test
-            # Layer 2: 32x32x32 -> 16x16x16
+            nn.SiLU(),
+            # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm3d(16),
-            nn.ReLU(),
-            # Layer 3: 16x16x16 -> 8x8x8
+            nn.SiLU(),
+            # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm3d(32),
-            nn.ReLU(),
+            nn.SiLU(),
+            # Layer 3: 16x16x16 -> 8x8x8
+            nn.Conv3d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm3d(64),
+            nn.SiLU(),
             # Layer 4: 8x8x8 -> 4x4x4
-            nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
-            nn.ReLU(),
-            # Global average pooling: 4x4x4 -> 1x1x1
+            nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm3d(64),
+            nn.SiLU(),
+            # Layer 5: 4x4x4 -> 2x2x2
+            nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm3d(64),
+            nn.SiLU(),
+            # Global average pooling: 2x2x2 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
         )
 
-        # Final regression layer
-        self.regressor = nn.Linear(32, 1)
+        # Shared feature layer
+        self.features = nn.Sequential(
+            nn.Linear(64, 16),
+            nn.BatchNorm1d(16),
+            nn.SiLU(),
+        )
+
+        # Score head
+        self.score_head = nn.Linear(16, 1, bias=False)
+
+        # Log-precision head for uncertainty estimation
+        self.log_precision_head = nn.Linear(16, 1)
 
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
         x = self.conv(x)
-        x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
-        x = self.regressor(x)  # Final output: (batch_size, 1)
-        return x
+        x = x.view(x.size(0), -1)  # Flatten: (batch_size, 64)
+        x = self.features(x)  # Shared features: (batch_size, 16)
+        score = self.score_head(x)  # (batch_size, 1)
+        log_precision = self.log_precision_head(x)  # (batch_size, 1)
+        return score, log_precision
 
 
 class Compact3DConvNetGELU(nn.Module):
@@ -47,7 +67,7 @@ class Compact3DConvNetGELU(nn.Module):
             # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(1, 8, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm3d(8),
-            nn.GELU(),  # something else? leaky ReLU or smoother function
+            nn.GELU(),
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm3d(16),
@@ -64,15 +84,19 @@ class Compact3DConvNetGELU(nn.Module):
             nn.AdaptiveAvgPool3d(1),
         )
 
-        # Final regression layer
-        self.regressor = nn.Linear(32, 1)
+        # Score head
+        self.score_head = nn.Linear(32, 1)
+
+        # Log-precision head for uncertainty estimation
+        self.log_precision_head = nn.Linear(32, 1)
 
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
-        x = self.regressor(x)  # Final output: (batch_size, 1)
-        return x
+        score = self.score_head(x)  # (batch_size, 1)
+        log_precision = self.log_precision_head(x)  # (batch_size, 1)
+        return score, log_precision
 
 
 class Compact3DConvNetSpread(nn.Module):
@@ -101,15 +125,19 @@ class Compact3DConvNetSpread(nn.Module):
             nn.AdaptiveAvgPool3d(1),
         )
 
-        # Final regression layer
-        self.regressor = nn.Linear(32, 1)
+        # Score head
+        self.score_head = nn.Linear(32, 1)
+
+        # Log-precision head for uncertainty estimation
+        self.log_precision_head = nn.Linear(32, 1)
 
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
-        x = self.regressor(x)  # Final output: (batch_size, 1)
-        return x
+        score = self.score_head(x)  # (batch_size, 1)
+        log_precision = self.log_precision_head(x)  # (batch_size, 1)
+        return score, log_precision
 
 
 class Compact3DConvNetWide(nn.Module):
@@ -138,15 +166,19 @@ class Compact3DConvNetWide(nn.Module):
             nn.AdaptiveAvgPool3d(1),
         )
 
-        # Final regression layer
-        self.regressor = nn.Linear(64, 1)
+        # Score head
+        self.score_head = nn.Linear(64, 1)
+
+        # Log-precision head for uncertainty estimation
+        self.log_precision_head = nn.Linear(64, 1)
 
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
         x = self.conv(x)
-        x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
-        x = self.regressor(x)  # Final output: (batch_size, 1)
-        return x
+        x = x.view(x.size(0), -1)  # Flatten: (batch_size, 64)
+        score = self.score_head(x)  # (batch_size, 1)
+        log_precision = self.log_precision_head(x)  # (batch_size, 1)
+        return score, log_precision
 
 
 class Compact3DConvNetDeep(nn.Module):
@@ -186,13 +218,18 @@ class Compact3DConvNetDeep(nn.Module):
             nn.AdaptiveAvgPool3d(1),
         )
 
-        self.regressor = nn.Linear(32, 1)
+        # Score head
+        self.score_head = nn.Linear(32, 1)
+
+        # Log-precision head for uncertainty estimation
+        self.log_precision_head = nn.Linear(32, 1)
 
     def forward(self, x):
         x = self.conv(x)
         x = x.view(x.size(0), -1)
-        x = self.regressor(x)
-        return x
+        score = self.score_head(x)
+        log_precision = self.log_precision_head(x)
+        return score, log_precision
 
 
 class Bottleneck3D(nn.Module):
@@ -276,8 +313,8 @@ class CompactResNet3D(nn.Module):
 
     Returns
     -------
-    torch.Tensor
-        Regression output of shape (batch_size, 1)
+    tuple[torch.Tensor, torch.Tensor]
+        Score and log_precision outputs, each of shape (batch_size, 1)
     """
 
     def __init__(self):
@@ -303,8 +340,11 @@ class CompactResNet3D(nn.Module):
         # Global average pooling
         self.avgpool = nn.AdaptiveAvgPool3d(1)
 
-        # Regression head
-        self.regressor = nn.Linear(64, 1)
+        # Score head
+        self.score_head = nn.Linear(64, 1)
+
+        # Log-precision head for uncertainty estimation
+        self.log_precision_head = nn.Linear(64, 1)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -318,6 +358,7 @@ class CompactResNet3D(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.regressor(x)
 
-        return x
+        score = self.score_head(x)
+        log_precision = self.log_precision_head(x)
+        return score, log_precision

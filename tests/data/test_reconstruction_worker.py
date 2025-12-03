@@ -16,8 +16,10 @@ from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data._reconstruction_worker import (
     _create_pool_reconstruction,
     _generate_translations,
+    _count_partition_files,
     reconstruction_worker,
     TiltSeriesFetcher,
+    MIRROR_COMBINATIONS,
 )
 
 
@@ -263,11 +265,32 @@ class TestGenerateTranslations:
         assert torch.all(translations[:, 1] == 0.0)
 
 
+class TestCountPartitionFiles:
+    """Test partition file counting."""
+
+    def test_count_partition_files(self, temp_dir):
+        """Test counting files in a partition."""
+        # Create some partition files
+        for i in range(5):
+            (temp_dir / f"partition_0_seq_{i}.pickle").touch()
+
+        # Create files for another partition
+        for i in range(3):
+            (temp_dir / f"partition_1_seq_{i}.pickle").touch()
+
+        # Create a temp file (should be included in glob but that's OK)
+        (temp_dir / "tmp_partition_0_xyz.pickle").touch()
+
+        assert _count_partition_files(temp_dir, 0) == 6  # 5 + 1 temp
+        assert _count_partition_files(temp_dir, 1) == 3
+        assert _count_partition_files(temp_dir, 2) == 0
+
+
 class TestCreatePoolReconstruction:
     """Test pool reconstruction creation."""
 
     def test_reconstruction_output_format(self, mock_tilt_series_data, shift_generator):
-        """Test that reconstruction returns correct format."""
+        """Test that reconstruction returns 8 triplets with correct format."""
         # Load the tilt series data
         tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
@@ -284,24 +307,52 @@ class TestCreatePoolReconstruction:
             device="cpu",
         )
 
-        assert len(result) == 3
-        assert all(isinstance(item, tuple) for item in result)
-        assert all(len(item) == 2 for item in result)
-        assert all(isinstance(item[0], torch.Tensor) for item in result)
-        assert 1 in [item[1] for item in result]
-        assert -1 in [item[1] for item in result]
+        # Should return 8 triplets (one for each mirror combination)
+        assert len(result) == 8
+
+        for triplet in result:
+            # Each triplet should have 3 examples
+            assert len(triplet) == 3
+            assert all(isinstance(item, tuple) for item in triplet)
+            assert all(len(item) == 2 for item in triplet)
+            assert all(isinstance(item[0], torch.Tensor) for item in triplet)
+
+            # Each triplet must contain both positive and negative labels
+            labels = [item[1] for item in triplet]
+            assert 1 in labels
+            assert -1 in labels
+
+    def test_mirror_combinations_used(self, mock_tilt_series_data, shift_generator):
+        """Test that all 8 mirror combinations are used."""
+        tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
+        tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
+            downsample=1
+        )
+
+        result = _create_pool_reconstruction(
+            tilt_series=tilt_series,
+            images=images,
+            pixel_size=pixel_size,
+            patch_size=32,
+            shift_generator=shift_generator,
+            apply_ctf=False,
+            device="cpu",
+        )
+
+        # Check we get 8 different triplets
+        assert len(result) == len(MIRROR_COMBINATIONS)
 
 
 class TestReconstructionWorker:
     """Test reconstruction worker process."""
 
     @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
-    def test_worker_initial_fill(
+    def test_worker_writes_partition_files(
         self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
     ):
-        """Test that worker fills initial pool correctly."""
-        assigned_indices = [0, 1, 2]
-        ready_flag = mp.Value("i", 0)
+        """Test that worker writes files with correct partition naming."""
+        partition_id = 0
+        partition_size = 10
         stop_event = mp.Event()
 
         # Create mock tilt series, images, and pixel size
@@ -318,157 +369,67 @@ class TestReconstructionWorker:
             mock_pixel_size,
         )
 
-        # Mock the reconstruction creation
-        mock_data = [
-            (torch.randn(32, 32, 32), 1),
-            (torch.randn(32, 32, 32), -1),
-            (torch.randn(32, 32, 32), 1),
-        ]
-
-        with patch(
-            "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
-            return_value=mock_data,
-        ):
-            # Set stop event immediately to only do initial fill
-            stop_event.set()
-
-            reconstruction_worker(
-                worker_id=0,
-                assigned_indices=assigned_indices,
-                pool_dir=temp_dir,
-                tilt_series_jsons=[mock_tilt_series_data],
-                patch_size=32,
-                apply_ctf=False,
-                downsample=1,
-                shift_generator=shift_generator,
-                ready_flag=ready_flag,
-                stop_event=stop_event,
-                monitor=None,
-                tilt_series_refresh_rate=10,
-            )
-
-        # Check that files were created
-        for idx in assigned_indices:
-            file_path = temp_dir / f"recon_{idx}.pickle"
-            assert file_path.exists()
-
-            # Verify pickle content
-            with open(file_path, "rb") as f:
-                data = pickle.load(f)
-                assert len(data) == 3
-
-    @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
-    def test_worker_ready_flag(
-        self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
-    ):
-        """Test that worker sets ready flag after initial fill."""
-        ready_flag = mp.Value("i", 0)
-        stop_event = mp.Event()
-        stop_event.set()  # Stop immediately after initial fill
-
-        # Create mock returns
-        mock_tilt_series = Mock(spec=TiltSeries)
-        mock_tilt_series.angles = torch.linspace(-60, 60, 10)
-        mock_images = torch.randn(10, 128, 128)
-        mock_pixel_size = 10.0
-
-        # Mock the TiltSeriesFetcher instance
-        mock_fetcher_instance = mock_fetcher_class.return_value
-        mock_fetcher_instance.return_value = (
-            mock_tilt_series,
-            mock_images,
-            mock_pixel_size,
-        )
-
-        with patch(
-            "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
-            return_value=[(torch.zeros(1), 1)] * 3,
-        ):
-            reconstruction_worker(
-                worker_id=0,
-                assigned_indices=[0],
-                pool_dir=temp_dir,
-                tilt_series_jsons=[mock_tilt_series_data],
-                patch_size=32,
-                apply_ctf=False,
-                downsample=1,
-                shift_generator=shift_generator,
-                ready_flag=ready_flag,
-                stop_event=stop_event,
-                monitor=None,
-                tilt_series_refresh_rate=10,
-            )
-
-        assert ready_flag.value == 1
-
-    @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
-    def test_worker_continuous_update(
-        self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
-    ):
-        """Test that worker continuously updates pool when not stopped."""
-        ready_flag = mp.Value("i", 0)
-        stop_event = mp.Event()
-        assigned_indices = [0, 1]
-
-        # Create mock returns
-        mock_tilt_series = Mock(spec=TiltSeries)
-        mock_tilt_series.angles = torch.linspace(-60, 60, 10)
-        mock_images = torch.randn(10, 128, 128)
-        mock_pixel_size = 10.0
-
-        # Mock the TiltSeriesFetcher instance
-        mock_fetcher_instance = mock_fetcher_class.return_value
-        mock_fetcher_instance.return_value = (
-            mock_tilt_series,
-            mock_images,
-            mock_pixel_size,
-        )
-
-        update_count = 0
-        max_updates = 3
-
-        def mock_create(*args, **kwargs):
-            nonlocal update_count
-            update_count += 1
-            # Stop after initial fill + max_updates
-            if update_count > len(assigned_indices) + max_updates:
-                stop_event.set()
-            return [
+        # Mock triplets (8 triplets, each with 3 examples)
+        mock_triplets = [
+            [
                 (torch.randn(32, 32, 32), 1),
                 (torch.randn(32, 32, 32), -1),
                 (torch.randn(32, 32, 32), 1),
             ]
+            for _ in range(8)
+        ]
+
+        call_count = 0
+
+        def mock_create(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Stop after writing one batch of 8 files
+            if call_count > 1:
+                stop_event.set()
+            return mock_triplets
 
         with patch(
             "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
             side_effect=mock_create,
         ):
             reconstruction_worker(
-                worker_id=0,
-                assigned_indices=assigned_indices,
+                partition_id=partition_id,
+                partition_size=partition_size,
                 pool_dir=temp_dir,
                 tilt_series_jsons=[mock_tilt_series_data],
                 patch_size=32,
                 apply_ctf=False,
                 downsample=1,
                 shift_generator=shift_generator,
-                ready_flag=ready_flag,
                 stop_event=stop_event,
-                monitor=None,
                 tilt_series_refresh_rate=10,
             )
 
-        # Should have done initial fill + continuous updates
-        assert update_count > len(assigned_indices)
+        # Check that files were created with correct naming
+        files = list(temp_dir.glob(f"partition_{partition_id}_seq_*.pickle"))
+        assert len(files) == 8  # One batch of 8 triplets
+
+        # Verify file contents
+        for file_path in files:
+            with open(file_path, "rb") as f:
+                data = pickle.load(f)
+                assert len(data) == 3  # Triplet
+                # Should be fp16
+                assert data[0][0].dtype == torch.float16
 
     @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
-    def test_worker_with_monitor(
+    def test_worker_pauses_when_partition_full(
         self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
     ):
-        """Test that worker reports to monitor when provided."""
-        mock_monitor = Mock()
-        ready_flag = mp.Value("i", 0)
+        """Test that worker pauses when partition is full."""
+        partition_id = 0
+        partition_size = 5  # Small partition
         stop_event = mp.Event()
+
+        # Pre-fill the partition
+        for i in range(partition_size):
+            (temp_dir / f"partition_{partition_id}_seq_{i}.pickle").touch()
 
         # Create mock returns
         mock_tilt_series = Mock(spec=TiltSeries)
@@ -476,7 +437,6 @@ class TestReconstructionWorker:
         mock_images = torch.randn(10, 128, 128)
         mock_pixel_size = 10.0
 
-        # Mock the TiltSeriesFetcher instance
         mock_fetcher_instance = mock_fetcher_class.return_value
         mock_fetcher_instance.return_value = (
             mock_tilt_series,
@@ -484,34 +444,105 @@ class TestReconstructionWorker:
             mock_pixel_size,
         )
 
-        # Run one update cycle
-        update_count = 0
+        # Track how many times _create_pool_reconstruction is called
+        create_call_count = 0
 
         def mock_create(*args, **kwargs):
-            nonlocal update_count
-            update_count += 1
-            if update_count > 2:  # Initial fill (1) + one update
-                stop_event.set()
-            return [(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]
+            nonlocal create_call_count
+            create_call_count += 1
+            return [[(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]] * 8
+
+        # Stop after a short time to avoid infinite loop
+        import threading
+        import time
+
+        def stop_after_delay():
+            time.sleep(0.2)
+            stop_event.set()
+
+        stop_thread = threading.Thread(target=stop_after_delay)
+        stop_thread.start()
 
         with patch(
             "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
             side_effect=mock_create,
         ):
             reconstruction_worker(
-                worker_id=0,
-                assigned_indices=[0],
+                partition_id=partition_id,
+                partition_size=partition_size,
                 pool_dir=temp_dir,
                 tilt_series_jsons=[mock_tilt_series_data],
                 patch_size=32,
                 apply_ctf=False,
                 downsample=1,
                 shift_generator=shift_generator,
-                ready_flag=ready_flag,
                 stop_event=stop_event,
-                monitor=mock_monitor,
                 tilt_series_refresh_rate=10,
             )
 
-        # Monitor should have been called for continuous updates (not initial fill)
-        assert mock_monitor.record_production.call_count >= 1
+        stop_thread.join()
+
+        # Worker should have been paused (no reconstruction created)
+        # because partition was already full
+        assert create_call_count == 0
+
+    @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
+    def test_worker_sequential_ids_increment(
+        self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
+    ):
+        """Test that sequential IDs increment correctly."""
+        partition_id = 0
+        partition_size = 100
+        stop_event = mp.Event()
+
+        mock_tilt_series = Mock(spec=TiltSeries)
+        mock_tilt_series.angles = torch.linspace(-60, 60, 10)
+        mock_images = torch.randn(10, 128, 128)
+        mock_pixel_size = 10.0
+
+        mock_fetcher_instance = mock_fetcher_class.return_value
+        mock_fetcher_instance.return_value = (
+            mock_tilt_series,
+            mock_images,
+            mock_pixel_size,
+        )
+
+        call_count = 0
+
+        def mock_create(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 2:  # Create 2 batches of 8
+                stop_event.set()
+            return [[(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]] * 8
+
+        with patch(
+            "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
+            side_effect=mock_create,
+        ):
+            reconstruction_worker(
+                partition_id=partition_id,
+                partition_size=partition_size,
+                pool_dir=temp_dir,
+                tilt_series_jsons=[mock_tilt_series_data],
+                patch_size=32,
+                apply_ctf=False,
+                downsample=1,
+                shift_generator=shift_generator,
+                stop_event=stop_event,
+                tilt_series_refresh_rate=10,
+            )
+
+        # Check sequential IDs
+        files = sorted(temp_dir.glob(f"partition_{partition_id}_seq_*.pickle"))
+        assert len(files) == 16  # 2 batches * 8 files
+
+        # Extract IDs and verify they're sequential
+        ids = []
+        for f in files:
+            # Extract ID from "partition_0_seq_X.pickle"
+            id_str = f.stem.split("_")[-1]
+            ids.append(int(id_str))
+
+        ids.sort()
+        assert ids == list(range(16))
