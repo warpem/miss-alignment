@@ -5,6 +5,7 @@ This script:
 1. Downloads SHREC data from Zenodo
 2. Unzips the archives
 3. Converts pickle files to JSON format for miss-alignment
+4. Extracts tilt angles from XML metadata and writes .rawtlt files (with inverted angles)
 """
 
 from pathlib import Path
@@ -14,6 +15,7 @@ import os
 import argparse
 
 from miss_alignment.data.io import convert_pickle_to_json_helper
+from warpylib import TiltSeries
 
 
 # Configuration
@@ -77,7 +79,7 @@ def convert_pickles_to_json(download_dir: Path):
         for pickle_file in pickle_files:
             print(f"  Converting {pickle_file.name}...")
             try:
-                _, json_path = convert_pickle_to_json_helper(
+                tilt_series_data, json_path = convert_pickle_to_json_helper(
                     pickle_data_path=pickle_file,
                     stack_pixel_size=STACK_PIXEL_SIZE,
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
@@ -85,6 +87,17 @@ def convert_pickles_to_json(download_dir: Path):
                     volume_shape=VOLUME_SHAPE,
                 )
                 print(f"    Created {json_path.name}")
+
+                # Load XML metadata and extract angles
+                tilt_series = TiltSeries.load_meta(tilt_series_data.xml_metadata_path)
+                angles = tilt_series.angles.cpu().numpy()
+
+                # Write .rawtlt file with inverted angles
+                rawtlt_path = tilt_series_data.xml_metadata_path.with_suffix('.rawtlt')
+                with open(rawtlt_path, 'w') as f:
+                    for angle in angles * -1:
+                        f.write(f"{angle}\n")
+                print(f"    Created {rawtlt_path.name}")
             except Exception as e:
                 print(f"    Error converting {pickle_file.name}: {e}")
     else:
@@ -100,7 +113,7 @@ def convert_pickles_to_json(download_dir: Path):
         for pickle_file in pickle_files:
             print(f"  Converting {pickle_file.name}...")
             try:
-                _, json_path = convert_pickle_to_json_helper(
+                tilt_series_data, json_path = convert_pickle_to_json_helper(
                     pickle_data_path=pickle_file,
                     stack_pixel_size=STACK_PIXEL_SIZE,
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
@@ -108,6 +121,17 @@ def convert_pickles_to_json(download_dir: Path):
                     volume_shape=VOLUME_SHAPE,
                 )
                 print(f"    Created {json_path.name}")
+
+                # Load XML metadata and extract angles
+                tilt_series = TiltSeries.load_meta(tilt_series_data.xml_metadata_path)
+                angles = tilt_series.angles.cpu().numpy()
+
+                # Write .rawtlt file with inverted angles
+                rawtlt_path = tilt_series_data.xml_metadata_path.with_suffix('.rawtlt')
+                with open(rawtlt_path, 'w') as f:
+                    for angle in angles * -1:
+                        f.write(f"{angle}\n")
+                print(f"    Created {rawtlt_path.name}")
             except Exception as e:
                 print(f"    Error converting {pickle_file.name}: {e}")
     else:
