@@ -149,6 +149,13 @@ tilt_axis_offset_x = tilt_series.tilt_axis_offset_x  # X shifts in Angstroms
 tilt_axis_offset_y = tilt_series.tilt_axis_offset_y  # Y shifts in Angstroms
 ```
 
+```python
+from pathlib import Path
+from warpylib import TiltSeries
+
+# loading warpylib xml files
+ts = TiltSeries(Path("path/to/data.xml"))
+
 ### TiltSeries Key Attributes
 
 The `warpylib.TiltSeries` object contains:
