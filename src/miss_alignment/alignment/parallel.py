@@ -32,7 +32,7 @@ def gpu_runner(
     while True:
         try:
             task_parameters = task_queue.get_nowait()
-            _ = evaluate_tilt_series(
+            evaluate_tilt_series(
                 **task_parameters,
                 device=device,
             )
