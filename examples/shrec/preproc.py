@@ -89,7 +89,7 @@ def convert_pickles_to_json(download_dir: Path):
                 print(f"    Created {json_path.name}")
 
                 # Load XML metadata and extract angles
-                tilt_series = TiltSeries.load_meta(tilt_series_data.xml_metadata_path)
+                tilt_series = TiltSeries(tilt_series_data.xml_metadata_path)
                 angles = tilt_series.angles.cpu().numpy()
 
                 # Write .rawtlt file with inverted angles
@@ -123,7 +123,7 @@ def convert_pickles_to_json(download_dir: Path):
                 print(f"    Created {json_path.name}")
 
                 # Load XML metadata and extract angles
-                tilt_series = TiltSeries.load_meta(tilt_series_data.xml_metadata_path)
+                tilt_series = TiltSeries(tilt_series_data.xml_metadata_path)
                 angles = tilt_series.angles.cpu().numpy()
 
                 # Write .rawtlt file with inverted angles
