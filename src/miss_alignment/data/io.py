@@ -47,7 +47,7 @@ def _load_metadata_and_stack(
     # load the data
     with mrcfile.open(stack_path) as mrc:
         images = torch.tensor(mrc.data)
-        stack_pixel_size = mrc.voxel_size.x
+        stack_pixel_size = float(mrc.voxel_size.x)
 
     pixel_size = stack_pixel_size
     if downsample > 1:
