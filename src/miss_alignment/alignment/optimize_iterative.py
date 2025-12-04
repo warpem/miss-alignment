@@ -109,10 +109,38 @@ def run_iterative_anchoring(
         current_loss = loss_values[-1]
         print(f"Loss went from {loss_values[0]} to {current_loss}")
 
-        # Check for NaN or worse loss - immediately revert if so
-        if math.isnan(current_loss) or current_loss >= best_loss:
-            if math.isnan(current_loss):
-                print(f"  -> NaN detected, reverting to best (loss={best_loss})")
+        # Check for NaN/inf in loss AND in offsets
+        loss_is_nan = math.isnan(current_loss)
+        loss_is_inf = math.isinf(current_loss)
+        offsets_have_nan = (
+            torch.isnan(tilt_series.tilt_axis_offset_x).any()
+            or torch.isnan(tilt_series.tilt_axis_offset_y).any()
+        )
+        offsets_have_inf = (
+            torch.isinf(tilt_series.tilt_axis_offset_x).any()
+            or torch.isinf(tilt_series.tilt_axis_offset_y).any()
+        )
+
+        # Print diagnostics if any issues detected
+        if loss_is_nan:
+            print("  -> NaN detected in loss!")
+        if loss_is_inf:
+            print("  -> Inf detected in loss!")
+        if offsets_have_nan:
+            print("  -> NaN detected in tilt_axis_offsets!")
+        if offsets_have_inf:
+            print("  -> Inf detected in tilt_axis_offsets!")
+
+        # Check for NaN/inf or worse loss - immediately revert if so
+        has_invalid_values = (
+            loss_is_nan or loss_is_inf or offsets_have_nan or offsets_have_inf
+        )
+        if has_invalid_values or current_loss >= best_loss:
+            if has_invalid_values:
+                print(
+                    f"  -> Invalid values detected, "
+                    f"reverting to best (loss={best_loss})"
+                )
             else:
                 print(
                     f"  -> Loss worse ({current_loss:.4f} >= {best_loss:.4f}), "
@@ -164,10 +192,40 @@ def run_iterative_anchoring(
     final_loss = loss_values[-1]
     print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
 
-    # Check for NaN or worse than best
-    if math.isnan(final_loss) or final_loss >= best_loss:
-        if math.isnan(final_loss):
-            print(f"Final produced NaN, restoring best (loss={best_loss:.4f})")
+    # Check for NaN/inf in final loss AND offsets
+    final_loss_is_nan = math.isnan(final_loss)
+    final_loss_is_inf = math.isinf(final_loss)
+    final_offsets_have_nan = (
+        torch.isnan(tilt_series.tilt_axis_offset_x).any()
+        or torch.isnan(tilt_series.tilt_axis_offset_y).any()
+    )
+    final_offsets_have_inf = (
+        torch.isinf(tilt_series.tilt_axis_offset_x).any()
+        or torch.isinf(tilt_series.tilt_axis_offset_y).any()
+    )
+
+    # Print diagnostics if any issues detected in final optimization
+    if final_loss_is_nan:
+        print("  -> NaN detected in final loss!")
+    if final_loss_is_inf:
+        print("  -> Inf detected in final loss!")
+    if final_offsets_have_nan:
+        print("  -> NaN detected in final tilt_axis_offsets!")
+    if final_offsets_have_inf:
+        print("  -> Inf detected in final tilt_axis_offsets!")
+
+    # Check for NaN/inf or worse than best
+    final_has_invalid = (
+        final_loss_is_nan
+        or final_loss_is_inf
+        or final_offsets_have_nan
+        or final_offsets_have_inf
+    )
+    if final_has_invalid or final_loss >= best_loss:
+        if final_has_invalid:
+            print(
+                f"Final produced invalid values, restoring best (loss={best_loss:.4f})"
+            )
         else:
             print(f"Final worse ({final_loss:.4f} >= {best_loss:.4f}), restoring best")
         tilt_series.tilt_axis_offset_x = best_offsets_x
