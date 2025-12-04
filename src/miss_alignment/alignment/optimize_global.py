@@ -134,8 +134,9 @@ def optimize_shifts(
 
     alignment_optimizer = torch.optim.LBFGS(
         parameters,
-        line_search_fn="strong_wolfe",
-        max_iter=20,  # Limit line search iterations
+        line_search_fn=None,  # No line search - use fixed step size
+        lr=1.0,  # Fixed step size (default is 1.0)
+        max_iter=20,
         history_size=10,  # Smaller history = more stable Hessian approximation
     )
 
