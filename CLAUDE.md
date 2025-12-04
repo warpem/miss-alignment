@@ -119,12 +119,16 @@ Training is configured via YAML files (template: `src/miss_alignment/config_temp
 
 ### Data Flow
 
-1. **Training**: Dataset JSON files (`.json`) → Reconstruction workers → Pool directory (`.pickle` patches triplet) → DataLoader → Model
-2. **Alignment**: Trained model checkpoint → Load tilt-series data → Gradient-based optimization → Output aligned parameters (`.json`)
+1. **Training**: Tilt-series XML files (`.xml`) → Reconstruction workers → Pool directory (`.pickle` patches triplet) → DataLoader → Model
+2. **Alignment**: Trained model checkpoint → Load tilt-series data → Gradient-based optimization → Output aligned parameters to XML files (`.xml`)
 
 ## Working with Tilt-Series Data
 
-This project uses `warpylib.TiltSeries` as the primary representation of tilt-series metadata. Data is stored in JSON files that reference both the metadata (`.xml`) and image stack (`.st` or `.mrc`).
+This project uses `warpylib.TiltSeries` as the primary representation of tilt-series metadata. Tilt-series data is stored in `.xml` files that contain:
+- Alignment parameters (tilt angles, tilt axis angles, shifts)
+- Volume dimensions (physical dimensions in Angstroms)
+- Image dimensions (physical dimensions in Angstroms)
+- Path to the image stack (`.st` or `.mrc` files)
 
 **Note**: `torch-tomogram` is a dependency only for backward compatibility. Use `warpylib` for all tilt-series operations.
 
@@ -134,10 +138,11 @@ This project uses `warpylib.TiltSeries` as the primary representation of tilt-se
 from pathlib import Path
 from miss_alignment.data.io import TiltSeriesData
 
-# Load metadata from JSON file
-tilt_series_data = TiltSeriesData.from_json(Path("path/to/data.json"))
+# Create TiltSeriesData directly from XML file path
+tilt_series_data = TiltSeriesData(xml_metadata_path=Path("path/to/data.xml"))
 
-# Load the actual TiltSeries object, images, and pixel size
+# Load the TiltSeries object, images, and pixel size
+# The XML file contains volume dimensions, image dimensions, and the path to the stack
 tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
     downsample=1  # optional downsampling factor
 )
@@ -149,12 +154,15 @@ tilt_axis_offset_x = tilt_series.tilt_axis_offset_x  # X shifts in Angstroms
 tilt_axis_offset_y = tilt_series.tilt_axis_offset_y  # Y shifts in Angstroms
 ```
 
+Alternatively, you can load directly with `warpylib`:
+
 ```python
 from pathlib import Path
 from warpylib import TiltSeries
 
-# loading warpylib xml files
-ts = TiltSeries(Path("path/to/data.xml"))
+# Load warpylib TiltSeries directly from XML file
+tilt_series = TiltSeries(Path("path/to/data.xml"))
+```
 
 ### TiltSeries Key Attributes
 
@@ -214,15 +222,17 @@ tilt_series.tilt_axis_angles = new_tilt_axis_angles  # set tilt axis rotation
 ### Saving Updated Metadata
 
 ```python
-# Save updated TiltSeries metadata back to XML
+# Save updated TiltSeries metadata back to the original XML file
 tilt_series_data.save_metadata_to_xml(tilt_series)
 
-# Or save to a new JSON file
+# Or save to a new XML file
 new_tilt_series_data = tilt_series_data.replace(
     xml_metadata_path=Path("path/to/new_metadata.xml")
 )
 new_tilt_series_data.save_metadata_to_xml(tilt_series)
-new_tilt_series_data.to_json(Path("path/to/new_data.json"))
+
+# Alternatively, save directly with warpylib
+tilt_series.save_meta(Path("path/to/metadata.xml"))
 ```
 
 ### Adding Synthetic Shifts for Testing
