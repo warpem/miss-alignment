@@ -264,17 +264,46 @@ def optimize_shifts(
                 total_precision += batch_precision_sum.item()
 
         # NaN check 6: Check accumulated values
-
         if math.isnan(total_weighted_score) or math.isnan(total_precision):
             print("[NaN Check 6] NaN detected in accumulated values")
             print(f"  total_weighted_score: {total_weighted_score}")
             print(f"  total_precision: {total_precision}")
 
+        # NaN check 7: Check gradients before optimizer uses them
+        if setting == "global":
+            if shifts_x.grad is not None and shifts_y.grad is not None:
+                grad_x_has_nan = torch.isnan(shifts_x.grad).any()
+                grad_y_has_nan = torch.isnan(shifts_y.grad).any()
+                grad_x_has_inf = torch.isinf(shifts_x.grad).any()
+                grad_y_has_inf = torch.isinf(shifts_y.grad).any()
+
+                if grad_x_has_nan or grad_y_has_nan or grad_x_has_inf or grad_y_has_inf:
+                    print("[NaN Check 7] NaN/Inf detected in gradients")
+                    print(f"  shifts_x.grad has NaN: {grad_x_has_nan}")
+                    print(f"  shifts_y.grad has NaN: {grad_y_has_nan}")
+                    print(f"  shifts_x.grad has Inf: {grad_x_has_inf}")
+                    print(f"  shifts_y.grad has Inf: {grad_y_has_inf}")
+
+                grad_x_max = shifts_x.grad.abs().max().item()
+                grad_y_max = shifts_y.grad.abs().max().item()
+                print(
+                    f"[Gradient Check] Max gradient magnitudes: "
+                    f"shifts_x={grad_x_max:.6f}, shifts_y={grad_y_max:.6f}"
+                )
+
         # Precision-weighted average score
         avg_score = (
             total_weighted_score / total_precision if total_precision > 0 else 0.0
         )
-        print(total_weighted_score, total_precision)
+        if avg_score == 0.0:
+            print(
+                f"[Zero Score] Average score is exactly 0.0, "
+                f"precision={total_precision}"
+            )
+        print(
+            f"[Score] total_weighted={total_weighted_score}, "
+            f"precision={total_precision}, avg={avg_score}"
+        )
         loss_values.append(avg_score)
 
         return avg_score
