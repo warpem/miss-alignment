@@ -19,7 +19,6 @@ from miss_alignment.data._reconstruction_worker import (
     _count_partition_files,
     reconstruction_worker,
     TiltSeriesFetcher,
-    MIRROR_COMBINATIONS,
 )
 
 
@@ -278,10 +277,10 @@ class TestCountPartitionFiles:
         for i in range(3):
             (temp_dir / f"partition_1_seq_{i}.pickle").touch()
 
-        # Create a temp file (should be included in glob but that's OK)
+        # Create a temp file (starts with tmp_ so won't match pattern)
         (temp_dir / "tmp_partition_0_xyz.pickle").touch()
 
-        assert _count_partition_files(temp_dir, 0) == 6  # 5 + 1 temp
+        assert _count_partition_files(temp_dir, 0) == 5
         assert _count_partition_files(temp_dir, 1) == 3
         assert _count_partition_files(temp_dir, 2) == 0
 
@@ -290,7 +289,7 @@ class TestCreatePoolReconstruction:
     """Test pool reconstruction creation."""
 
     def test_reconstruction_output_format(self, mock_tilt_series_data, shift_generator):
-        """Test that reconstruction returns 8 triplets with correct format."""
+        """Test that reconstruction returns 4 triplets with correct format."""
         # Load the tilt series data
         tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
@@ -307,8 +306,8 @@ class TestCreatePoolReconstruction:
             device="cpu",
         )
 
-        # Should return 8 triplets (one for each mirror combination)
-        assert len(result) == 8
+        # Should return 4 triplets (2 particles × 2 mirror combinations each)
+        assert len(result) == 4
 
         for triplet in result:
             # Each triplet should have 3 examples
@@ -323,7 +322,7 @@ class TestCreatePoolReconstruction:
             assert -1 in labels
 
     def test_mirror_combinations_used(self, mock_tilt_series_data, shift_generator):
-        """Test that all 8 mirror combinations are used."""
+        """Test that 4 triplets are generated (2 particles × 2 mirror combinations)."""
         tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
             downsample=1
@@ -339,8 +338,8 @@ class TestCreatePoolReconstruction:
             device="cpu",
         )
 
-        # Check we get 8 different triplets
-        assert len(result) == len(MIRROR_COMBINATIONS)
+        # Check we get 4 triplets (2 particles × 2 sampled mirror combinations)
+        assert len(result) == 4
 
 
 class TestReconstructionWorker:
@@ -369,14 +368,14 @@ class TestReconstructionWorker:
             mock_pixel_size,
         )
 
-        # Mock triplets (8 triplets, each with 3 examples)
+        # Mock triplets (4 triplets per call, each with 3 examples)
         mock_triplets = [
             [
                 (torch.randn(32, 32, 32), 1),
                 (torch.randn(32, 32, 32), -1),
                 (torch.randn(32, 32, 32), 1),
             ]
-            for _ in range(8)
+            for _ in range(4)
         ]
 
         call_count = 0
@@ -384,7 +383,7 @@ class TestReconstructionWorker:
         def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            # Stop after writing one batch of 8 files
+            # Stop after writing one batch of 8 files (2 calls × 4 triplets)
             if call_count > 1:
                 stop_event.set()
             return mock_triplets
@@ -408,7 +407,7 @@ class TestReconstructionWorker:
 
         # Check that files were created with correct naming
         files = list(temp_dir.glob(f"partition_{partition_id}_seq_*.pickle"))
-        assert len(files) == 8  # One batch of 8 triplets
+        assert len(files) == 8  # 2 calls × 4 triplets
 
         # Verify file contents
         for file_path in files:
@@ -450,7 +449,9 @@ class TestReconstructionWorker:
         def mock_create(*args, **kwargs):
             nonlocal create_call_count
             create_call_count += 1
-            return [[(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]] * 8
+            return [
+                [(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]
+            ] * 8
 
         # Stop after a short time to avoid infinite loop
         import threading
@@ -512,9 +513,11 @@ class TestReconstructionWorker:
         def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count > 2:  # Create 2 batches of 8
+            if call_count > 2:  # Create 2 batches (4 calls × 4 triplets = 16 files)
                 stop_event.set()
-            return [[(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]] * 8
+            return [
+                [(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]
+            ] * 4
 
         with patch(
             "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
@@ -535,7 +538,7 @@ class TestReconstructionWorker:
 
         # Check sequential IDs
         files = sorted(temp_dir.glob(f"partition_{partition_id}_seq_*.pickle"))
-        assert len(files) == 16  # 2 batches * 8 files
+        assert len(files) == 16  # 4 calls × 4 triplets
 
         # Extract IDs and verify they're sequential
         ids = []
