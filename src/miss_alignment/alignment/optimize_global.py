@@ -154,14 +154,6 @@ def optimize_shifts(
             tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y
             tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x
 
-            # NaN check 1: Check shift parameters
-            if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
-                print(f"[{device} NaN Check 1] NaN detected in shifts after update")
-                print(f"  shifts_x has NaN: {torch.isnan(shifts_x).any()}")
-                print(f"  shifts_y has NaN: {torch.isnan(shifts_y).any()}")
-                print(f"  shifts_x : {shifts_x}")
-                print(f"  shifts_y : {shifts_y}")
-
         batches = int(math.ceil(positions.shape[0] / batch_size))
         total_samples = positions.shape[0]
         total_weighted_score = 0.0
@@ -188,14 +180,6 @@ def optimize_shifts(
                     oversampling=2.0,
                 )
 
-                # NaN check 2: Check reconstructions
-                if torch.isnan(subvolumes).any():
-                    print(f"[NaN Check 2] NaN detected in reconstructions (batch {b})")
-                    print(
-                        f"  Number of NaN values: "
-                        f"{torch.isnan(subvolumes).sum().item()}"
-                    )
-
                 # ensure normalization per subvolume
                 mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
                 std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
@@ -203,54 +187,13 @@ def optimize_shifts(
                 eps = 1e-8
                 subvolumes = (subvolumes - mean) / (std + eps)
 
-                # NaN check 3: Check after normalization
-                if torch.isnan(subvolumes).any():
-                    print(f"[NaN Check 3] NaN detected after normalization (batch {b})")
-                    print(f"  mean has NaN: {torch.isnan(mean).any()}")
-                    print(f"  std has NaN: {torch.isnan(std).any()}")
-
                 # change channel to batch dimension
                 subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
                 # Get score and precision for this batch
                 batch_scores, batch_log_precisions = model(subvolumes)
 
-                # NaN check 4: Check model outputs
-                if (
-                    torch.isnan(batch_scores).any()
-                    or torch.isnan(batch_log_precisions).any()
-                ):
-                    print(f"[NaN Check 4] NaN detected in model outputs (batch {b})")
-                    print(f"  batch_scores has NaN: {torch.isnan(batch_scores).any()}")
-                    print(
-                        f"  batch_log_precisions "
-                        f"has NaN: {torch.isnan(batch_log_precisions).any()}"
-                    )
-
                 batch_precisions = batch_log_precisions.exp()
-
-                # NaN check 5: Check after exp
-                if (
-                    torch.isnan(batch_precisions).any()
-                    or torch.isinf(batch_precisions).any()
-                ):
-                    print(
-                        f"[NaN Check 5] NaN/Inf detected in "
-                        f"batch_precisions (batch {b})"
-                    )
-                    print(
-                        f"  batch_precisions has NaN:"
-                        f" {torch.isnan(batch_precisions).any()}"
-                    )
-                    print(
-                        f"  batch_precisions has Inf:"
-                        f" {torch.isinf(batch_precisions).any()}"
-                    )
-                    print(
-                        f"  batch_log_precisions range:"
-                        f" [{batch_log_precisions.min().item():.2f}, "
-                        f"{batch_log_precisions.max().item():.2f}]"
-                    )
 
                 # Precision-weighted average score for this batch
                 batch_weighted_score = (batch_scores * batch_precisions).sum()
@@ -268,47 +211,13 @@ def optimize_shifts(
                 total_weighted_score += batch_weighted_score.item()
                 total_precision += batch_precision_sum.item()
 
-        # NaN check 6: Check accumulated values
-        if math.isnan(total_weighted_score) or math.isnan(total_precision):
-            print("[NaN Check 6] NaN detected in accumulated values")
-            print(f"  total_weighted_score: {total_weighted_score}")
-            print(f"  total_precision: {total_precision}")
-
-        # NaN check 7: Check gradients before optimizer uses them
-        if setting == "global":
-            if shifts_x.grad is not None and shifts_y.grad is not None:
-                grad_x_has_nan = torch.isnan(shifts_x.grad).any()
-                grad_y_has_nan = torch.isnan(shifts_y.grad).any()
-                grad_x_has_inf = torch.isinf(shifts_x.grad).any()
-                grad_y_has_inf = torch.isinf(shifts_y.grad).any()
-
-                if grad_x_has_nan or grad_y_has_nan or grad_x_has_inf or grad_y_has_inf:
-                    print("[{device} NaN Check 7] NaN/Inf detected in gradients")
-                    print(f"  shifts_x.grad has NaN: {grad_x_has_nan}")
-                    print(f"  shifts_y.grad has NaN: {grad_y_has_nan}")
-                    print(f"  shifts_x.grad has Inf: {grad_x_has_inf}")
-                    print(f"  shifts_y.grad has Inf: {grad_y_has_inf}")
-
-                grad_x_max = shifts_x.grad.abs().max().item()
-                grad_y_max = shifts_y.grad.abs().max().item()
-                print(
-                    f"[{device} Gradient Check] Max gradient magnitudes: "
-                    f"shifts_x={grad_x_max:.6f}, shifts_y={grad_y_max:.6f}"
-                )
-
         # Precision-weighted average score
-        avg_score = (
-            total_weighted_score / total_precision if total_precision > 0 else 0.0
-        )
-        if avg_score == 0.0:
-            print(
-                f"[Zero Score] Average score is exactly 0.0, "
-                f"precision={total_precision}"
+        if total_precision <= 0:
+            raise ValueError(
+                f"Total precision is {total_precision}, which is <= 0. "
+                "This indicates a problem with the model precision outputs."
             )
-        print(
-            f"[{device} Score] total_weighted={total_weighted_score}, "
-            f"precision={total_precision}, avg={avg_score}"
-        )
+        avg_score = total_weighted_score / total_precision
         loss_values.append(avg_score)
 
         return avg_score
