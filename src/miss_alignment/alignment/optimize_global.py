@@ -226,11 +226,33 @@ def optimize_shifts(
     for x in range(n_iters):
         alignment_optimizer.step(closure)
 
-        # Check if LBFGS produced NaN parameters
-        if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
-            print(f"[{device} Post-Optimizer NaN] LBFGS step produced NaN parameters")
-            print("  This indicates LBFGS's Hessian approximation became singular")
-            print("  Consider using a smaller history_size or different optimizer")
+        # Check if LBFGS produced NaN parameters and raise ValueError
+        if setting == "global":
+            if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
+                raise ValueError(
+                    "[Post-Optimizer NaN] LBFGS step produced NaN in shift parameters. "
+                    "This indicates LBFGS's Hessian approximation became singular."
+                )
+        elif len(setting) == 3:
+            if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
+                raise ValueError(
+                    "[Post-Optimizer NaN] LBFGS step produced "
+                    "NaN in image warp grid parameters. "
+                    "This indicates LBFGS's Hessian "
+                    "approximation became singular."
+                )
+        elif len(setting) == 4:
+            if (
+                torch.isnan(leaf_variable_x).any()
+                or torch.isnan(leaf_variable_y).any()
+                or torch.isnan(leaf_variable_z).any()
+            ):
+                raise ValueError(
+                    "[Post-Optimizer NaN] LBFGS step produced "
+                    "NaN in volume warp grid parameters. "
+                    "This indicates LBFGS's Hessian "
+                    "approximation became singular."
+                )
 
     if setting == "global":
         # remove gradients and finalize global shifts

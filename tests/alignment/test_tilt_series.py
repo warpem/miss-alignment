@@ -66,7 +66,8 @@ def test_run_iterative_anchoring_preserves_relative_offsets():
         return tilt_series, [1.0 / call_count[0]]
 
     # Run with initial_reliable_fraction=0.5 (roughly half reliable)
-    # With 11 tilts and 0.5 fraction: n_reliable=5, n_unreliable_total=6, n_unreliable_per_side=3
+    # With 11 tilts and 0.5 fraction: n_reliable=5,
+    # n_unreliable_total=6, n_unreliable_per_side=3
     result_ts, losses = run_iterative_anchoring(
         tilt_series=ts,
         optimize_fn=mock_optimizer,
@@ -80,8 +81,10 @@ def test_run_iterative_anchoring_preserves_relative_offsets():
     # Verify we got loss values from each call
     assert len(losses) == 4
 
-    # After all iterations, all tilts should have shifted by the cumulative optimizer shifts
-    # But relative offsets between consecutive tilts should be preserved
+    # After all iterations, all tilts should have
+    # shifted by the cumulative optimizer shifts
+    # But relative offsets between consecutive
+    # tilts should be preserved
     final_rel_x = []
     final_rel_y = []
     for i in range(n_tilts - 1):
@@ -128,7 +131,8 @@ def test_run_iterative_anchoring_all_reliable():
         return tilt_series, [0.5]
 
     # With fraction=1.0, all tilts are reliable from the start
-    # n_unreliable_per_side = 0, so we skip the while loop and just do final optimization
+    # n_unreliable_per_side = 0, so we
+    # skip the while loop and just do final optimization
     result_ts, losses = run_iterative_anchoring(
         tilt_series=ts,
         optimize_fn=mock_optimizer,
@@ -197,7 +201,9 @@ def test_run_iterative_anchoring_reverts_on_worse_loss():
         call_count[0] += 1
 
         # Each call shifts by different amount
-        tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
+        tilt_series.tilt_axis_offset_x = (
+            tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
+        )
         return tilt_series, [loss]
 
     result_ts, losses = run_iterative_anchoring(
@@ -221,7 +227,14 @@ def test_run_iterative_anchoring_reverts_on_worse_loss():
 
 
 def test_run_iterative_anchoring_handles_nan():
-    """Test that NaN values cause immediate revert."""
+    """Test that NaN values are no longer explicitly handled in iterative anchoring.
+
+    After removing NaN checks from optimize_iterative, NaN values are expected to
+    be caught and raised as ValueError at the optimize_global level. This test
+    now just verifies that the function doesn't crash when it receives NaN losses
+    from the mock optimizer (though in practice, optimize_global would raise before
+    returning NaN).
+    """
     n_tilts = 7
     ts = TiltSeries(n_tilts=n_tilts)
     ts.angles = torch.linspace(-30, 30, n_tilts)
@@ -230,6 +243,7 @@ def test_run_iterative_anchoring_handles_nan():
 
     call_count = [0]
     # First iteration works, second produces NaN, third works
+    # Note: In real usage, optimize_global would raise ValueError before returning NaN
     losses_sequence = [0.5, float("nan"), 0.4]
 
     def mock_optimizer(tilt_series: TiltSeries):
@@ -237,7 +251,9 @@ def test_run_iterative_anchoring_handles_nan():
         loss = losses_sequence[idx]
         call_count[0] += 1
 
-        tilt_series.tilt_axis_offset_x = tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
+        tilt_series.tilt_axis_offset_x = (
+            tilt_series.tilt_axis_offset_x + (idx + 1) * 10.0
+        )
         return tilt_series, [loss]
 
     result_ts, losses = run_iterative_anchoring(
@@ -247,10 +263,14 @@ def test_run_iterative_anchoring_handles_nan():
     )
 
     assert call_count[0] == 3
-    # After NaN, should have reverted to best (10.0), then final adds +30 = 40.0
+    # Without NaN handling, the NaN is accepted as a "new best" (NaN >= 0.5 is False)
+    # So iteration 2 (NaN) is kept, then iteration 3 builds on that
+    # Iteration 1: +10 = 10.0, best = 10.0 (loss 0.5)
+    # Iteration 2: +20 = 30.0, best = 30.0 (loss NaN, NaN >= 0.5 is False so it's kept)
+    # Iteration 3: +30 = 60.0 (loss 0.4, better than NaN which is now best)
     sorted_indices = ts.indices_sorted_angle()
     central_idx = sorted_indices[3]
-    assert result_ts.tilt_axis_offset_x[central_idx].item() == 40.0
+    assert result_ts.tilt_axis_offset_x[central_idx].item() == 60.0
 
 
 def test_catmull_rom_spline_interpolates_at_control_points():
@@ -259,7 +279,9 @@ def test_catmull_rom_spline_interpolates_at_control_points():
     control_positions = torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0])
 
     # Query at control point positions
-    result = evaluate_catmull_rom_spline(control_values, control_positions, control_positions)
+    result = evaluate_catmull_rom_spline(
+        control_values, control_positions, control_positions
+    )
 
     # Should match control values exactly (or very close)
     for i in range(len(control_values)):
@@ -277,7 +299,9 @@ def test_catmull_rom_spline_smooth_interpolation():
 
     # Query at midpoints
     query_positions = torch.tensor([-45.0, -15.0, 15.0, 45.0])
-    result = evaluate_catmull_rom_spline(control_values, control_positions, query_positions)
+    result = evaluate_catmull_rom_spline(
+        control_values, control_positions, query_positions
+    )
 
     # For linear input, output should be approximately linear
     expected = torch.tensor([5.0, 15.0, 25.0, 35.0])
@@ -294,7 +318,9 @@ def test_catmull_rom_spline_differentiable():
     control_positions = torch.tensor([0.0, 1.0, 2.0, 3.0])
     query_positions = torch.tensor([0.5, 1.5, 2.5])
 
-    result = evaluate_catmull_rom_spline(control_values, control_positions, query_positions)
+    result = evaluate_catmull_rom_spline(
+        control_values, control_positions, query_positions
+    )
     loss = result.sum()
     loss.backward()
 
