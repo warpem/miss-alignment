@@ -180,7 +180,9 @@ def optimize_shifts(
                 # ensure normalization per subvolume
                 mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
                 std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-                subvolumes = (subvolumes - mean) / std
+                # Add epsilon to prevent division by zero for constant-valued subvolumes
+                eps = 1e-7
+                subvolumes = (subvolumes - mean) / (std + eps)
 
                 # change channel to batch dimension
                 subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
@@ -194,7 +196,9 @@ def optimize_shifts(
                 batch_precision_sum = batch_precisions.sum()
 
                 # Weight by batch size for proper gradient accumulation
-                weighted_loss = batch_weighted_score * (current_batch_size / total_samples)
+                weighted_loss = batch_weighted_score * (
+                    current_batch_size / total_samples
+                )
 
                 # Backward pass for this batch (gradients accumulate)
                 weighted_loss.backward()
@@ -204,7 +208,9 @@ def optimize_shifts(
                 total_precision += batch_precision_sum.item()
 
         # Precision-weighted average score
-        avg_score = total_weighted_score / total_precision if total_precision > 0 else 0.0
+        avg_score = (
+            total_weighted_score / total_precision if total_precision > 0 else 0.0
+        )
         loss_values.append(avg_score)
 
         return avg_score
