@@ -135,6 +135,8 @@ def optimize_shifts(
     alignment_optimizer = torch.optim.LBFGS(
         parameters,
         line_search_fn="strong_wolfe",
+        max_iter=20,  # Limit line search iterations
+        history_size=10,  # Smaller history = more stable Hessian approximation
     )
 
     # Initialize list to store loss values
@@ -156,12 +158,8 @@ def optimize_shifts(
                 print(f"[{device} NaN Check 1] NaN detected in shifts after update")
                 print(f"  shifts_x has NaN: {torch.isnan(shifts_x).any()}")
                 print(f"  shifts_y has NaN: {torch.isnan(shifts_y).any()}")
-                print(
-                        f"  shifts_x : {shifts_x}"
-                )
-                print(
-                    f"  shifts_y : {shifts_y}"
-                )
+                print(f"  shifts_x : {shifts_x}")
+                print(f"  shifts_y : {shifts_y}")
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         total_samples = positions.shape[0]
@@ -317,6 +315,12 @@ def optimize_shifts(
     n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
         alignment_optimizer.step(closure)
+
+        # Check if LBFGS produced NaN parameters
+        if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
+            print(f"[{device} Post-Optimizer NaN] LBFGS step produced NaN parameters")
+            print("  This indicates LBFGS's Hessian approximation became singular")
+            print("  Consider using a smaller history_size or different optimizer")
 
     if setting == "global":
         # remove gradients and finalize global shifts
