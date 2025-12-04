@@ -109,6 +109,15 @@ def run_iterative_anchoring(
         current_loss = loss_values[-1]
         print(f"Loss went from {loss_values[0]} to {current_loss}")
 
+        # Check for NaN in tilt_axis_offsets
+        has_nan_x = torch.isnan(tilt_series.tilt_axis_offset_x).any()
+        has_nan_y = torch.isnan(tilt_series.tilt_axis_offset_y).any()
+        if has_nan_x or has_nan_y:
+            print(
+                f"  -> NaN detected in tilt_axis_offsets "
+                f"(x: {has_nan_x}, y: {has_nan_y}), loss: {current_loss}"
+            )
+
         # Check for NaN or worse loss - immediately revert if so
         if math.isnan(current_loss) or current_loss >= best_loss:
             if math.isnan(current_loss):
@@ -163,6 +172,15 @@ def run_iterative_anchoring(
     all_loss_values.extend(loss_values)
     final_loss = loss_values[-1]
     print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
+
+    # Check for NaN in tilt_axis_offsets
+    has_nan_x = torch.isnan(tilt_series.tilt_axis_offset_x).any()
+    has_nan_y = torch.isnan(tilt_series.tilt_axis_offset_y).any()
+    if has_nan_x or has_nan_y:
+        print(
+            f"  -> NaN detected in tilt_axis_offsets "
+            f"(x: {has_nan_x}, y: {has_nan_y}), loss: {final_loss}"
+        )
 
     # Check for NaN or worse than best
     if math.isnan(final_loss) or final_loss >= best_loss:
