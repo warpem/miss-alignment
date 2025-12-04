@@ -200,7 +200,9 @@ def optimize_shifts_spline(
 
                 mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
                 std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-                subvolumes = (subvolumes - mean) / std
+                # Add epsilon to prevent division by zero (which causes NaN precision)
+                eps = 1e-8
+                subvolumes = (subvolumes - mean) / (std + eps)
                 subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
                 # Get score and precision for this batch
@@ -212,7 +214,9 @@ def optimize_shifts_spline(
                 batch_precision_sum = batch_precisions.sum()
 
                 # Weight by batch size for proper gradient accumulation
-                weighted_loss = batch_weighted_score * (current_batch_size / total_samples)
+                weighted_loss = batch_weighted_score * (
+                    current_batch_size / total_samples
+                )
                 weighted_loss.backward()
 
                 # Accumulate for precision-weighted average
@@ -220,7 +224,9 @@ def optimize_shifts_spline(
                 total_precision += batch_precision_sum.item()
 
         # Precision-weighted average score
-        avg_score = total_weighted_score / total_precision if total_precision > 0 else 0.0
+        avg_score = (
+            total_weighted_score / total_precision if total_precision > 0 else 0.0
+        )
         loss_values.append(avg_score)
 
         return avg_score

@@ -180,7 +180,9 @@ def optimize_shifts(
                 # ensure normalization per subvolume
                 mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
                 std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-                subvolumes = (subvolumes - mean) / std
+                # Add epsilon to prevent division by zero (which causes NaN precision)
+                eps = 1e-8
+                subvolumes = (subvolumes - mean) / (std + eps)
 
                 # change channel to batch dimension
                 subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
