@@ -1,94 +1,424 @@
-from typing import Optional, Callable, Any
-
-import pytorch_lightning as pl
+import lightning.pytorch as pl
+import einops
 import torch
-from torch import Tensor, optim
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.optim.lr_scheduler import MultiStepLR
+from typing import Optional
+from lightning.pytorch.callbacks import Callback
 
-from ._resnet import resnet3d_18
+from miss_alignment.models import (
+    Compact3DConvNet,
+    Compact3DConvNetGELU,
+    Compact3DConvNetSpread,
+    Compact3DConvNetWide,
+    Compact3DConvNetDeep,
+    CompactResNet3D,
+)
+from ..data._pool_monitor import SimplePoolMonitor
+
+
+model_map = {
+    "default": Compact3DConvNet,
+    "gelu": Compact3DConvNetGELU,
+    "spread": Compact3DConvNetSpread,
+    "wide": Compact3DConvNetWide,
+    "deep": Compact3DConvNetDeep,
+    "resnet": CompactResNet3D,
+}
+
+
+class TripletMarginRankingLoss(nn.Module):
+    """
+    Precision-weighted Triplet Margin Loss with explicit triplet ordering.
+
+    The loss is weighted by the predicted precision (inverse variance) of each
+    sample, allowing the model to express uncertainty about uninformative regions.
+
+    Parameters
+    ----------
+    margin : float, optional
+        Margin for the triplet ranking loss. Default: 1.0
+    reduction : str, optional
+        Specifies the reduction to apply to the output:
+        'none' | 'mean' | 'sum'. Default: 'mean'
+    precision_reg_weight : float, optional
+        Weight for precision regularization to prevent collapse. Default: 0.01
+    """
+
+    def __init__(self, margin=1.0, reduction="mean", precision_reg_weight=0.01):
+        super(TripletMarginRankingLoss, self).__init__()
+        self.margin = margin
+        self.reduction = reduction
+        self.precision_reg_weight = precision_reg_weight
+
+    def forward(self, scores, log_precisions, triplet_indices):
+        """
+        Forward pass using triplet indices to organize samples.
+
+        Parameters
+        ----------
+        scores : torch.Tensor
+            Tensor of shape (batch_size, 3) - alignment scores
+        log_precisions : torch.Tensor
+            Tensor of shape (batch_size, 3) - log precision for each score
+        triplet_indices : torch.Tensor
+            Tensor of shape (batch_size, 3) where each row contains indices
+            for [anchor_idx, positive_idx, negative_idx]
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            (triplet_loss, precision_reg) - weighted triplet loss and precision
+            regularization term
+        """
+        # Convert log precision to precision (always positive)
+        precisions = log_precisions.exp()
+
+        # Identify example types and compute distances
+        example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
+        close_mask = triplet_indices == example_type
+        distant_mask = triplet_indices != example_type
+
+        # Extract scores for close pair (aligned) and distant (misaligned)
+        close_scores = scores[close_mask]  # (b * 2,)
+        close_scores = einops.rearrange(close_scores, "(b n) -> b n", n=2)
+        distant_scores = scores[distant_mask]  # (b,)
+        distant_scores = einops.rearrange(distant_scores, "b -> b 1")
+
+        # Extract precisions for weighting
+        close_precisions = precisions[close_mask]
+        close_precisions = einops.rearrange(close_precisions, "(b n) -> b n", n=2)
+        distant_precisions = precisions[distant_mask]
+        distant_precisions = einops.rearrange(distant_precisions, "b -> b 1")
+
+        # Compute distances
+        dist_pos = torch.abs(close_scores[..., 0] - close_scores[..., 1])
+        dist_neg = torch.min(
+            (close_scores - distant_scores) * example_type, dim=-1
+        ).values
+
+        # Compute triplet loss with margin
+        triplet_losses = F.relu(dist_pos + dist_neg + self.margin)
+
+        # Weight by geometric mean of precisions in the triplet
+        # This downweights triplets where any member has low precision
+        all_precisions = torch.cat([close_precisions, distant_precisions], dim=-1)
+        triplet_precision = all_precisions.prod(dim=-1).pow(1 / 3)  # geometric mean
+        weighted_losses = triplet_losses * triplet_precision
+
+        # Precision regularization: penalize low precision to prevent collapse
+        # Using mean of log_precisions (equivalent to log of geometric mean)
+        precision_reg = -log_precisions.mean() * self.precision_reg_weight
+
+        # Apply reduction to weighted losses
+        if self.reduction == "mean":
+            loss = weighted_losses.mean()
+        elif self.reduction == "sum":
+            loss = weighted_losses.sum()
+        else:  # 'none'
+            loss = weighted_losses
+
+        return loss, precision_reg
 
 
 class MissAlignment(pl.LightningModule):
-    in_channels: int = 1
+    in_channels: int = 1  # configuration for resnet
     num_classes: int = 1
 
-    def __init__(self, learning_rate: float = 1e-04):
+    def __init__(
+        self,
+        learning_rate: float = 1e-04,
+        warmup_steps: int = 500,
+        weight_decay: float = 0,
+        margin: float = 0.5,
+        precision_reg_weight: float = 0.01,
+        # will be saved as a hyperparameter
+        multistep_lr_scheduler: Optional[dict] = None,
+        monitor: Optional[SimplePoolMonitor] = None,
+        model_architecture: str = "default",
+    ):
         super().__init__()
-        self.learning_rate = learning_rate
+
+        # save hyperparams to self.hparams
         self.save_hyperparameters()
 
-        self.validation_epoch_loss = 0
-        self.validation_step_outputs = []
+        # store for convenience
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.warmup_steps = warmup_steps
 
-        self.net = resnet3d_18(self.in_channels, self.num_classes)
+        self.criterion = TripletMarginRankingLoss(
+            margin=margin, precision_reg_weight=precision_reg_weight
+        )
 
-    def forward(self, image: Tensor) -> Tensor:
-        out = self.net(image)
-        return out
+        model = model_map[model_architecture]
+        self.net = model()
+
+        self.monitor = monitor
+
+    def forward(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass returning score and log_precision."""
+        score, log_precision = self.net(image)
+        return score, log_precision
+
+    def _common_step(self, batch, batch_idx):
+        # get the batch data
+        img1, img2, img3, target = batch
+        batch_size = target.shape[0]
+
+        # Track consumption
+        if self.monitor is not None:
+            self.monitor.record_consumption(batch_size)
+
+            # Print occasionally
+            if batch_idx % 50 == 0 and batch_idx > 0:
+                self.monitor.print_stats()
+
+        # calculate scores and log_precisions for all three images
+        score1, log_prec1 = self(img1)
+        score2, log_prec2 = self(img2)
+        score3, log_prec3 = self(img3)
+
+        # Stack into (batch, 3) format
+        scores = torch.stack((score1, score2, score3), dim=1)
+        scores = einops.rearrange(scores, "b d 1 -> b d")
+        log_precisions = torch.stack((log_prec1, log_prec2, log_prec3), dim=1)
+        log_precisions = einops.rearrange(log_precisions, "b d 1 -> b d")
+
+        # Compute precision-weighted triplet loss
+        loss, precision_reg = self.criterion(scores, log_precisions, target)
+        total_loss = loss + precision_reg
+
+        # find back the actual assigned scores to aligned/misaligned volume
+        # to report back in the logs
+        score_aligned = torch.mean(scores[target == 1])
+        score_misaligned = torch.mean(scores[target == -1])
+
+        # Compute mean precision for logging
+        mean_precision = log_precisions.exp().mean()
+
+        return (
+            total_loss,
+            loss,
+            precision_reg,
+            batch_size,
+            score_aligned,
+            score_misaligned,
+            mean_precision,
+        )
 
     def training_step(
         self,
         batch: dict,
         batch_idx: int,
     ):
-        """The network should assign a higher score to the aligned box (s_a) than to
-        the misaligned box (s_m). Minimize this loss:
+        (
+            total_loss,
+            triplet_loss,
+            precision_reg,
+            batch_size,
+            score_aligned,
+            score_misaligned,
+            mean_precision,
+        ) = self._common_step(batch, batch_idx)
 
-            loss = (s_m - s_a)
+        # Fail fast on NaN loss to prevent corrupted training
+        if torch.isnan(total_loss):
+            raise ValueError(
+                f"NaN loss detected at batch {batch_idx}, epoch {self.current_epoch}. "
+                "This may indicate numerical instability. Check your data, learning rate, "
+                "or consider disabling AMP."
+            )
 
-        (s_a and s_m fall to 0 and 1 range by applying a sigmoid as final layer)
-        """
-        aligned, misaligned = batch["aligned"], batch["misaligned"]
-        s_a, s_m = self(aligned), self(misaligned)
-        loss = s_m - s_a
-        loss = 1.0 - torch.mean(loss)  # the closer to 0 the better
         self.log(
-            name="training loss", value=loss, batch_size=aligned.shape[0], prog_bar=True
-        )
-        return loss
-
-    def validation_step(
-        self,
-        batch: dict,
-        batch_idx: int,
-    ):
-        aligned, misaligned = batch["aligned"], batch["misaligned"]
-        s_a, s_m = self(aligned), self(misaligned)
-        loss = s_m - s_a
-        loss = 1.0 - torch.mean(loss)
-        self.log(
-            name="validation loss",
-            value=loss,
-            batch_size=aligned.shape[0],
+            name="train_loss",
+            value=total_loss.item(),
             prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
         )
-        self.validation_step_outputs.append(loss)
-        return loss
+
+        self.log(
+            name="triplet_loss",
+            value=triplet_loss.item(),
+            prog_bar=False,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
+        self.log(
+            name="precision_reg",
+            value=precision_reg.item(),
+            prog_bar=False,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
+        # log actual assigned score of the model
+        self.log(
+            name="train_score_aligned",
+            value=score_aligned.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+        self.log(
+            name="train_score_misaligned",
+            value=score_misaligned.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
+        # Log mean precision to monitor uncertainty learning
+        self.log(
+            name="mean_precision",
+            value=mean_precision.item(),
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
+
+        # Log the learning rate
+        current_lr = self.optimizers().param_groups[0]["lr"]
+        self.log(
+            name="learning_rate",
+            value=current_lr,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=False,
+        )
+
+        return total_loss
+
+    # Learning rate warm-up
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        # update params
+        optimizer.step(closure=optimizer_closure)
+
+        # manually warm up lr without a scheduler
+        if self.trainer.global_step < self.warmup_steps:
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.warmup_steps)
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr_scale * self.learning_rate
 
     def predict_step(self):
         pass
 
-    def on_validation_epoch_end(self):
-        mean_epoch_loss = torch.mean(torch.as_tensor(self.validation_step_outputs))
-        self.validation_epoch_loss = mean_epoch_loss
-        self.log(name="validation epoch loss", value=mean_epoch_loss)
-        self.validation_step_outputs.clear()
-
     def configure_optimizers(self):
-        optimizer = optim.Adam(
-            params=self.parameters(),
-            lr=self.learning_rate,
-        )
-        return optimizer
+        """Configure optimizer and learning rate schedulers.
 
-    def optimizer_step(
-        self,
-        epoch_idx: int,
-        batch_idx: int,
-        optimizer: torch.optim.Optimizer,
-        optimizer_closure: Optional[Callable[[], Any]] = None,
-        **kwargs,
-    ) -> None:
-        self.log("learning rate", optimizer.param_groups[0]["lr"])
-        super().optimizer_step(
-            epoch_idx, batch_idx, optimizer, optimizer_closure, **kwargs
+        Returns
+        -------
+        dict or optimizer
+            If lr_scheduler is configured, returns dict with optimizer and schedulers.
+            Otherwise returns optimizer only.
+        """
+        # Use AdamW if weight_decay is specified, otherwise use Adam
+        if self.weight_decay > 0:
+            optimizer = torch.optim.AdamW(
+                params=self.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+            )
+        else:
+            optimizer = torch.optim.Adam(
+                params=self.parameters(),
+                lr=self.learning_rate,
+            )
+
+        scheduler_config = self.hparams.multistep_lr_scheduler
+        multistep = MultiStepLR(
+            optimizer,
+            milestones=scheduler_config["milestones"],
+            gamma=scheduler_config["gamma"],
         )
+
+        scheduler = {
+            "scheduler": multistep,
+            "interval": "epoch",
+            "frequency": 1,
+        }
+
+        return [optimizer], [scheduler]
+
+    def configure_model(self):
+        """Configure model with torch.compile for faster training."""
+        # Only compile if not already compiled
+        if not isinstance(self.net, torch._dynamo.eval_frame.OptimizedModule):
+            self.net = torch.compile(self.net)
+
+
+class MAEarlyStopping(Callback):
+    """Early stopping callback that waits until MultiStepLR reaches its lowest point.
+
+    Parameters
+    ----------
+    patience : int, default=4
+        Number of steps to wait after last improvement before stopping.
+    min_delta : float, default=0.0
+        Minimum change to qualify as improvement.
+    wait_for_scheduler : bool, default=True
+        If True, waits for MultiStepLR to complete all milestones before starting.
+    """
+
+    def __init__(self, patience=5, min_delta=0.001, wait_for_scheduler=True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.wait_for_scheduler = wait_for_scheduler
+        self.best_score = None
+        self.wait_count = 0
+        self.scheduler_complete = False
+
+    def _check_scheduler_complete(self, trainer, pl_module):
+        """Check if MultiStepLR has completed all milestones."""
+        if not self.wait_for_scheduler or self.scheduler_complete:
+            return True
+
+        # Check if module has MultiStepLR configured
+        if not (
+            hasattr(pl_module.hparams, "multistep_lr_scheduler")
+            and pl_module.hparams.multistep_lr_scheduler is not None
+        ):
+            # No scheduler configured, can start early stopping immediately
+            self.scheduler_complete = True
+            return True
+
+        scheduler_config = pl_module.hparams.multistep_lr_scheduler
+        milestones = scheduler_config["milestones"]
+
+        # Check if we've passed all milestones
+        if trainer.current_epoch >= max(milestones):
+            self.scheduler_complete = True
+            return True
+
+        return False
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Called at the end of each training batch."""
+        # Check if we should start early stopping yet
+        if not self._check_scheduler_complete(trainer, pl_module):
+            return
+
+        logged_metrics = trainer.logged_metrics
+
+        if "train_loss" in logged_metrics:
+            current_score = logged_metrics["train_loss"]
+        else:
+            raise ValueError("Couldn't find train_loss in pl_module")
+
+        if self.best_score is None or current_score < self.best_score - self.min_delta:
+            self.best_score = current_score
+            self.wait_count = 0
+        else:
+            self.wait_count += 1
+
+        if self.wait_count >= self.patience:
+            trainer.should_stop = True

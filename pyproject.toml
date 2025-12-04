@@ -9,6 +9,9 @@ build-backend = "hatchling.build"
 only-include = ["src"]
 sources = ["src"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 # https://peps.python.org/pep-0621/
 [project]
 name = "miss-alignment"
@@ -37,15 +40,22 @@ dependencies = [
     "numpy>=2",
     "torch>=2.2",
     "torch-fourier-rescale>=0.1",
-    "torch-fourier-slice",
-    "torch-fourier-shift",
+    "torch-fourier-slice>=0.3.1",
+    "torch-fourier-shift>=0.0.4",
+    "torch-fourier-filter",
+    "torch-tiltxcorr>=0.0.5",
+    "torch-cubic-spline-grids",
+    "torch-grid-utils>=0.0.5",
+    "torch-tomogram",
     "tqdm>=4.67.1",
     "scipy",
     "lightning",
     "tensorboard",
     "standard-imghdr",  # workaround for tensorboard with python 3.13
     "typer",
-    "zenodo-get"
+    "zenodo-get",
+    "matplotlib",
+    "warpylib",
 ]
 
 [project.urls]
@@ -58,9 +68,6 @@ test = ["pytest", "pytest-cov"]
 # add anything else you like to have in your dev environment here
 dev = [
     "ipython",
-    "pdbpp",
-    "requests>=2.32.3", # https://github.com/pdbpp/pdbpp
-    "rich", # https://github.com/Textualize/rich,
     "pre-commit>=4.1.0",
     "ruff>=0.9.9",
     "matplotlib"
@@ -70,6 +77,13 @@ dev = [
 #    {include-group = "dev"},
 #    {include-group = "lint"},
 #]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+extend-select = ["E501"]
+ignore = ["E712"]  # this allows equality comparisons to False for readability
 
 [tool.uv]
 default-groups = ["test", "dev"]

@@ -1,4 +1,4 @@
-# miss-alignment
+# miss-alignment 👩‍🔧
 
 [![License](https://img.shields.io/pypi/l/miss-alignment.svg?color=green)](https://github.com/McHaillet/miss-alignment/raw/main/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/miss-alignment.svg?color=green)](https://pypi.org/project/miss-alignment)
@@ -6,11 +6,20 @@
 [![CI](https://github.com/McHaillet/miss-alignment/actions/workflows/ci.yml/badge.svg)](https://github.com/McHaillet/miss-alignment/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/McHaillet/miss-alignment/branch/main/graph/badge.svg)](https://codecov.io/gh/McHaillet/miss-alignment)
 
-She has a chaotic good alignment for tilt-series.
+## Installation
 
+Installation is limited at the moment to a specific python, CUDA, and torch version. This might be fixed at some point in the future. For now, its easiest to set everything up in a conda environment.
 
-Run training with:
+First create an environment called `miss-alignment` with cuda-toolkit 12.9 and activate it:
 
-```commandline
-miss-alignment train --dataset-directory datasets/emdb/train/ --output-directory test_001/ --batch-size 16 --n-workers 4 --seed 45132
+```
+conda create –n miss-alignment –c conda-forge python=3.11 cuda-toolkit=12.9 –y
+conda activate miss-alignment
+```
+
+Then clone the github repository and install the software:
+
+```
+git clone https://github.com/warpem/miss-alignment.git
+python -m pip install miss-alignment
 ```

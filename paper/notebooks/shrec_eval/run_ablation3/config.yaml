@@ -1,0 +1,44 @@
+general:
+  # MissAlignment iteratively trains models and realigns the tilt-series
+  # here you can continue training from a specific iteration
+  start_at_iteration: 0
+  seed: 45132
+  download_data: False
+  tomogram_shape: [180, 512, 512]
+
+model_training:
+  # used to initialize model weights
+  model_checkpoint: /data/mchaillet/model_training/weight_init/epoch=19--step=31240--loss_epoch=0.00.ckpt
+  output_directory: /data/mchaillet/model_training/shrec/run_ablation3/models  # here model checkpoints are stored in lightning_log directories
+  loss_margin: 0.5
+  learning_rate: 1.0e-3
+  # Set to zero to disable weight decay (i.e. the AdamW optimizer)
+  weight_decay: 1.0e-4
+  max_epochs_per_iteration: 30  # absolute maximum of stopping
+  warmup_steps: 500 
+  multistep_lr_scheduler:
+    milestones: [5, 15]
+    gamma: 0.5  # effectively no scheduler, but early stopping only starts after 10 cycles
+
+data_module:
+  training_directory: /data/mchaillet/model_training/shrec/run_ablation3  # path to dataset location
+  batch_size: 32  # for SHREC these values seems solid:
+  patch_size: 96  # batch size 32 | reconstruction size 128 ^ 3
+  steps_per_epoch: 1000
+
+# this configures the shift generation for the contrastive training of MissAlignment
+# all parameters are in units of 10A (nm) as we assume to work with tilt-series sampled to 10A
+shift_generation:
+  trajectory_probability: 0.5   # these make bananas and birds
+  trajectory_max_shift: 10.0  # (10 A) trajectories fall somewhere between +/- f
+  jitter_probability: 0.5
+  jitter_max_std: 2.0  # (10 A) maximum standard deviation of a normal distribution
+  outlier_probability: 0.0
+  outlier_max_shift: 20.0  # (10 A) outlier can maximally go to this value
+  high_tilt_outlier_probability: 0.5
+  high_tilt_max_shift: 30.0  # (10 A) specific strong shifts for high tilt images up to this value
+
+tilt_series_alignment:
+  patches_per_dim: [2, 5, 5]
+  patch_size: 96
+  ground_truth_directory: /data/mchaillet/model_training/shrec/run8/ground_truth

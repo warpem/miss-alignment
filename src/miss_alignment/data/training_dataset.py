@@ -1,215 +1,139 @@
-from os import PathLike
+import time
+import random
+import pickle
 from pathlib import Path
 
 import einops
-import numpy as np
 import torch
 from torch.utils.data import Dataset
-import mrcfile
-from scipy.spatial.transform import Rotation
-from torch_fourier_slice import project_3d_to_2d, backproject_2d_to_3d
-from torch_fourier_shift import fourier_shift_image_2d
-import torch.nn.functional as F
+
+from ._augmentation import (
+    random_contrast,
+    random_edge_mask,
+    random_cube_mask,
+)
+
+# pause polling interval in seconds
+PAUSE_POLL_INTERVAL = 0.05  # 50ms
 
 
-class EMDBDataset(Dataset):
+class ReconstructionPoolDataset(Dataset):
     """
-    Dataset for loading MRC files and applying transformations.
+    Dataset that reads pre-computed reconstructions from a partitioned pool.
+
+    Each DataLoader worker is assigned a partition via worker_init_fn.
+    The dataset reads files from its partition, converts fp16 to fp32,
+    deletes the file after reading, and applies augmentations.
 
     Parameters
     ----------
-    directory : PathLike
-        Directory with MRC files for training.
-    target_size : int or tuple
-        Target size to pad/crop images to. If an integer, same size is used for all dimensions.
+    pool_dir : Path
+        Directory containing the reconstruction pool files
+    batch_size : int
+        Minimum number of files required before reading (pause threshold)
+    epoch_size : int
+        Number of samples per epoch
     """
 
-    def __init__(
-        self,
-        directory: PathLike,
-        target_size: int = 64,
-    ):
-        self.dataset_directory = Path(directory)
+    def __init__(self, pool_dir: Path, batch_size: int, epoch_size: int):
+        self.pool_dir = pool_dir
+        self.batch_size = batch_size
+        self.epoch_size = epoch_size
+        # partition_id is set by worker_init_fn in the DataLoader
+        self.partition_id: int | None = None
 
-        if len(self.mrc_files) == 0:
-            raise FileNotFoundError("No MRC files found in the dataset directory.")
+    def __len__(self) -> int:
+        # we just set this to define the size of an epoch
+        return self.epoch_size
 
-        self.target_size = (target_size, target_size, target_size)
+    def _list_partition_files(self) -> list[Path]:
+        """List all files in this worker's partition."""
+        if self.partition_id is None:
+            raise RuntimeError(
+                "partition_id not set. Ensure worker_init_fn assigns it."
+            )
+        pattern = f"partition_{self.partition_id}_*.pickle"
+        # Filter out temp files (they start with tmp_)
+        return [
+            f for f in self.pool_dir.glob(pattern)
+            if not f.name.startswith("tmp_")
+        ]
 
-    @property
-    def mrc_files(self):
-        return sorted(self.dataset_directory.glob("*.mrc"))
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
+        """
+        Fetch a reconstruction from this worker's partition.
 
-    def __len__(self):
-        return len(self.mrc_files)
+        The idx parameter is ignored - we pick any available file from
+        the partition. This method blocks if fewer than batch_size files
+        are available.
 
-    def __getitem__(self, idx):
-        # Load MRC file
-        mrc_path = self.mrc_files[idx]
-        with mrcfile.open(mrc_path) as mrc:
-            # Convert to torch tensor and move to device
-            volume = torch.from_numpy(mrc.data.astype(np.float32))
+        Parameters
+        ----------
+        idx : int
+            Index (ignored, used only for epoch length)
 
-        volume = self._preprocess(volume, random_affine=True)
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            Three volumes and their labels
+        """
+        # Wait until we have enough files in our partition
+        files = self._list_partition_files()
+        while len(files) < self.batch_size:
+            time.sleep(PAUSE_POLL_INTERVAL)
+            files = self._list_partition_files()
 
-        tilt_angles = Rotation.from_euler(
-            seq="Y", angles=np.arange(-51, 54, 3), degrees=True
-        )
-        rotations = torch.tensor(tilt_angles.as_matrix()).float()
-        aligned, misaligned = self._generate_reconstructions(volume, rotations)
+        # Pick a random file from available ones
+        file_path = random.choice(files)
 
-        volume = volume.float()
-        aligned = aligned.float()
-        misaligned = misaligned.float()
+        # Read the file
+        try:
+            with open(file_path, "rb") as infile:
+                examples = pickle.load(infile)
+            # Delete the file after successful read
+            file_path.unlink()
+        except (FileNotFoundError, EOFError, pickle.UnpicklingError):
+            # File was deleted by another worker or is corrupted
+            # Retry with a different file
+            return self.__getitem__(idx)
 
-        return {  # add channel dimension to all output
-            "volume": einops.rearrange(volume, "d h w -> 1 d h w"),
-            "aligned": einops.rearrange(aligned, "d h w -> 1 d h w"),
-            "misaligned": einops.rearrange(misaligned, "d h w -> 1 d h w"),
-            "file_path": mrc_path.__str__(),
-        }
+        # Convert fp16 to fp32 and extract volumes/labels
+        volumes = []
+        labels = []
+        for vol, label in examples:
+            volumes.append(vol.float())  # fp16 -> fp32
+            labels.append(label)
 
-    def _generate_reconstructions(
-        self, volume: torch.Tensor, matrices: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        tilts = project_3d_to_2d(volume, rotation_matrices=matrices, pad=True)
+        # Validate triplet structure
+        if not (1 in labels and -1 in labels and all(i in [1, -1] for i in labels)):
+            raise ValueError(
+                "Training examples must contain positive and negative labels."
+            )
 
-        # generate shift magnitude
-        big_std = torch.rand(1) * 2.0  # number between 0 a 2
-        smoll_std = torch.rand(1) * big_std  # number between 0 and big_std
+        # Shuffle the triplet order
+        combined = list(zip(volumes, labels))
+        random.shuffle(combined)
+        volumes, labels = zip(*combined)
+        labels = torch.tensor(labels)
 
-        # create aligned reconstruction
-        smoll_translations = torch.normal(
-            mean=0.0,
-            std=float(smoll_std),
-            size=(matrices.shape[0], 2),  # batch of number of tilts
-            device=volume.device,
-        )
-        smoll_shifted = fourier_shift_image_2d(tilts, smoll_translations)
-        smoll_shifted = smoll_shifted + torch.normal(
-            mean=0.0,
-            std=3.0,  # microscope noise
-            size=smoll_shifted.shape,
-            device=volume.device,
-        )
-        aligned = backproject_2d_to_3d(
-            smoll_shifted,
-            rotation_matrices=matrices,
-            pad=True,
-        )
+        # run normalization and augmentation (no mirroring - done by reconstruction worker)
+        volumes = self._prep_and_augment(list(volumes))
+        # add empty channel dim to all volumes
+        volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]
 
-        # create worse aligned reconstruction
-        big_translations = torch.normal(
-            mean=0.0,
-            std=float(big_std),
-            size=(matrices.shape[0], 2),  # batch of number of tilts
-            device=volume.device,
-        )
-        big_shifted = fourier_shift_image_2d(tilts, big_translations)
-        big_shifted = big_shifted + torch.normal(
-            mean=0.0,
-            std=3.0,
-            size=big_shifted.shape,
-            device=volume.device,
-        )
-        misaligned = backproject_2d_to_3d(
-            big_shifted,
-            rotation_matrices=matrices,
-            pad=True,
-        )
+        return *volumes, labels
 
-        aligned = self._normalize(aligned)
-        misaligned = self._normalize(misaligned)
-
-        return aligned, misaligned
-
-    def _preprocess(
-        self, volume: torch.Tensor, random_affine: bool = True
-    ) -> torch.Tensor:
-        volume = einops.rearrange(volume, "d h w -> 1 1 d h w")
-        volume = self._pad_to_target_size(volume)
-        volume = self._normalize(volume)
-        if random_affine:
-            volume = self._apply_random_affine_transform(volume)
-        return einops.rearrange(volume, "1 1 d h w -> d h w")
+    def _prep_and_augment(self, volumes: list[torch.Tensor]) -> list[torch.Tensor]:
+        volumes = [self._normalize(v) for v in volumes]
+        volumes = [random_contrast(v) for v in volumes]
+        volumes = [random_edge_mask(v, edge_width=(1, 5)) for v in volumes]
+        volumes = [random_cube_mask(v) for v in volumes]
+        return volumes
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)
-        torch.nan_to_num(volume, nan=mean)
+        if std == 0.0:
+            raise ValueError(
+                "Cannot normalize patch because the standard deviation is 0."
+            )
         return (volume - mean) / std
-
-    def _pad_to_target_size(self, volume: torch.Tensor) -> torch.Tensor:
-        """Pad volume to target size, centered."""
-        current_size = volume.shape
-        pad_size = []
-
-        for i in range(-1, -4, -1):
-            diff = self.target_size[i] - current_size[i]
-            pad_left = diff // 2
-            pad_right = diff - pad_left
-            pad_size += [pad_left, pad_right]
-
-        # Apply padding if needed
-        padded_volume = F.pad(
-            volume,
-            pad_size,
-            mode="constant",
-        )
-        return padded_volume
-
-    def _apply_random_affine_transform(self, volume: torch.Tensor) -> torch.Tensor:
-        """
-        Apply a random 3D affine transformation (rotation + translation) to a volume.
-
-        Parameters:
-        -----------
-        volume : torch.Tensor
-            Input volume tensor of shape [batch_size, channels, depth, height, width]
-        box_size : float or None
-            Reference size for the translation. If None, it will be computed as the
-            maximum dimension of the volume.
-
-        Returns:
-        --------
-        torch.Tensor
-            Transformed volume with the same shape as the input
-        """
-        # Create identity matrix as starting point
-        affine_matrix = torch.eye(4, device=volume.device)
-
-        # random rotation matrix from uniform distribution
-        rot_matrix = torch.tensor(
-            Rotation.random(1).as_matrix(),  # used numpy seed set for the worker
-            dtype=torch.float32,
-            device=volume.device,
-        )
-
-        # random translation sampled from Gaussian
-        translation = torch.normal(
-            mean=0.0,
-            std=0.1,  # standard deviation assuming box coords from -1 to 1
-            size=(3,),
-            device=volume.device,
-        )
-
-        # Construct affine matrix:
-        # [ R  t ]
-        # [ 0  1 ]
-        affine_matrix[:3, :3] = rot_matrix
-        affine_matrix[:3, 3] = translation
-
-        # Create the grid for sampling
-        # We need to adjust the grid to account for the center being at the middle of the volume
-        grid = F.affine_grid(
-            einops.rearrange(affine_matrix[:3, :], "h w -> 1 h w"),
-            volume.shape,
-            align_corners=True,
-        )
-
-        # Apply the transformation using grid_sample
-        transformed_volume = F.grid_sample(
-            volume, grid, mode="bilinear", padding_mode="border", align_corners=True
-        )
-
-        # Return the volume in its original shape format
-        return transformed_volume
