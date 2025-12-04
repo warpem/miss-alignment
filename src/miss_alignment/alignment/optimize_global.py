@@ -92,17 +92,19 @@ def optimize_shifts(
         parameters = [shifts_y, shifts_x]
     elif len(setting) == 2:  # TODO add case of starting from existent grid
         # movement grids - these should receive gradients
+        grid_dims = [setting[0], setting[1], tilt_series.n_tilts]
+
         tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(
-            new_size=[setting[0], setting[1], tilt_series.n_tilts]
+            new_size=grid_dims
         ).to(device)
         leaf_variable_x = tilt_series.grid_movement_x.values.requires_grad_(True)
-        tilt_series.grid_movement_x = CubicGrid(setting, leaf_variable_x)
+        tilt_series.grid_movement_x = CubicGrid(grid_dims, leaf_variable_x)
 
         tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(
-            new_size=setting
+            new_size=grid_dims
         ).to(device)
         leaf_variable_y = tilt_series.grid_movement_y.values.requires_grad_(True)
-        tilt_series.grid_movement_y = CubicGrid(setting, leaf_variable_y)
+        tilt_series.grid_movement_y = CubicGrid(grid_dims, leaf_variable_y)
 
         parameters = [leaf_variable_x, leaf_variable_y]
     elif len(setting) == 4:  # TODO add case of starting from existent grid
@@ -217,7 +219,7 @@ def optimize_shifts(
         # remove gradients and finalize global shifts
         tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y.detach()
         tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x.detach()
-    elif len(setting) == 3:
+    elif len(setting) == 2:
         # remove gradients
         tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.detach()
         tilt_series.grid_movement_y.values = tilt_series.grid_movement_y.values.detach()
