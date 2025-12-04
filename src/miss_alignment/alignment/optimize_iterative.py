@@ -110,7 +110,7 @@ def run_iterative_anchoring(
         print(f"Loss went from {loss_values[0]} to {current_loss}")
 
         # Check for NaN or worse loss - immediately revert if so
-        if math.isnan(current_loss) or current_loss >= best_loss:
+        if math.isnan(current_loss) or current_loss == 0.0 or current_loss >= best_loss:
             if math.isnan(current_loss):
                 print(f"  -> NaN detected, reverting to best (loss={best_loss})")
             else:
@@ -165,7 +165,7 @@ def run_iterative_anchoring(
     print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
 
     # Check for NaN or worse than best
-    if math.isnan(final_loss) or final_loss >= best_loss:
+    if math.isnan(final_loss) or final_loss == 0.0 or final_loss >= best_loss:
         if math.isnan(final_loss):
             print(f"Final produced NaN, restoring best (loss={best_loss:.4f})")
         else:
