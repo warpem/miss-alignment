@@ -274,9 +274,7 @@ def optimize_shifts(
         avg_score = (
             total_weighted_score / total_precision if total_precision > 0 else 0.0
         )
-        if avg_score == 0.0:
-            print("Average score was 0 with precision", total_precision)
-            print("Average score was 0 with weighted score", total_weighted_score)
+        print(total_weighted_score, total_precision)
         loss_values.append(avg_score)
 
         return avg_score
