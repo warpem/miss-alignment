@@ -156,6 +156,14 @@ def optimize_shifts(
                 print("[NaN Check 1] NaN detected in shifts after update")
                 print(f"  shifts_x has NaN: {torch.isnan(shifts_x).any()}")
                 print(f"  shifts_y has NaN: {torch.isnan(shifts_y).any()}")
+                print(
+                    f"  shifts_x range: [{shifts_x.min().item():.2f}, "
+                    f"{shifts_x.max().item():.2f}]"
+                )
+                print(
+                    f"  shifts_y range: [{shifts_y.min().item():.2f}, "
+                    f"{shifts_y.max().item():.2f}]"
+                )
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         total_samples = positions.shape[0]
