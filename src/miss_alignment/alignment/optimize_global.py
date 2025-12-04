@@ -153,7 +153,7 @@ def optimize_shifts(
 
             # NaN check 1: Check shift parameters
             if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
-                print("[NaN Check 1] NaN detected in shifts after update")
+                print(f"[{device} NaN Check 1] NaN detected in shifts after update")
                 print(f"  shifts_x has NaN: {torch.isnan(shifts_x).any()}")
                 print(f"  shifts_y has NaN: {torch.isnan(shifts_y).any()}")
                 print(
@@ -286,7 +286,7 @@ def optimize_shifts(
                 grad_y_has_inf = torch.isinf(shifts_y.grad).any()
 
                 if grad_x_has_nan or grad_y_has_nan or grad_x_has_inf or grad_y_has_inf:
-                    print("[NaN Check 7] NaN/Inf detected in gradients")
+                    print("[{device} NaN Check 7] NaN/Inf detected in gradients")
                     print(f"  shifts_x.grad has NaN: {grad_x_has_nan}")
                     print(f"  shifts_y.grad has NaN: {grad_y_has_nan}")
                     print(f"  shifts_x.grad has Inf: {grad_x_has_inf}")
@@ -295,7 +295,7 @@ def optimize_shifts(
                 grad_x_max = shifts_x.grad.abs().max().item()
                 grad_y_max = shifts_y.grad.abs().max().item()
                 print(
-                    f"[Gradient Check] Max gradient magnitudes: "
+                    f"[{device} Gradient Check] Max gradient magnitudes: "
                     f"shifts_x={grad_x_max:.6f}, shifts_y={grad_y_max:.6f}"
                 )
 
@@ -309,7 +309,7 @@ def optimize_shifts(
                 f"precision={total_precision}"
             )
         print(
-            f"[Score] total_weighted={total_weighted_score}, "
+            f"[{device} Score] total_weighted={total_weighted_score}, "
             f"precision={total_precision}, avg={avg_score}"
         )
         loss_values.append(avg_score)
