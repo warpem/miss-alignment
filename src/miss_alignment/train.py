@@ -47,8 +47,7 @@ def train_miss_align(
         # cycling through devices if there are fewer devices than workers
         devices_remaining = devices_list[1:]
         devices_reconstruction = [
-            devices_remaining[i % len(devices_remaining)]
-            for i in range(n_workers)
+            devices_remaining[i % len(devices_remaining)] for i in range(n_workers)
         ]
     print(f"Using devices {devices_reconstruction} for reconstruction workers")
 
@@ -173,6 +172,18 @@ def train_miss_align(
         # =============== tilt-series alignment step =================
         # ============================================================
 
+        # make copies of the xml files and model before alignment
+        iteration_directory = training_directory / ("iter" + str(x))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+        for xml_file in training_directory.glob("*.xml"):
+            destination = iteration_directory / xml_file.name
+            copyfile(xml_file, destination)
+
+        # copy best model to iteration directory as model.ckpt
+        iteration_model_path = iteration_directory / "model.ckpt"
+        copyfile(best_model_path, iteration_model_path)
+        print(f"Copied best model to {iteration_model_path}")
+
         # get list of all files to process for alignment
         tilt_series_list = list(training_directory.glob("*.xml"))
 
@@ -189,17 +200,5 @@ def train_miss_align(
             downsample=iteration_settings["downsample"],
             devices_list=devices_list,
         )
-
-        # make copies of the updated xml files in separate iteration folder
-        iteration_directory = training_directory / ("iter" + str(x))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
-        for xml_file in training_directory.glob("*.xml"):
-            destination = iteration_directory / xml_file.name
-            copyfile(xml_file, destination)
-
-        # copy best model to iteration directory as model.ckpt
-        iteration_model_path = iteration_directory / "model.ckpt"
-        copyfile(best_model_path, iteration_model_path)
-        print(f"Copied best model to {iteration_model_path}")
 
     return None
