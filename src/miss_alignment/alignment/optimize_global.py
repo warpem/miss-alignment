@@ -157,7 +157,7 @@ def optimize_shifts(
                 print(f"  shifts_x has NaN: {torch.isnan(shifts_x).any()}")
                 print(f"  shifts_y has NaN: {torch.isnan(shifts_y).any()}")
                 print(
-                        f"  shifts_x : {shifts}"
+                        f"  shifts_x : {shifts_x}"
                 )
                 print(
                     f"  shifts_y : {shifts_y}"
