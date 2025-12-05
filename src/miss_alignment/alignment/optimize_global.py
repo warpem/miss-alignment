@@ -14,6 +14,12 @@ from warpylib.cubic_grid import CubicGrid
 from miss_alignment.models import MissAlignment
 
 
+class AlignmentNanError(Exception):
+    """Raised when NaN values are detected during alignment optimization."""
+
+    pass
+
+
 def optimize_shifts(
     model: MissAlignment,
     tilt_series: TiltSeries,
@@ -25,6 +31,7 @@ def optimize_shifts(
     batch_size: int = 16,
     apply_ctf: bool = True,
     device: str | torch.device = "cpu",
+    max_retries: int = 3,
 ):
     """Find shifts to optimize model score.
 
@@ -53,17 +60,129 @@ def optimize_shifts(
         Whether to apply CTF correction.
     device : str | torch.device
         Device to run optimization on.
+    max_retries : int
+        Maximum number of retry attempts if NaN is encountered.
 
     Returns
     -------
     tuple[TiltSeries, list[float]]
         Optimized tilt series and list of loss values.
     """
+    # Store original tilt series state in case all retries fail
+    original_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
+    original_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
+
+    # Store original grid states if applicable
+    if setting != "global" and len(setting) == 3:
+        has_grid_x = hasattr(tilt_series.grid_movement_x, "values")
+        has_grid_y = hasattr(tilt_series.grid_movement_y, "values")
+        original_grid_x = (
+            tilt_series.grid_movement_x.values.clone() if has_grid_x else None
+        )
+        original_grid_y = (
+            tilt_series.grid_movement_y.values.clone() if has_grid_y else None
+        )
+    elif setting != "global" and len(setting) == 4:
+        has_grid_x = hasattr(tilt_series.grid_volume_warp_x, "values")
+        has_grid_y = hasattr(tilt_series.grid_volume_warp_y, "values")
+        has_grid_z = hasattr(tilt_series.grid_volume_warp_z, "values")
+        original_grid_x = (
+            tilt_series.grid_volume_warp_x.values.clone() if has_grid_x else None
+        )
+        original_grid_y = (
+            tilt_series.grid_volume_warp_y.values.clone() if has_grid_y else None
+        )
+        original_grid_z = (
+            tilt_series.grid_volume_warp_z.values.clone() if has_grid_z else None
+        )
+
     # Use highest precision for optimization to avoid NaN issues
     # Training uses "medium" and 16-mixed, but optimization needs full precision
     original_precision = torch.get_float32_matmul_precision()
     torch.set_float32_matmul_precision("highest")
 
+    # Retry loop
+    retries_left = max_retries
+    while retries_left > 0:
+        try:
+            return _optimize_shifts_inner(
+                model=model,
+                tilt_series=tilt_series,
+                images=images,
+                pixel_size=pixel_size,
+                positions=positions,
+                setting=setting,
+                patch_size=patch_size,
+                batch_size=batch_size,
+                apply_ctf=apply_ctf,
+                device=device,
+                original_precision=original_precision,
+            )
+        except AlignmentNanError:
+            retries_left -= 1
+            if retries_left > 0:
+                # Reset tilt series to original state before retry
+                tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y.clone()
+                tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x.clone()
+
+                if setting != "global" and len(setting) == 3:
+                    if original_grid_x is not None:
+                        tilt_series.grid_movement_x.values = original_grid_x.clone()
+                    if original_grid_y is not None:
+                        tilt_series.grid_movement_y.values = original_grid_y.clone()
+                elif setting != "global" and len(setting) == 4:
+                    if original_grid_x is not None:
+                        tilt_series.grid_volume_warp_x.values = original_grid_x.clone()
+                    if original_grid_y is not None:
+                        tilt_series.grid_volume_warp_y.values = original_grid_y.clone()
+                    if original_grid_z is not None:
+                        tilt_series.grid_volume_warp_z.values = original_grid_z.clone()
+                print(f"Retrying optimization... (retries left: {retries_left})")
+
+    # All retries failed, restore original state and return failure
+    tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y
+    tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x
+
+    if setting != "global" and len(setting) == 3:
+        if original_grid_x is not None:
+            tilt_series.grid_movement_x.values = original_grid_x
+        if original_grid_y is not None:
+            tilt_series.grid_movement_y.values = original_grid_y
+    elif setting != "global" and len(setting) == 4:
+        if original_grid_x is not None:
+            tilt_series.grid_volume_warp_x.values = original_grid_x
+        if original_grid_y is not None:
+            tilt_series.grid_volume_warp_y.values = original_grid_y
+        if original_grid_z is not None:
+            tilt_series.grid_volume_warp_z.values = original_grid_z
+
+    # Restore original precision setting
+    torch.set_float32_matmul_precision(original_precision)
+
+    # Return original tilt series with failure loss
+    return tilt_series, [float("inf")]
+
+
+def _optimize_shifts_inner(
+    model: MissAlignment,
+    tilt_series: TiltSeries,
+    images: torch.Tensor,
+    pixel_size: float,
+    positions: torch.Tensor,
+    setting: str | tuple[int, int, int] | tuple[int, int, int, int],
+    patch_size: int,
+    batch_size: int,
+    apply_ctf: bool,
+    device: str | torch.device,
+    original_precision: str,
+):
+    """Inner optimization function that can raise AlignmentNanError.
+
+    Returns
+    -------
+    tuple[TiltSeries, list[float]]
+        Optimized tilt series and list of loss values.
+    """
     # move all modules to device in place
     tilt_series.to(device)
     model.to(device)
@@ -146,6 +265,26 @@ def optimize_shifts(
     def closure():
         alignment_optimizer.zero_grad()
 
+        # Check for NaN in parameters before computing loss
+        # If found, return large penalty to make line search reject this step
+        nan_in_params = False
+        if setting == "global":
+            if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
+                nan_in_params = True
+        elif len(setting) == 3:
+            if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
+                nan_in_params = True
+        elif len(setting) == 4:
+            if (
+                torch.isnan(leaf_variable_x).any()
+                or torch.isnan(leaf_variable_y).any()
+                or torch.isnan(leaf_variable_z).any()
+            ):
+                nan_in_params = True
+
+        if nan_in_params:
+            raise AlignmentNanError
+
         # update the alignments
         if setting == "global":
             tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y
@@ -180,13 +319,16 @@ def optimize_shifts(
                 # ensure normalization per subvolume
                 mean = einops.reduce(subvolumes, "n d h w -> n 1 1 1", reduction="mean")
                 std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
-                subvolumes = (subvolumes - mean) / std
+                # Add epsilon to prevent division by zero (which causes NaN precision)
+                eps = 1e-8
+                subvolumes = (subvolumes - mean) / (std + eps)
 
                 # change channel to batch dimension
                 subvolumes = einops.rearrange(subvolumes, "b d h w -> b 1 d h w")
 
                 # Get score and precision for this batch
                 batch_scores, batch_log_precisions = model(subvolumes)
+
                 batch_precisions = batch_log_precisions.exp()
 
                 # Precision-weighted average score for this batch
@@ -194,7 +336,9 @@ def optimize_shifts(
                 batch_precision_sum = batch_precisions.sum()
 
                 # Weight by batch size for proper gradient accumulation
-                weighted_loss = batch_weighted_score * (current_batch_size / total_samples)
+                weighted_loss = batch_weighted_score * (
+                    current_batch_size / total_samples
+                )
 
                 # Backward pass for this batch (gradients accumulate)
                 weighted_loss.backward()
@@ -204,7 +348,17 @@ def optimize_shifts(
                 total_precision += batch_precision_sum.item()
 
         # Precision-weighted average score
-        avg_score = total_weighted_score / total_precision if total_precision > 0 else 0.0
+        if total_precision <= 0:
+            raise ValueError(
+                f"Total precision is {total_precision}, which is <= 0. "
+                "This indicates a problem with the model precision outputs."
+            )
+        avg_score = total_weighted_score / total_precision
+
+        # Check if loss is NaN and raise error
+        if math.isnan(avg_score):
+            raise AlignmentNanError("Loss value is NaN")
+
         loss_values.append(avg_score)
 
         return avg_score
