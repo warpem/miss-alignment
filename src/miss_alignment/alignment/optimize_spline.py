@@ -12,7 +12,7 @@ from warpylib import TiltSeries
 
 from miss_alignment.models import MissAlignment
 
-from .optimize_global import optimize_shifts
+from .optimize_global import AlignmentNanError, optimize_shifts
 
 
 def evaluate_catmull_rom_spline(
@@ -83,6 +83,7 @@ def optimize_shifts_spline(
     apply_ctf: bool = True,
     device: str | torch.device = "cpu",
     n_control_points: int = 7,
+    max_retries: int = 3,
 ):
     """Optimize shifts using a smooth spline parameterization.
 
@@ -113,6 +114,63 @@ def optimize_shifts_spline(
     n_control_points : int
         Number of spline control points. More points = more flexibility.
         Default 7 gives smooth corrections.
+    max_retries : int
+        Maximum number of retry attempts if NaN is encountered.
+
+    Returns
+    -------
+    tuple[TiltSeries, list[float]]
+        Optimized tilt series and loss values.
+    """
+    # Store original tilt series state in case all retries fail
+    original_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
+    original_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
+
+    # Retry loop
+    retries_left = max_retries
+    while retries_left > 0:
+        try:
+            return _optimize_shifts_spline_inner(
+                model=model,
+                tilt_series=tilt_series,
+                images=images,
+                pixel_size=pixel_size,
+                positions=positions,
+                patch_size=patch_size,
+                batch_size=batch_size,
+                apply_ctf=apply_ctf,
+                device=device,
+                n_control_points=n_control_points,
+            )
+        except AlignmentNanError:
+            retries_left -= 1
+            if retries_left > 0:
+                # Reset tilt series to original state before retry
+                tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y.clone()
+                tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x.clone()
+            print(f"Retrying optimization... (retries left: {retries_left})")
+
+    # All retries failed, restore original state and return failure
+    tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y
+    tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x
+
+    # Return original tilt series with failure loss
+    return tilt_series, [float("inf")]
+
+
+def _optimize_shifts_spline_inner(
+    model: MissAlignment,
+    tilt_series: TiltSeries,
+    images: torch.Tensor,
+    pixel_size: float,
+    positions: torch.Tensor,
+    patch_size: int,
+    batch_size: int,
+    apply_ctf: bool,
+    device: str | torch.device,
+    n_control_points: int,
+):
+    """Inner spline optimization function that can raise AlignmentNanError.
 
     Returns
     -------
@@ -163,10 +221,9 @@ def optimize_shifts_spline(
         alignment_optimizer.zero_grad()
 
         # Check for NaN in parameters before computing loss
-        # If found, return large penalty to make line search reject this step
+        # If found, raise error to trigger retry
         if torch.isnan(control_deltas_x).any() or torch.isnan(control_deltas_y).any():
-            penalty = torch.tensor(1e10, dtype=torch.float32, device=device)
-            return penalty
+            raise AlignmentNanError("NaN detected in spline control parameters")
 
         # Evaluate spline at each tilt angle to get shift deltas
         shift_deltas_x = evaluate_catmull_rom_spline(
@@ -234,10 +291,9 @@ def optimize_shifts_spline(
             total_weighted_score / total_precision if total_precision > 0 else 0.0
         )
 
-        # Check if loss is NaN and return penalty if so
+        # Check if loss is NaN and raise error
         if math.isnan(avg_score):
-            penalty = torch.tensor(1e10, dtype=torch.float32, device=device)
-            return penalty
+            raise AlignmentNanError("Loss value is NaN")
 
         loss_values.append(avg_score)
 
