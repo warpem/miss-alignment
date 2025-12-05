@@ -1,10 +1,11 @@
 from pathlib import Path
+from shutil import copyfile
 import yaml
 
 import typer
 import torch
 from lightning.pytorch import Trainer, seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
@@ -46,8 +47,7 @@ def train_miss_align(
         # cycling through devices if there are fewer devices than workers
         devices_remaining = devices_list[1:]
         devices_reconstruction = [
-            devices_remaining[i % len(devices_remaining)]
-            for i in range(n_workers)
+            devices_remaining[i % len(devices_remaining)] for i in range(n_workers)
         ]
     print(f"Using devices {devices_reconstruction} for reconstruction workers")
 
@@ -74,12 +74,22 @@ def train_miss_align(
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
+    # make copies of the xml files and (model) we're starting from
+    iteration_directory = training_directory / ("iter" + str(start_iter))
+    iteration_directory.mkdir(parents=True, exist_ok=True)
+    for xml_file in training_directory.glob("*.xml"):
+        destination = iteration_directory / xml_file.name
+        copyfile(xml_file, destination)
+
+    if model_training_config["model_checkpoint"] is not None:
+        source = model_training_config["model_checkpoint"]
+        destination = iteration_directory / Path(source).name
+        copyfile(source, destination)
+
     for x in range(start_iter, end_iter):
         # ============================================================
         # ================= model training step ======================
         # ============================================================
-        iteration_directory = training_directory / ("iter" + str(x))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
         iteration_settings = general_config["iteration_settings"][x]
 
         # Define the early stopping callback
@@ -109,7 +119,7 @@ def train_miss_align(
             deterministic=False,  # setting to True breaks on max_pool_3d
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
-            callbacks=[early_stopping, checkpoint_callback],
+            callbacks=[early_stopping, checkpoint_callback, TQDMProgressBar(refresh_rate=10)],
             plugins=[SLURMEnvironment(auto_requeue=False)],
             precision="16-mixed",  # Enable automatic mixed precision
         )
@@ -140,7 +150,7 @@ def train_miss_align(
 
         # Initialize data module with parameters from config
         with MissAlignmentDataModule(
-            iteration_directory,
+            training_directory,
             create_default_generator(**shift_generation_config),
             n_workers=n_workers,
             reconstruction_accelerators=devices_reconstruction,
@@ -164,21 +174,24 @@ def train_miss_align(
             trainer.checkpoint_callback.best_model_path
         )
 
+        # copy best model to training directory as model.ckpt
+        best_model_path = Path(trainer.checkpoint_callback.best_model_path)
+        training_model_path = training_directory / "model.ckpt"
+        copyfile(best_model_path, training_model_path)
+        print(f"Copied best model to {training_model_path}")
+
         # ============================================================
         # =============== tilt-series alignment step =================
         # ============================================================
-        # get the output directory ready
-        output_directory = training_directory / ("iter" + str(x + 1))
-        output_directory.mkdir(parents=True, exist_ok=True)
 
         # get list of all files to process for alignment
-        tilt_series_list = list(iteration_directory.glob("*.json"))
+        tilt_series_list = list(training_directory.glob("*.xml"))
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
             model_checkpoint=model_training_config["model_checkpoint"],
             tilt_series_list=tilt_series_list,
-            output_directory=output_directory,
+            output_directory=training_directory,
             setting=iteration_settings["alignment"],
             patch_size=alignment_config["patch_size"],
             patch_overlap=alignment_config["patch_overlap"],
@@ -187,5 +200,17 @@ def train_miss_align(
             downsample=iteration_settings["downsample"],
             devices_list=devices_list,
         )
+
+        # make copies of the xml files and model after alignment
+        iteration_directory = training_directory / ("iter" + str(x + 1))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+
+        for xml_file in training_directory.glob("*.xml"):
+            destination = iteration_directory / xml_file.name
+            copyfile(xml_file, destination)
+
+        training_model_path = iteration_directory / "model.ckpt"
+        copyfile(best_model_path, training_model_path)
+        print(f"Copied best model to {training_model_path}")
 
     return None

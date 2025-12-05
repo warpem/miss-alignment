@@ -7,21 +7,21 @@ To download and prepare training input, run preproc.py and specify a `--download
 * download the data from Zenodo
 * use a helper function from miss_alignment.data.io to convert the
 downloaded pickles for both the ground-truth set and the tiltxcorr-aligned
-set to .json files for miss-alignment (each .json file will point to a generated .xml and .st file)
+set to .xml files for miss-alignment (each .xml file will point to a generated .st file)
 
 ## Setup project
 
-Create a project folder with the following layout. .json files should be directly copied to the iter0 folder without the .xml and .st files, as they point to their location on disk. Ground truth files are not strictly necessary to have here, but might be handy for organisation:
+Create a project folder with the following layout. .xml files should be directly copied to the iter0 folder along with the .st files, as the XML files point to their location on disk. Ground truth files are not strictly necessary to have here, but might be handy for organisation:
 
 ```
 shrec_benchmark/              # this can have your desired name
 ├── iter0/                    # this name is strict
-│   ├── model_0.json
-│   ├── model_1.json
+│   ├── model_0.xml
+│   ├── model_1.xml
 │   └── ...
 ├── ground_truth/
-│   ├── model_0.json
-│   ├── model_1.json
+│   ├── model_0.xml
+│   ├── model_1.xml
 │   └── ...
 ├── config.yaml
 └── init_weights.ckpt

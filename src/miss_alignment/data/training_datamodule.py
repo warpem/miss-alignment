@@ -152,7 +152,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.stop_event = mp.Event()
 
         # get a list of all the tilt series json files
-        tilt_series_jsons = list(self.dataset_directory.glob("*.json"))
+        tilt_series_xmls = list(self.dataset_directory.glob("*.xml"))
 
         for partition_id in range(self.n_workers):
             p = mp.Process(
@@ -161,7 +161,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                     "partition_id": partition_id,
                     "partition_size": self.partition_size,
                     "pool_dir": self.pool_dir,
-                    "tilt_series_jsons": tilt_series_jsons,
+                    "tilt_series_xmls": tilt_series_xmls,
                     "patch_size": self.patch_size,
                     "apply_ctf": self.apply_ctf,
                     "downsample": self.downsample,

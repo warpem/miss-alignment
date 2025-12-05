@@ -32,7 +32,7 @@ def gpu_runner(
     while True:
         try:
             task_parameters = task_queue.get_nowait()
-            _ = evaluate_tilt_series(
+            evaluate_tilt_series(
                 **task_parameters,
                 device=device,
             )
@@ -46,7 +46,7 @@ def run_alignment_parallel(
     model_checkpoint: Path,
     tilt_series_list: list[Path],
     output_directory: Path,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int],
+    setting: str | tuple[int, int] | tuple[int, int, int, int],
     patch_size: int,
     patch_overlap: float,
     batch_size: int,

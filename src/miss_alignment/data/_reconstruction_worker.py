@@ -31,7 +31,7 @@ PAUSE_POLL_INTERVAL = 0.05  # 50ms
 
 @dataclass
 class TiltSeriesFetcher:
-    tilt_series_jsons: list[Path]
+    tilt_series_xmls: list[Path]
     patch_size: int  # needed for filter calculation in warpylib
     refresh_rate: int
     downsample: int
@@ -60,9 +60,7 @@ class TiltSeriesFetcher:
         self._tilt_series.tilt_axis_offset_y = self._tmp_tilt_axis_offset_y.clone()
 
     def _load_next(self):
-        tilt_series_data = TiltSeriesData.from_json(
-            random.choice(self.tilt_series_jsons)
-        )
+        tilt_series_data = TiltSeriesData(xml_metadata_path=random.choice(self.tilt_series_xmls))
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
             downsample=self.downsample
         )
@@ -100,7 +98,7 @@ def reconstruction_worker(
     partition_id: int,
     partition_size: int,
     pool_dir: Path,
-    tilt_series_jsons: list[Path],
+    tilt_series_xmls: list[Path],
     patch_size: int,
     apply_ctf: bool,
     downsample: int,
@@ -120,8 +118,8 @@ def reconstruction_worker(
         Maximum number of files to maintain in this partition
     pool_dir : Path
         Directory to store reconstructions
-    tilt_series_jsons : list[Path]
-        List of paths to tilt-series stored as jsons to make
+    tilt_series_xmls : list[Path]
+        List of paths to tilt-series metadata files to make
          reconstructions from
     patch_size : int
         Shape of patches will be: (patch_size, ) * 3
@@ -145,7 +143,7 @@ def reconstruction_worker(
 
     # Initialize tilt series fetcher
     tilt_series_fetcher = TiltSeriesFetcher(
-        tilt_series_jsons=tilt_series_jsons,
+        tilt_series_xmls=tilt_series_xmls,
         patch_size=patch_size,
         refresh_rate=tilt_series_refresh_rate,
         downsample=downsample,

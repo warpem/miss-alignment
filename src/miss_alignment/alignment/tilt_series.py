@@ -118,7 +118,7 @@ def evaluate_tilt_series(
     model_checkpoint_path: Path,
     tilt_series_path: Path,
     output_directory: Path,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "anchoring",
+    setting: str | tuple[int, int] | tuple[int, int, int, int] = "anchoring",
     patch_size: int = 96,
     patch_overlap: float = 0.1,
     batch_size: int = 16,
@@ -135,7 +135,7 @@ def evaluate_tilt_series(
     model_checkpoint_path : Path
         Path to trained model checkpoint.
     tilt_series_path : Path
-        Path to tilt series JSON file.
+        Path to tilt series XML file.
     output_directory : Path
         Directory to write output files.
     setting : str | tuple
@@ -143,7 +143,7 @@ def evaluate_tilt_series(
         - "global": per-tilt 2D shifts (single pass)
         - "anchoring": iterative anchoring with per-tilt shifts (default)
         - "spline": smooth spline + per-tilt fine adjustment (coarse-to-fine)
-        - tuple(int, int, int): 2D warping field per image
+        - tuple(int, int): 2D warping field per image
         - tuple(int, int, int, int): 3D volume warp grid
     patch_size : int
         Size of reconstruction patches.
@@ -174,7 +174,7 @@ def evaluate_tilt_series(
     )
 
     # load tilt_series and set its name for output
-    tilt_series_data = TiltSeriesData.from_json(tilt_series_path)
+    tilt_series_data = TiltSeriesData(xml_metadata_path=tilt_series_path)
     tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
         downsample=downsample
     )
@@ -240,11 +240,9 @@ def evaluate_tilt_series(
 
     # write all necessary output
     xml_out = (output_directory / (tilt_series_data.xml_filename + ".xml")).absolute()
-    json_out = (output_directory / (tilt_series_data.xml_filename + ".json")).absolute()
     new_tilt_series_data = tilt_series_data.replace(
         xml_metadata_path=xml_out,
     )
     new_tilt_series_data.save_metadata_to_xml(tilt_series)
-    new_tilt_series_data.to_json(json_out)
 
-    return json_out, loss
+    return loss

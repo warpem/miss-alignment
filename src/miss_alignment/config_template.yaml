@@ -9,7 +9,7 @@ general:
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }
-    - { downsample: 1, alignment: [3, 3, 40] }  # local refinement with a 3x3 image warping grid
+    - { downsample: 1, alignment: [3, 3] }  # local refinement with a 3x3 image warping grid
   seed: 45132
 
 # ====================================================================

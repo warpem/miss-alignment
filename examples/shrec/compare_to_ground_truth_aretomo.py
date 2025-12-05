@@ -1,7 +1,7 @@
 """
 Compare AreTomo alignments against ground truth alignments for SHREC benchmark.
 
-This script loads AreTomo .aln files and ground truth JSON/XML files, applies the
+This script loads AreTomo .aln files and ground truth XML files, applies the
 AreTomo alignments, reconstructs volumes, uses cross-correlation to account for
 global shifts, and calculates alignment errors.
 
@@ -41,8 +41,8 @@ tilt_axis_offset_x and tilt_axis_offset_y respectively.
 File Matching
 -------------
 The script matches AreTomo files to ground truth by filename stem:
-- model_0.json matches model_0.aln or model_0.st.aln
-- model_1.json matches model_1.aln or model_1.st.aln
+- model_0.xml matches model_0.aln or model_0.st.aln
+- model_1.xml matches model_1.aln or model_1.st.aln
 etc.
 """
 
@@ -161,21 +161,18 @@ def apply_aretomo_alignment_to_tilt_series(
 
     # Save the modified metadata to a temporary XML file
     import tempfile
-    import shutil
 
     # Create temporary directory for modified metadata
     temp_dir = Path(tempfile.mkdtemp())
     temp_xml = temp_dir / "aretomo_alignment.xml"
-    temp_json = temp_dir / "aretomo_alignment.json"
 
-    # Create new TiltSeriesData pointing to temp files
+    # Create new TiltSeriesData pointing to temp file
     aretomo_tilt_series_data = tilt_series_data.replace(
         xml_metadata_path=temp_xml,
     )
 
     # Save the modified metadata
     aretomo_tilt_series_data.save_metadata_to_xml(tilt_series)
-    aretomo_tilt_series_data.to_json(temp_json)
 
     return aretomo_tilt_series_data, temp_dir
 
@@ -344,9 +341,9 @@ def calculate_alignment_error(
     return results
 
 
-def find_matching_aln_file(json_file: Path, aretomo_dir: Path) -> Path:
+def find_matching_aln_file(xml_file: Path, aretomo_dir: Path) -> Path:
     """
-    Find the matching AreTomo .aln file for a given JSON file.
+    Find the matching AreTomo .aln file for a given XML file.
 
     Looks for files matching:
     - {stem}.aln
@@ -354,8 +351,8 @@ def find_matching_aln_file(json_file: Path, aretomo_dir: Path) -> Path:
 
     Parameters
     ----------
-    json_file : Path
-        Path to the JSON ground truth file
+    xml_file : Path
+        Path to the XML ground truth file
     aretomo_dir : Path
         Directory containing AreTomo .aln files
 
@@ -369,7 +366,7 @@ def find_matching_aln_file(json_file: Path, aretomo_dir: Path) -> Path:
     FileNotFoundError
         If no matching .aln file is found
     """
-    stem = json_file.stem
+    stem = xml_file.stem
 
     # Try different possible naming conventions
     possible_names = [
@@ -383,7 +380,7 @@ def find_matching_aln_file(json_file: Path, aretomo_dir: Path) -> Path:
             return aln_file
 
     raise FileNotFoundError(
-        f"No AreTomo .aln file found for {json_file.name}. "
+        f"No AreTomo .aln file found for {xml_file.name}. "
         f"Tried: {', '.join(possible_names)}"
     )
 
@@ -396,7 +393,7 @@ def main():
         "--ground-truth-dir",
         type=Path,
         required=True,
-        help="Directory containing ground truth JSON files",
+        help="Directory containing ground truth XML files",
     )
     parser.add_argument(
         "--aretomo-dir",
@@ -419,10 +416,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Find all ground truth JSON files
-    gt_files = sorted(args.ground_truth_dir.glob("*.json"))
+    # Find all ground truth XML files
+    gt_files = sorted(args.ground_truth_dir.glob("*.xml"))
     if not gt_files:
-        raise ValueError(f"No JSON files found in {args.ground_truth_dir}")
+        raise ValueError(f"No XML files found in {args.ground_truth_dir}")
 
     print(f"Found {len(gt_files)} ground truth files")
     print(f"Using device: {args.device}")
@@ -447,7 +444,7 @@ def main():
             aretomo_params = parse_aretomo_aln_file(aln_file)
 
             # Load ground truth data
-            gt_data = TiltSeriesData.from_json(gt_file)
+            gt_data = TiltSeriesData(xml_metadata_path=gt_file)
 
             # Apply AreTomo alignment to create a comparable TiltSeriesData
             aretomo_data, temp_dir = apply_aretomo_alignment_to_tilt_series(

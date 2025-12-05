@@ -26,7 +26,7 @@ def optimize_shifts(
     images: torch.Tensor,
     pixel_size: float,
     positions: torch.Tensor,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int] = "global",
+    setting: str | tuple[int, int] | tuple[int, int, int, int] = "global",
     patch_size: int = 96,
     batch_size: int = 16,
     apply_ctf: bool = True,
@@ -50,7 +50,7 @@ def optimize_shifts(
     setting : str | tuple
         Type of alignment to run:
         - 'global': optimizes a single shift per image
-        - tuple(int, int, int) e.g. (3, 3, 41): a single 2D field per image
+        - tuple(int, int) e.g. (3, 3): a single 2D field per tilt image
         - tuple(int, int, int, int) e.g. (3, 3, 2, 10): a volume warp grid
     patch_size : int
         Size of reconstruction patches.
@@ -73,7 +73,7 @@ def optimize_shifts(
     original_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
 
     # Store original grid states if applicable
-    if setting != "global" and len(setting) == 3:
+    if setting != "global" and len(setting) == 2:
         has_grid_x = hasattr(tilt_series.grid_movement_x, "values")
         has_grid_y = hasattr(tilt_series.grid_movement_y, "values")
         original_grid_x = (
@@ -125,7 +125,7 @@ def optimize_shifts(
                 tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y.clone()
                 tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x.clone()
 
-                if setting != "global" and len(setting) == 3:
+                if setting != "global" and len(setting) == 2:
                     if original_grid_x is not None:
                         tilt_series.grid_movement_x.values = original_grid_x.clone()
                     if original_grid_y is not None:
@@ -143,7 +143,7 @@ def optimize_shifts(
     tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y
     tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x
 
-    if setting != "global" and len(setting) == 3:
+    if setting != "global" and len(setting) == 2:
         if original_grid_x is not None:
             tilt_series.grid_movement_x.values = original_grid_x
         if original_grid_y is not None:
@@ -169,7 +169,7 @@ def _optimize_shifts_inner(
     images: torch.Tensor,
     pixel_size: float,
     positions: torch.Tensor,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int],
+    setting: str | tuple[int, int] | tuple[int, int, int, int],
     patch_size: int,
     batch_size: int,
     apply_ctf: bool,
@@ -209,19 +209,21 @@ def _optimize_shifts_inner(
             device=device,
         )
         parameters = [shifts_y, shifts_x]
-    elif len(setting) == 3:  # TODO add case of starting from existent grid
+    elif len(setting) == 2:  # TODO add case of starting from existent grid
         # movement grids - these should receive gradients
+        grid_dims = [setting[0], setting[1], tilt_series.n_tilts]
+
         tilt_series.grid_movement_x = tilt_series.grid_movement_x.resize(
-            new_size=setting
+            new_size=grid_dims
         ).to(device)
         leaf_variable_x = tilt_series.grid_movement_x.values.requires_grad_(True)
-        tilt_series.grid_movement_x = CubicGrid(setting, leaf_variable_x)
+        tilt_series.grid_movement_x = CubicGrid(grid_dims, leaf_variable_x)
 
         tilt_series.grid_movement_y = tilt_series.grid_movement_y.resize(
-            new_size=setting
+            new_size=grid_dims
         ).to(device)
         leaf_variable_y = tilt_series.grid_movement_y.values.requires_grad_(True)
-        tilt_series.grid_movement_y = CubicGrid(setting, leaf_variable_y)
+        tilt_series.grid_movement_y = CubicGrid(grid_dims, leaf_variable_y)
 
         parameters = [leaf_variable_x, leaf_variable_y]
     elif len(setting) == 4:  # TODO add case of starting from existent grid
@@ -271,7 +273,7 @@ def _optimize_shifts_inner(
         if setting == "global":
             if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
                 nan_in_params = True
-        elif len(setting) == 3:
+        elif len(setting) == 2:
             if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
                 nan_in_params = True
         elif len(setting) == 4:
@@ -371,7 +373,7 @@ def _optimize_shifts_inner(
         # remove gradients and finalize global shifts
         tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y.detach()
         tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x.detach()
-    elif len(setting) == 3:
+    elif len(setting) == 2:
         # remove gradients
         tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.detach()
         tilt_series.grid_movement_y.values = tilt_series.grid_movement_y.values.detach()
