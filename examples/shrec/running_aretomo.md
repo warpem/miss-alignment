@@ -16,21 +16,23 @@ mkdir -p at3_alignment at2_alignment
 To run only alignment and reconstruction on a folder with `.st` and `.rawtlt` files (CTF correction disabled):
 
 ```bash
-AreTomo3 \
-  -InPrefix iter0/ \
-  -InSuffix .st \
-  -OutDir at3_alignment/ \
-  -TiltAxis 0.0001 -1 \
-  -TiltCor -1 \
-  -VolZ 180 \
-  -AlignZ 180 \
-  -Cmd 1 \
-  -Serial 1 \
-  -CorrCTF 0 \
-  -DarkTol 0 \
-  -Gpu 3 \
-  -FlipVol 1 \
-  -Wbp 1
+for x in {0..9}; do 
+    AreTomo3 \
+      -InPrefix tiltstack/model_"$x"/ \
+      -InSuffix .st \
+      -OutDir at3_alignment/ \
+      -TiltAxis 0.0001 -1 \
+      -TiltCor -1 \
+      -VolZ 180 \
+      -AlignZ 180 \
+      -Cmd 1 \
+      -Serial 1 \
+      -CorrCTF 0 \
+      -DarkTol 0 \
+      -Gpu 3 \
+      -FlipVol 1 \
+      -Wbp 1
+done
 ```
 
 ### Notes on Parameter Selection
@@ -53,9 +55,9 @@ AreTomo2 produces decent alignments on the SHREC dataset with the following comm
 ```bash
 for x in {0..9}; do
   AreTomo2 \
-    -InMrc iter0/model_"$x".st \
+    -InMrc tiltstack/model_"$x"/model_"$x".st \
     -OutMrc at2_alignment/model_"$x"_Vol.mrc \
-    -AngFile iter0/model_"$x".rawtlt \
+    -AngFile tiltstack/model_"$x"/model_"$x".rawtlt \
     -TiltAxis 0.0001 -1 \
     -AlignZ 180 \
     -VolZ 180 \

@@ -76,6 +76,7 @@ def convert_pickle_to_xml_helper(
     original_pixel_size: float,
     original_stack_shape: tuple[int, int],
     volume_shape: tuple[int, int, int],
+    data_directory: Path,
 ) -> tuple[TiltSeriesData, Path]:
     """
     Convert a pickle file containing tilt-series data to XML format.
@@ -92,6 +93,8 @@ def convert_pickle_to_xml_helper(
         Original stack shape as (width, height) in pixels.
     volume_shape : tuple[int, int, int]
         Volume shape as (x, y, z) in pixels.
+    data_directory : Path
+        Path to write directory.
 
     Returns
     -------
@@ -106,8 +109,7 @@ def convert_pickle_to_xml_helper(
 
     # prepare output paths
     tilt_series_name = pickle_data_path.stem
-    data_directory = pickle_data_path.parent
-    xml_path = (data_directory / f"{tilt_series_name}.xml").absolute()
+    xml_path = data_directory / f"{tilt_series_name}.xml"
 
     # initialize a fresh warpylib TiltSeries with path
     tilt_series = TiltSeries(

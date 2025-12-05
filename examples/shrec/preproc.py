@@ -85,6 +85,7 @@ def convert_pickles_to_xml(download_dir: Path):
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
                     original_stack_shape=ORIGINAL_STACK_SHAPE,
                     volume_shape=VOLUME_SHAPE,
+                    data_directory=pickle_file.parent,
                 )
                 print(f"    Created {xml_path.name}")
 
@@ -94,7 +95,7 @@ def convert_pickles_to_xml(download_dir: Path):
 
                 # Write .rawtlt file
                 rawtlt_path = (
-                    tilt_series.tilt_stack_path.with_suffix('.rawtlt')
+                    Path(tilt_series.tilt_stack_path).with_suffix('.rawtlt')
                 )
                 with open(rawtlt_path, 'w') as f:
                     for angle in angles:
@@ -121,6 +122,7 @@ def convert_pickles_to_xml(download_dir: Path):
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
                     original_stack_shape=ORIGINAL_STACK_SHAPE,
                     volume_shape=VOLUME_SHAPE,
+                    data_directory=download_dir,
                 )
                 print(f"    Created {xml_path.name}")
 
@@ -130,7 +132,7 @@ def convert_pickles_to_xml(download_dir: Path):
 
                 # Write .rawtlt file
                 rawtlt_path = (
-                    tilt_series.tilt_stack_path.with_suffix('.rawtlt')
+                    Path(tilt_series.tilt_stack_path).with_suffix('.rawtlt')
                 )
                 with open(rawtlt_path, 'w') as f:
                     for angle in angles:
