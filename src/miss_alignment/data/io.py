@@ -107,7 +107,6 @@ def convert_pickle_to_xml_helper(
     # prepare output paths
     tilt_series_name = pickle_data_path.stem
     data_directory = pickle_data_path.parent
-    stack_path = (data_directory / f"{tilt_series_name}.st").absolute()
     xml_path = (data_directory / f"{tilt_series_name}.xml").absolute()
 
     # initialize a fresh warpylib TiltSeries with path
@@ -115,6 +114,11 @@ def convert_pickle_to_xml_helper(
         path=xml_path,
         n_tilts=n_tilts,
     )
+
+    # Get the stack path from warpylib (this follows warpylib's directory structure)
+    stack_path = Path(tilt_series.tilt_stack_path)
+    # Create the directory structure for the stack
+    stack_path.parent.mkdir(parents=True, exist_ok=True)
     tilt_series.angles = data_dict["tilt_angles"]
 
     # Handle scalar tilt_axis_angle by expanding to array

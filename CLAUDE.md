@@ -132,6 +132,29 @@ This project uses `warpylib.TiltSeries` as the primary representation of tilt-se
 
 **Note**: `torch-tomogram` is a dependency only for backward compatibility. Use `warpylib` for all tilt-series operations.
 
+### Directory Structure Convention
+
+warpylib expects a specific directory structure for tilt-series data. When you have an XML metadata file, the corresponding image stack is located in a subdirectory structure:
+
+```
+/path/to/data/
+├── tilt_series_01.xml              # XML metadata file
+├── tilt_series_02.xml
+└── tiltstack/                      # Stack directory
+    ├── tilt_series_01/             # Subdirectory per tilt-series
+    │   ├── tilt_series_01.st       # Image stack
+    │   └── tilt_series_01.rawtlt   # Optional angle file
+    └── tilt_series_02/
+        ├── tilt_series_02.st
+        └── tilt_series_02.rawtlt
+```
+
+The stack path is automatically derived from the XML path via the `tilt_stack_path` property:
+- XML: `/path/to/data/series.xml`
+- Stack: `/path/to/data/tiltstack/series/series.st`
+
+This structure is automatically created when using `convert_pickle_to_xml_helper()` and is expected when loading data with `TiltSeriesData.load_metadata_and_stack()`.
+
 ### Loading Tilt-Series Data
 
 ```python

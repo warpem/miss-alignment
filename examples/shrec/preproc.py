@@ -4,7 +4,7 @@ Preprocessing script for SHREC data.
 This script:
 1. Downloads SHREC data from Zenodo
 2. Unzips the archives
-3. Converts pickle files to JSON format for miss-alignment
+3. Converts pickle files to XML format for miss-alignment
 4. Extracts tilt angles from XML metadata and writes .rawtlt files (with inverted angles)
 """
 
@@ -14,7 +14,7 @@ import shutil
 import os
 import argparse
 
-from miss_alignment.data.io import convert_pickle_to_json_helper
+from miss_alignment.data.io import convert_pickle_to_xml_helper
 from warpylib import TiltSeries
 
 
@@ -66,8 +66,8 @@ def download_and_unzip(download_dir: Path):
             print(f"  Warning: {archive} not found, skipping")
 
 
-def convert_pickles_to_json(download_dir: Path):
-    """Convert pickle files to JSON format for both ground_truth and torch_tiltxcorr."""
+def convert_pickles_to_xml(download_dir: Path):
+    """Convert pickle files to XML format for both ground_truth and torch_tiltxcorr."""
 
     # Process ground_truth pickles
     ground_truth_dir = download_dir / "ground_truth"
@@ -79,14 +79,14 @@ def convert_pickles_to_json(download_dir: Path):
         for pickle_file in pickle_files:
             print(f"  Converting {pickle_file.name}...")
             try:
-                tilt_series_data, json_path = convert_pickle_to_json_helper(
+                tilt_series_data, xml_path = convert_pickle_to_xml_helper(
                     pickle_data_path=pickle_file,
                     stack_pixel_size=STACK_PIXEL_SIZE,
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
                     original_stack_shape=ORIGINAL_STACK_SHAPE,
                     volume_shape=VOLUME_SHAPE,
                 )
-                print(f"    Created {json_path.name}")
+                print(f"    Created {xml_path.name}")
 
                 # Load XML metadata and extract angles
                 tilt_series = TiltSeries(tilt_series_data.xml_metadata_path)
@@ -113,14 +113,14 @@ def convert_pickles_to_json(download_dir: Path):
         for pickle_file in pickle_files:
             print(f"  Converting {pickle_file.name}...")
             try:
-                tilt_series_data, json_path = convert_pickle_to_json_helper(
+                tilt_series_data, xml_path = convert_pickle_to_xml_helper(
                     pickle_data_path=pickle_file,
                     stack_pixel_size=STACK_PIXEL_SIZE,
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
                     original_stack_shape=ORIGINAL_STACK_SHAPE,
                     volume_shape=VOLUME_SHAPE,
                 )
-                print(f"    Created {json_path.name}")
+                print(f"    Created {xml_path.name}")
 
                 # Load XML metadata and extract angles
                 tilt_series = TiltSeries(tilt_series_data.xml_metadata_path)
@@ -141,7 +141,7 @@ def convert_pickles_to_json(download_dir: Path):
 def main():
     """Run the full preprocessing pipeline."""
     parser = argparse.ArgumentParser(
-        description="Preprocess SHREC data: download from Zenodo, unzip, and convert to JSON."
+        description="Preprocess SHREC data: download from Zenodo, unzip, and convert to XML."
     )
     parser.add_argument(
         "--download-dir",
@@ -161,9 +161,9 @@ def main():
     print("\nStep 1: Downloading and unzipping data...")
     download_and_unzip(download_dir)
 
-    # Step 2: Convert pickles to JSON
-    print("\nStep 2: Converting pickles to JSON format...")
-    convert_pickles_to_json(download_dir)
+    # Step 2: Convert pickles to XML
+    print("\nStep 2: Converting pickles to XML format...")
+    convert_pickles_to_xml(download_dir)
 
     print("\n" + "=" * 70)
     print("Preprocessing complete!")
