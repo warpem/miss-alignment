@@ -162,6 +162,12 @@ def optimize_shifts_spline(
     def closure():
         alignment_optimizer.zero_grad()
 
+        # Check for NaN in parameters before computing loss
+        # If found, return large penalty to make line search reject this step
+        if torch.isnan(control_deltas_x).any() or torch.isnan(control_deltas_y).any():
+            penalty = torch.tensor(1e10, dtype=torch.float32, device=device)
+            return penalty
+
         # Evaluate spline at each tilt angle to get shift deltas
         shift_deltas_x = evaluate_catmull_rom_spline(
             control_deltas_x, control_positions, angles.to(device)
@@ -227,6 +233,12 @@ def optimize_shifts_spline(
         avg_score = (
             total_weighted_score / total_precision if total_precision > 0 else 0.0
         )
+
+        # Check if loss is NaN and return penalty if so
+        if math.isnan(avg_score):
+            penalty = torch.tensor(1e10, dtype=torch.float32, device=device)
+            return penalty
+
         loss_values.append(avg_score)
 
         return avg_score

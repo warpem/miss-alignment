@@ -146,6 +146,28 @@ def optimize_shifts(
     def closure():
         alignment_optimizer.zero_grad()
 
+        # Check for NaN in parameters before computing loss
+        # If found, return large penalty to make line search reject this step
+        nan_in_params = False
+        if setting == "global":
+            if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
+                nan_in_params = True
+        elif len(setting) == 3:
+            if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
+                nan_in_params = True
+        elif len(setting) == 4:
+            if (
+                torch.isnan(leaf_variable_x).any()
+                or torch.isnan(leaf_variable_y).any()
+                or torch.isnan(leaf_variable_z).any()
+            ):
+                nan_in_params = True
+
+        if nan_in_params:
+            # Return large penalty to reject this step in line search
+            penalty = torch.tensor(1e10, dtype=torch.float32, device=device)
+            return penalty
+
         # update the alignments
         if setting == "global":
             tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y
@@ -215,6 +237,12 @@ def optimize_shifts(
                 "This indicates a problem with the model precision outputs."
             )
         avg_score = total_weighted_score / total_precision
+
+        # Check if loss is NaN and return penalty if so
+        if math.isnan(avg_score):
+            penalty = torch.tensor(1e10, dtype=torch.float32, device=device)
+            return penalty
+
         loss_values.append(avg_score)
 
         return avg_score
@@ -222,34 +250,6 @@ def optimize_shifts(
     n_iters = 1  # 5 iterations should give convergence
     for x in range(n_iters):
         alignment_optimizer.step(closure)
-
-        # Check if LBFGS produced NaN parameters and raise ValueError
-        if setting == "global":
-            if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
-                raise ValueError(
-                    "[Post-Optimizer NaN] LBFGS step produced NaN in shift parameters. "
-                    "This indicates LBFGS's Hessian approximation became singular."
-                )
-        elif len(setting) == 3:
-            if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
-                raise ValueError(
-                    "[Post-Optimizer NaN] LBFGS step produced "
-                    "NaN in image warp grid parameters. "
-                    "This indicates LBFGS's Hessian "
-                    "approximation became singular."
-                )
-        elif len(setting) == 4:
-            if (
-                torch.isnan(leaf_variable_x).any()
-                or torch.isnan(leaf_variable_y).any()
-                or torch.isnan(leaf_variable_z).any()
-            ):
-                raise ValueError(
-                    "[Post-Optimizer NaN] LBFGS step produced "
-                    "NaN in volume warp grid parameters. "
-                    "This indicates LBFGS's Hessian "
-                    "approximation became singular."
-                )
 
     if setting == "global":
         # remove gradients and finalize global shifts
