@@ -73,7 +73,7 @@ def optimize_shifts(
     original_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
 
     # Store original grid states if applicable
-    if setting != "global" and len(setting) == 3:
+    if setting != "global" and len(setting) == 2:
         has_grid_x = hasattr(tilt_series.grid_movement_x, "values")
         has_grid_y = hasattr(tilt_series.grid_movement_y, "values")
         original_grid_x = (
@@ -125,7 +125,7 @@ def optimize_shifts(
                 tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y.clone()
                 tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x.clone()
 
-                if setting != "global" and len(setting) == 3:
+                if setting != "global" and len(setting) == 2:
                     if original_grid_x is not None:
                         tilt_series.grid_movement_x.values = original_grid_x.clone()
                     if original_grid_y is not None:
@@ -143,7 +143,7 @@ def optimize_shifts(
     tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y
     tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x
 
-    if setting != "global" and len(setting) == 3:
+    if setting != "global" and len(setting) == 2:
         if original_grid_x is not None:
             tilt_series.grid_movement_x.values = original_grid_x
         if original_grid_y is not None:
@@ -169,7 +169,7 @@ def _optimize_shifts_inner(
     images: torch.Tensor,
     pixel_size: float,
     positions: torch.Tensor,
-    setting: str | tuple[int, int, int] | tuple[int, int, int, int],
+    setting: str | tuple[int, int] | tuple[int, int, int, int],
     patch_size: int,
     batch_size: int,
     apply_ctf: bool,
@@ -273,7 +273,7 @@ def _optimize_shifts_inner(
         if setting == "global":
             if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
                 nan_in_params = True
-        elif len(setting) == 3:
+        elif len(setting) == 2:
             if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
                 nan_in_params = True
         elif len(setting) == 4:
