@@ -34,34 +34,54 @@ def mock_tilt_series_data(temp_dir):
     """Create mock TiltSeriesData with actual files."""
     # Create XML metadata
     xml_path = temp_dir / "test.xml"
-    stack_path = temp_dir / "test.st"
 
     n_tilts = 10
-    tilt_series = TiltSeries(n_tilts=n_tilts)
+    stack_pixel_size = 10.0
+    original_pixel_size = 10.0
+    original_stack_shape = (512, 512)
+    volume_shape = (512, 512, 256)
+
+    # Create TiltSeries object with proper metadata
+    tilt_series = TiltSeries(path=xml_path, n_tilts=n_tilts)
     tilt_series.angles = torch.linspace(-60, 60, n_tilts)
-    tilt_series.save_meta(xml_path)
+    tilt_series.tilt_axis_angles = torch.zeros(n_tilts)
+    tilt_series.tilt_axis_offset_x = torch.zeros(n_tilts)
+    tilt_series.tilt_axis_offset_y = torch.zeros(n_tilts)
+
+    # Set physical dimensions
+    tilt_series.image_dimensions_physical = torch.tensor(
+        [
+            original_stack_shape[0] * original_pixel_size,
+            original_stack_shape[1] * original_pixel_size,
+        ],
+        dtype=torch.float32,
+    )
+    tilt_series.volume_dimensions_physical = torch.tensor(
+        [
+            volume_shape[0] * stack_pixel_size,
+            volume_shape[1] * stack_pixel_size,
+            volume_shape[2] * stack_pixel_size,
+        ],
+        dtype=torch.float32,
+    )
+
+    # Get the expected stack path from warpylib
+    stack_path = Path(tilt_series.tilt_stack_path)
+    # Create parent directories if they don't exist
+    stack_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Create stack - needs to be larger than 2 * patch_size * subvolume_padding
     # With patch_size=32 and subvolume_padding=2.0, we need > 128 pixels
     images = torch.randn(n_tilts, 512, 512)
     with mrcfile.new(stack_path, overwrite=True) as mrc:
         mrc.set_data(images.numpy())
+        mrc.voxel_size = stack_pixel_size
 
-    # Create TiltSeriesData
-    data = TiltSeriesData(
-        xml_metadata_path=xml_path,
-        stack_path=stack_path,
-        stack_pixel_size=10.0,
-        original_pixel_size=10.0,
-        original_stack_shape=(512, 512),
-        volume_shape=(512, 512, 256),
-    )
+    # Save metadata to XML
+    tilt_series.save_meta(xml_path)
 
-    # Save to JSON
-    json_path = temp_dir / "test.json"
-    data.to_json(json_path)
-
-    return json_path
+    # Return the xml_path directly (TiltSeriesData only needs xml_metadata_path)
+    return xml_path
 
 
 @pytest.fixture
@@ -79,21 +99,21 @@ class TestTiltSeriesFetcher:
 
     def test_initialization(self, mock_tilt_series_data):
         """Test that TiltSeriesFetcher initializes correctly."""
-        tilt_series_jsons = [mock_tilt_series_data]
+        tilt_series_xmls = [mock_tilt_series_data]
         patch_size = 32
         refresh_rate = 5
         downsample = 1
         device = torch.device("cpu")
 
         fetcher = TiltSeriesFetcher(
-            tilt_series_jsons=tilt_series_jsons,
+            tilt_series_xmls=tilt_series_xmls,
             patch_size=patch_size,
             refresh_rate=refresh_rate,
             downsample=downsample,
             device=device,
         )
 
-        assert fetcher.tilt_series_jsons == tilt_series_jsons
+        assert fetcher.tilt_series_xmls == tilt_series_xmls
         assert fetcher.patch_size == patch_size
         assert fetcher.refresh_rate == refresh_rate
         assert fetcher.downsample == downsample
@@ -103,10 +123,10 @@ class TestTiltSeriesFetcher:
 
     def test_load_next(self, mock_tilt_series_data):
         """Test that _load_next loads and processes a tilt series correctly."""
-        tilt_series_jsons = [mock_tilt_series_data]
+        tilt_series_xmls = [mock_tilt_series_data]
 
         fetcher = TiltSeriesFetcher(
-            tilt_series_jsons=tilt_series_jsons,
+            tilt_series_xmls=tilt_series_xmls,
             patch_size=32,
             refresh_rate=5,
             downsample=1,
@@ -124,10 +144,10 @@ class TestTiltSeriesFetcher:
 
     def test_call_first_time(self, mock_tilt_series_data):
         """Test that __call__ loads a new tilt series on first call."""
-        tilt_series_jsons = [mock_tilt_series_data]
+        tilt_series_xmls = [mock_tilt_series_data]
 
         fetcher = TiltSeriesFetcher(
-            tilt_series_jsons=tilt_series_jsons,
+            tilt_series_xmls=tilt_series_xmls,
             patch_size=32,
             refresh_rate=5,
             downsample=1,
@@ -143,10 +163,10 @@ class TestTiltSeriesFetcher:
 
     def test_call_reuse(self, mock_tilt_series_data):
         """Test that __call__ reuses tilt series within refresh rate."""
-        tilt_series_jsons = [mock_tilt_series_data]
+        tilt_series_xmls = [mock_tilt_series_data]
 
         fetcher = TiltSeriesFetcher(
-            tilt_series_jsons=tilt_series_jsons,
+            tilt_series_xmls=tilt_series_xmls,
             patch_size=32,
             refresh_rate=5,
             downsample=1,
@@ -164,10 +184,10 @@ class TestTiltSeriesFetcher:
 
     def test_call_refresh(self, mock_tilt_series_data):
         """Test that __call__ refreshes after reaching refresh rate."""
-        tilt_series_jsons = [mock_tilt_series_data]
+        tilt_series_xmls = [mock_tilt_series_data]
 
         fetcher = TiltSeriesFetcher(
-            tilt_series_jsons=tilt_series_jsons,
+            tilt_series_xmls=tilt_series_xmls,
             patch_size=32,
             refresh_rate=2,
             downsample=1,
@@ -187,10 +207,10 @@ class TestTiltSeriesFetcher:
 
     def test_alignment_backup_restore(self, mock_tilt_series_data):
         """Test that alignment parameters are backed up and restored correctly."""
-        tilt_series_jsons = [mock_tilt_series_data]
+        tilt_series_xmls = [mock_tilt_series_data]
 
         fetcher = TiltSeriesFetcher(
-            tilt_series_jsons=tilt_series_jsons,
+            tilt_series_xmls=tilt_series_xmls,
             patch_size=32,
             refresh_rate=5,
             downsample=1,
@@ -291,7 +311,7 @@ class TestCreatePoolReconstruction:
     def test_reconstruction_output_format(self, mock_tilt_series_data, shift_generator):
         """Test that reconstruction returns 4 triplets with correct format."""
         # Load the tilt series data
-        tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
+        tilt_series_data = TiltSeriesData(xml_metadata_path=mock_tilt_series_data)
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
             downsample=1
         )
@@ -323,7 +343,7 @@ class TestCreatePoolReconstruction:
 
     def test_mirror_combinations_used(self, mock_tilt_series_data, shift_generator):
         """Test that 4 triplets are generated (2 particles × 2 mirror combinations)."""
-        tilt_series_data = TiltSeriesData.from_json(mock_tilt_series_data)
+        tilt_series_data = TiltSeriesData(xml_metadata_path=mock_tilt_series_data)
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
             downsample=1
         )
@@ -396,7 +416,7 @@ class TestReconstructionWorker:
                 partition_id=partition_id,
                 partition_size=partition_size,
                 pool_dir=temp_dir,
-                tilt_series_jsons=[mock_tilt_series_data],
+                tilt_series_xmls=[mock_tilt_series_data],
                 patch_size=32,
                 apply_ctf=False,
                 downsample=1,
@@ -472,7 +492,7 @@ class TestReconstructionWorker:
                 partition_id=partition_id,
                 partition_size=partition_size,
                 pool_dir=temp_dir,
-                tilt_series_jsons=[mock_tilt_series_data],
+                tilt_series_xmls=[mock_tilt_series_data],
                 patch_size=32,
                 apply_ctf=False,
                 downsample=1,
@@ -527,7 +547,7 @@ class TestReconstructionWorker:
                 partition_id=partition_id,
                 partition_size=partition_size,
                 pool_dir=temp_dir,
-                tilt_series_jsons=[mock_tilt_series_data],
+                tilt_series_xmls=[mock_tilt_series_data],
                 patch_size=32,
                 apply_ctf=False,
                 downsample=1,
