@@ -5,7 +5,7 @@ import yaml
 import typer
 import torch
 from lightning.pytorch import Trainer, seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
@@ -119,7 +119,7 @@ def train_miss_align(
             deterministic=False,  # setting to True breaks on max_pool_3d
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
-            callbacks=[early_stopping, checkpoint_callback],
+            callbacks=[early_stopping, checkpoint_callback, TQDMProgressBar(refresh_rate=10)],
             plugins=[SLURMEnvironment(auto_requeue=False)],
             precision="16-mixed",  # Enable automatic mixed precision
         )
