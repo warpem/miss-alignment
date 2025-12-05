@@ -56,10 +56,7 @@ pre-commit run --all-files
 The package provides a `miss-alignment` CLI command:
 ```bash
 # Train a model (primary workflow)
-miss-alignment train --config-file config.yaml
-
-# Download training data
-miss-alignment download-training-data --dataset-directory /path/to/data
+miss-alignment --config-file config.yaml
 ```
 
 ### Development
