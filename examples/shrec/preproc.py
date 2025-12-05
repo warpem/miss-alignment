@@ -92,8 +92,10 @@ def convert_pickles_to_xml(download_dir: Path):
                 tilt_series = TiltSeries(tilt_series_data.xml_metadata_path)
                 angles = tilt_series.angles.cpu().numpy()
 
-                # Write .rawtlt file with inverted angles
-                rawtlt_path = tilt_series_data.xml_metadata_path.with_suffix('.rawtlt')
+                # Write .rawtlt file
+                rawtlt_path = (
+                    tilt_series.tilt_stack_path.with_suffix('.rawtlt')
+                )
                 with open(rawtlt_path, 'w') as f:
                     for angle in angles:
                         f.write(f"{angle}\n")
@@ -126,8 +128,10 @@ def convert_pickles_to_xml(download_dir: Path):
                 tilt_series = TiltSeries(tilt_series_data.xml_metadata_path)
                 angles = tilt_series.angles.cpu().numpy()
 
-                # Write .rawtlt file with inverted angles
-                rawtlt_path = tilt_series_data.xml_metadata_path.with_suffix('.rawtlt')
+                # Write .rawtlt file
+                rawtlt_path = (
+                    tilt_series.tilt_stack_path.with_suffix('.rawtlt')
+                )
                 with open(rawtlt_path, 'w') as f:
                     for angle in angles:
                         f.write(f"{angle}\n")
