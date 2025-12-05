@@ -334,7 +334,6 @@ miss-alignment/
 │   └── config_template.yaml  # Configuration template
 ├── tests/               # Test suite (mirrors src structure)
 ├── examples/            # Example scripts for data processing and visualization
-├── dataset_prep/        # Dataset preparation scripts
 └── paper/               # Paper-related notebooks and evaluation
 ```
 
