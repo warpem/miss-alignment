@@ -198,13 +198,13 @@ def main():
         "--ground-truth-dir",
         type=Path,
         required=True,
-        help="Directory containing ground truth JSON files",
+        help="Directory containing ground truth XML files",
     )
     parser.add_argument(
         "--test-dir",
         type=Path,
         required=True,
-        help="Directory containing test JSON files to compare",
+        help="Directory containing test XML files to compare",
     )
     parser.add_argument(
         "--output-file",
@@ -221,10 +221,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Find all ground truth JSON files
-    gt_files = sorted(args.ground_truth_dir.glob("*.json"))
+    # Find all ground truth XML files
+    gt_files = sorted(args.ground_truth_dir.glob("*.xml"))
     if not gt_files:
-        raise ValueError(f"No JSON files found in {args.ground_truth_dir}")
+        raise ValueError(f"No XML files found in {args.ground_truth_dir}")
 
     print(f"Found {len(gt_files)} ground truth files")
     print(f"Using device: {args.device}")
@@ -241,8 +241,8 @@ def main():
         print(f"\nProcessing {gt_file.name}...")
 
         # Load data
-        gt_data = TiltSeriesData.from_json(gt_file)
-        test_data = TiltSeriesData.from_json(test_file)
+        gt_data = TiltSeriesData(xml_metadata_path=gt_file)
+        test_data = TiltSeriesData(xml_metadata_path=test_file)
 
         # Calculate errors
         results = calculate_alignment_error(
