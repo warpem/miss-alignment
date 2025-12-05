@@ -74,6 +74,18 @@ def train_miss_align(
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
+    # make copies of the xml files and (model) we're starting from
+    iteration_directory = training_directory / ("iter" + str(start_iter))
+    iteration_directory.mkdir(parents=True, exist_ok=True)
+    for xml_file in training_directory.glob("*.xml"):
+        destination = iteration_directory / xml_file.name
+        copyfile(xml_file, destination)
+
+    if model_training_config["model_checkpoint"] is not None:
+        source = model_training_config["model_checkpoint"]
+        destination = iteration_directory / Path(source).name
+        copyfile(source, destination)
+
     for x in range(start_iter, end_iter):
         # ============================================================
         # ================= model training step ======================
@@ -172,18 +184,6 @@ def train_miss_align(
         # =============== tilt-series alignment step =================
         # ============================================================
 
-        # make copies of the xml files and model before alignment
-        iteration_directory = training_directory / ("iter" + str(x))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
-        for xml_file in training_directory.glob("*.xml"):
-            destination = iteration_directory / xml_file.name
-            copyfile(xml_file, destination)
-
-        # copy best model to iteration directory as model.ckpt
-        iteration_model_path = iteration_directory / "model.ckpt"
-        copyfile(best_model_path, iteration_model_path)
-        print(f"Copied best model to {iteration_model_path}")
-
         # get list of all files to process for alignment
         tilt_series_list = list(training_directory.glob("*.xml"))
 
@@ -200,5 +200,17 @@ def train_miss_align(
             downsample=iteration_settings["downsample"],
             devices_list=devices_list,
         )
+
+        # make copies of the xml files and model after alignment
+        iteration_directory = training_directory / ("iter" + str(x + 1))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+
+        for xml_file in training_directory.glob("*.xml"):
+            destination = iteration_directory / xml_file.name
+            copyfile(xml_file, destination)
+
+        training_model_path = iteration_directory / "model.ckpt"
+        copyfile(best_model_path, training_model_path)
+        print(f"Copied best model to {training_model_path}")
 
     return None
