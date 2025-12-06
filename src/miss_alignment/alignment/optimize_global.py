@@ -73,27 +73,59 @@ def optimize_shifts(
     original_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
 
     # Store original grid states if applicable
+    # We need to store complete grid state (dimensions, values, margins)
+    # because resize() changes the grid structure
     if setting != "global" and len(setting) == 2:
         has_grid_x = hasattr(tilt_series.grid_movement_x, "values")
         has_grid_y = hasattr(tilt_series.grid_movement_y, "values")
         original_grid_x = (
-            tilt_series.grid_movement_x.values.clone() if has_grid_x else None
+            {
+                "dimensions": tilt_series.grid_movement_x.dimensions,
+                "values": tilt_series.grid_movement_x.values.clone(),
+                "margins": tilt_series.grid_movement_x.margins,
+            }
+            if has_grid_x
+            else None
         )
         original_grid_y = (
-            tilt_series.grid_movement_y.values.clone() if has_grid_y else None
+            {
+                "dimensions": tilt_series.grid_movement_y.dimensions,
+                "values": tilt_series.grid_movement_y.values.clone(),
+                "margins": tilt_series.grid_movement_y.margins,
+            }
+            if has_grid_y
+            else None
         )
     elif setting != "global" and len(setting) == 4:
         has_grid_x = hasattr(tilt_series.grid_volume_warp_x, "values")
         has_grid_y = hasattr(tilt_series.grid_volume_warp_y, "values")
         has_grid_z = hasattr(tilt_series.grid_volume_warp_z, "values")
         original_grid_x = (
-            tilt_series.grid_volume_warp_x.values.clone() if has_grid_x else None
+            {
+                "dimensions": tilt_series.grid_volume_warp_x.dimensions,
+                "values": tilt_series.grid_volume_warp_x.values.clone(),
+                "margins": tilt_series.grid_volume_warp_x.margins,
+            }
+            if has_grid_x
+            else None
         )
         original_grid_y = (
-            tilt_series.grid_volume_warp_y.values.clone() if has_grid_y else None
+            {
+                "dimensions": tilt_series.grid_volume_warp_y.dimensions,
+                "values": tilt_series.grid_volume_warp_y.values.clone(),
+                "margins": tilt_series.grid_volume_warp_y.margins,
+            }
+            if has_grid_y
+            else None
         )
         original_grid_z = (
-            tilt_series.grid_volume_warp_z.values.clone() if has_grid_z else None
+            {
+                "dimensions": tilt_series.grid_volume_warp_z.dimensions,
+                "values": tilt_series.grid_volume_warp_z.values.clone(),
+                "margins": tilt_series.grid_volume_warp_z.margins,
+            }
+            if has_grid_z
+            else None
         )
 
     # Use highest precision for optimization to avoid NaN issues
@@ -127,16 +159,36 @@ def optimize_shifts(
 
                 if setting != "global" and len(setting) == 2:
                     if original_grid_x is not None:
-                        tilt_series.grid_movement_x.values = original_grid_x.clone()
+                        tilt_series.grid_movement_x = CubicGrid(
+                            dimensions=original_grid_x["dimensions"],
+                            values=original_grid_x["values"].clone(),
+                            margins=original_grid_x["margins"],
+                        )
                     if original_grid_y is not None:
-                        tilt_series.grid_movement_y.values = original_grid_y.clone()
+                        tilt_series.grid_movement_y = CubicGrid(
+                            dimensions=original_grid_y["dimensions"],
+                            values=original_grid_y["values"].clone(),
+                            margins=original_grid_y["margins"],
+                        )
                 elif setting != "global" and len(setting) == 4:
                     if original_grid_x is not None:
-                        tilt_series.grid_volume_warp_x.values = original_grid_x.clone()
+                        tilt_series.grid_volume_warp_x = CubicGrid(
+                            dimensions=original_grid_x["dimensions"],
+                            values=original_grid_x["values"].clone(),
+                            margins=original_grid_x["margins"],
+                        )
                     if original_grid_y is not None:
-                        tilt_series.grid_volume_warp_y.values = original_grid_y.clone()
+                        tilt_series.grid_volume_warp_y = CubicGrid(
+                            dimensions=original_grid_y["dimensions"],
+                            values=original_grid_y["values"].clone(),
+                            margins=original_grid_y["margins"],
+                        )
                     if original_grid_z is not None:
-                        tilt_series.grid_volume_warp_z.values = original_grid_z.clone()
+                        tilt_series.grid_volume_warp_z = CubicGrid(
+                            dimensions=original_grid_z["dimensions"],
+                            values=original_grid_z["values"].clone(),
+                            margins=original_grid_z["margins"],
+                        )
                 print(f"Retrying optimization... (retries left: {retries_left})")
 
     # All retries failed, restore original state and return failure
@@ -145,16 +197,36 @@ def optimize_shifts(
 
     if setting != "global" and len(setting) == 2:
         if original_grid_x is not None:
-            tilt_series.grid_movement_x.values = original_grid_x
+            tilt_series.grid_movement_x = CubicGrid(
+                dimensions=original_grid_x["dimensions"],
+                values=original_grid_x["values"],
+                margins=original_grid_x["margins"],
+            )
         if original_grid_y is not None:
-            tilt_series.grid_movement_y.values = original_grid_y
+            tilt_series.grid_movement_y = CubicGrid(
+                dimensions=original_grid_y["dimensions"],
+                values=original_grid_y["values"],
+                margins=original_grid_y["margins"],
+            )
     elif setting != "global" and len(setting) == 4:
         if original_grid_x is not None:
-            tilt_series.grid_volume_warp_x.values = original_grid_x
+            tilt_series.grid_volume_warp_x = CubicGrid(
+                dimensions=original_grid_x["dimensions"],
+                values=original_grid_x["values"],
+                margins=original_grid_x["margins"],
+            )
         if original_grid_y is not None:
-            tilt_series.grid_volume_warp_y.values = original_grid_y
+            tilt_series.grid_volume_warp_y = CubicGrid(
+                dimensions=original_grid_y["dimensions"],
+                values=original_grid_y["values"],
+                margins=original_grid_y["margins"],
+            )
         if original_grid_z is not None:
-            tilt_series.grid_volume_warp_z.values = original_grid_z
+            tilt_series.grid_volume_warp_z = CubicGrid(
+                dimensions=original_grid_z["dimensions"],
+                values=original_grid_z["values"],
+                margins=original_grid_z["margins"],
+            )
 
     # Restore original precision setting
     torch.set_float32_matmul_precision(original_precision)
