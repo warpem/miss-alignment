@@ -82,6 +82,7 @@ def train_miss_align(
             training_directory=training_directory,
             desired_pixel_size=prepare_stacks,
             n_processes=4,
+            devices=devices_list,
         )
 
     # Set up training environment

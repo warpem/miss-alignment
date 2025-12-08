@@ -5,7 +5,6 @@ preprocessed tilt stacks ready for training.
 """
 
 from concurrent.futures import ProcessPoolExecutor
-from functools import partial
 from pathlib import Path
 
 import mrcfile
@@ -61,7 +60,9 @@ def _get_original_pixel_size(tilt_series: TiltSeries) -> float:
     return pixel_size
 
 
-def _prepare_single_tilt_series(xml_path: Path, desired_pixel_size: float) -> None:
+def _prepare_single_tilt_series(
+    xml_path: Path, desired_pixel_size: float, device: int | None
+) -> None:
     """Load raw tilt images and create tilt stack for a single tilt series.
 
     Parameters
@@ -70,6 +71,8 @@ def _prepare_single_tilt_series(xml_path: Path, desired_pixel_size: float) -> No
         Path to the tilt series XML metadata file.
     desired_pixel_size : float
         Desired pixel size in Angstroms for the output stack.
+    device : int | None
+        CUDA device index to use for GPU operations. If None, uses CPU.
 
     Raises
     ------
@@ -78,8 +81,14 @@ def _prepare_single_tilt_series(xml_path: Path, desired_pixel_size: float) -> No
     ValueError
         If pixel size cannot be determined or other validation fails.
     """
+    import torch
+
+    if device is not None and torch.cuda.is_available():
+        torch.cuda.set_device(device)
+
     ts = TiltSeries(xml_path)
     original_pixel_size = _get_original_pixel_size(ts)
+    print(f"{xml_path.stem}: original pixel size = {original_pixel_size:.4f} Å")
 
     images, _, _ = ts.load_images(
         original_pixel_size=original_pixel_size,
@@ -100,6 +109,7 @@ def prepare_stacks_parallel(
     training_directory: Path,
     desired_pixel_size: float,
     n_processes: int = 4,
+    devices: list[int] | None = None,
 ) -> None:
     """Prepare tilt stacks for all tilt series in the training directory.
 
@@ -114,6 +124,8 @@ def prepare_stacks_parallel(
         Desired pixel size in Angstroms for the output stacks.
     n_processes : int
         Number of parallel processes to use. Default is 4.
+    devices : list[int] | None
+        List of CUDA device indices to distribute work across. If None, uses CPU.
 
     Raises
     ------
@@ -132,14 +144,15 @@ def prepare_stacks_parallel(
         f"Preparing stacks for {len(xml_files)} tilt series at {desired_pixel_size} Å"
     )
 
-    # Use partial to bind the desired_pixel_size argument
-    process_func = partial(
-        _prepare_single_tilt_series, desired_pixel_size=desired_pixel_size
-    )
-
     with ProcessPoolExecutor(max_workers=n_processes) as executor:
-        # Submit all tasks and wrap with tqdm for progress
-        futures = [executor.submit(process_func, xml_path) for xml_path in xml_files]
+        # Submit all tasks with round-robin device assignment
+        futures = []
+        for i, xml_path in enumerate(xml_files):
+            device = devices[i % len(devices)] if devices else None
+            future = executor.submit(
+                _prepare_single_tilt_series, xml_path, desired_pixel_size, device
+            )
+            futures.append(future)
 
         for future in tqdm(futures, desc="Preparing stacks", unit="tilt series"):
             # This will raise any exception that occurred in the worker
