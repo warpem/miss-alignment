@@ -931,7 +931,7 @@ def create_3d_visualizations(
 
     # Load data
     print("Loading optimization data...")
-    step_data = load_optimization_data(tracking_dir, load_subvolumes=False)
+    step_data = load_optimization_data(tracking_dir, load_subvolumes=True)
 
     if len(step_data) == 0:
         print("Warning: No step data found!")
