@@ -34,6 +34,7 @@ from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
 from miss_alignment.alignment.tilt_series import generate_position_grid
 from miss_alignment.alignment.visualize_alignment import (
     OptimizationTracker,
+    create_3d_visualizations,
     load_optimization_data,
     optimize_shifts_with_tracking,
 )
@@ -209,6 +210,7 @@ def main():
         capture_frequency=args.capture_frequency,
         max_subvolumes_per_step=args.max_subvolumes_per_step,
         save_subvolumes=not args.no_subvolumes,
+        alignment_setting=alignment_setting,
     )
 
     # Run optimization with tracking
@@ -241,8 +243,17 @@ def main():
     print(f"\nSaved aligned tilt-series to: {output_xml}")
 
     # Generate visualizations
-    print("\nGenerating visualizations...")
+    print("\nGenerating 2D visualizations...")
     plot_optimization_progress(tracking_dir, args.output_dir)
+
+    # Generate 3D visualizations
+    print("\nGenerating 3D visualizations...")
+    create_3d_visualizations(
+        tracking_dir=tracking_dir,
+        output_dir=args.output_dir,
+        create_gifs=True,
+        gif_duration=500,
+    )
 
     print("\n" + "=" * 60)
     print("Visualization complete!")
@@ -253,6 +264,12 @@ def main():
     print(f"  - loss_curve.png: Loss vs. step plot")
     print(f"  - precision_curve.png: Precision vs. step plot")
     print(f"  - shift_evolution.png: Shift evolution plot")
+    print(f"  - 3d_precision_initial.png: Initial 3D precision scatter plot")
+    print(f"  - 3d_precision_final.png: Final 3D precision scatter plot")
+    print(f"  - 3d_loss_initial.png: Initial 3D loss scatter plot")
+    print(f"  - 3d_loss_final.png: Final 3D loss scatter plot")
+    print(f"  - 3d_precision_evolution.gif: Animated precision evolution")
+    print(f"  - 3d_loss_evolution.gif: Animated loss evolution")
 
 
 def plot_optimization_progress(tracking_dir: Path, output_dir: Path):

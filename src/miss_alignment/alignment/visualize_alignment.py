@@ -22,7 +22,7 @@ class OptimizationStepData:
     Attributes
     ----------
     step : int
-        Step number (closure call count).
+        Step number (L-BFGS closure call count).
     loss : float
         Precision-weighted average loss at this step.
     mean_precision : float
@@ -40,10 +40,24 @@ class OptimizationStepData:
         None if not captured this step.
     shifts_x : torch.Tensor | None
         Current X shifts (in Angstroms), shape (n_tilts,).
+        For global alignment only.
     shifts_y : torch.Tensor | None
         Current Y shifts (in Angstroms), shape (n_tilts,).
+        For global alignment only.
     positions : torch.Tensor | None
         3D positions of captured subvolumes, shape (n_samples, 3).
+    alignment_setting : str | tuple | None
+        Alignment setting used (e.g., "global", (3,3), (3,3,2,10)).
+    grid_movement_x : torch.Tensor | None
+        2D warping grid X values. For 2D warping modes only.
+    grid_movement_y : torch.Tensor | None
+        2D warping grid Y values. For 2D warping modes only.
+    grid_volume_warp_x : torch.Tensor | None
+        3D volume warp grid X values. For 3D warping modes only.
+    grid_volume_warp_y : torch.Tensor | None
+        3D volume warp grid Y values. For 3D warping modes only.
+    grid_volume_warp_z : torch.Tensor | None
+        3D volume warp grid Z values. For 3D warping modes only.
     """
 
     step: int
@@ -56,6 +70,12 @@ class OptimizationStepData:
     shifts_x: torch.Tensor | None = None
     shifts_y: torch.Tensor | None = None
     positions: torch.Tensor | None = None
+    alignment_setting: str | tuple | None = None
+    grid_movement_x: torch.Tensor | None = None
+    grid_movement_y: torch.Tensor | None = None
+    grid_volume_warp_x: torch.Tensor | None = None
+    grid_volume_warp_y: torch.Tensor | None = None
+    grid_volume_warp_z: torch.Tensor | None = None
 
 
 @dataclass
@@ -74,12 +94,15 @@ class OptimizationTracker:
     save_subvolumes : bool
         Whether to save subvolumes. Set to False to only track losses/precisions.
         Default: True.
+    alignment_setting : str | tuple | None
+        Alignment setting being used (e.g., "global", (3,3), (3,3,2,10)).
     """
 
     output_dir: Path
     capture_frequency: int = 1
     max_subvolumes_per_step: int = 32
     save_subvolumes: bool = True
+    alignment_setting: str | tuple | None = None
 
     # Internal state
     step_data: list[OptimizationStepData] = field(default_factory=list)
@@ -104,6 +127,11 @@ class OptimizationTracker:
         shifts_x: torch.Tensor | None = None,
         shifts_y: torch.Tensor | None = None,
         positions: torch.Tensor | None = None,
+        grid_movement_x: torch.Tensor | None = None,
+        grid_movement_y: torch.Tensor | None = None,
+        grid_volume_warp_x: torch.Tensor | None = None,
+        grid_volume_warp_y: torch.Tensor | None = None,
+        grid_volume_warp_z: torch.Tensor | None = None,
     ):
         """Callback invoked at each closure evaluation.
 
@@ -122,11 +150,21 @@ class OptimizationTracker:
         scores : torch.Tensor | None
             Score values, shape (n,).
         shifts_x : torch.Tensor | None
-            Current X shifts.
+            Current X shifts (global alignment only).
         shifts_y : torch.Tensor | None
-            Current Y shifts.
+            Current Y shifts (global alignment only).
         positions : torch.Tensor | None
             3D positions of subvolumes, shape (n, 3).
+        grid_movement_x : torch.Tensor | None
+            2D warping grid X values (2D warping only).
+        grid_movement_y : torch.Tensor | None
+            2D warping grid Y values (2D warping only).
+        grid_volume_warp_x : torch.Tensor | None
+            3D volume warp grid X values (3D warping only).
+        grid_volume_warp_y : torch.Tensor | None
+            3D volume warp grid Y values (3D warping only).
+        grid_volume_warp_z : torch.Tensor | None
+            3D volume warp grid Z values (3D warping only).
         """
         should_save_detailed = self.should_capture_detailed() and self.save_subvolumes
 
@@ -156,9 +194,32 @@ class OptimizationTracker:
             scores = None
             positions = None
 
-        # Store shift information
+        # Store alignment parameter information
         shifts_x_cpu = shifts_x.detach().cpu() if shifts_x is not None else None
         shifts_y_cpu = shifts_y.detach().cpu() if shifts_y is not None else None
+
+        # Store grid parameters if present
+        grid_movement_x_cpu = (
+            grid_movement_x.detach().cpu() if grid_movement_x is not None else None
+        )
+        grid_movement_y_cpu = (
+            grid_movement_y.detach().cpu() if grid_movement_y is not None else None
+        )
+        grid_volume_warp_x_cpu = (
+            grid_volume_warp_x.detach().cpu()
+            if grid_volume_warp_x is not None
+            else None
+        )
+        grid_volume_warp_y_cpu = (
+            grid_volume_warp_y.detach().cpu()
+            if grid_volume_warp_y is not None
+            else None
+        )
+        grid_volume_warp_z_cpu = (
+            grid_volume_warp_z.detach().cpu()
+            if grid_volume_warp_z is not None
+            else None
+        )
 
         # Create step data
         step_data = OptimizationStepData(
@@ -172,6 +233,12 @@ class OptimizationTracker:
             shifts_x=shifts_x_cpu,
             shifts_y=shifts_y_cpu,
             positions=positions,
+            alignment_setting=self.alignment_setting,
+            grid_movement_x=grid_movement_x_cpu,
+            grid_movement_y=grid_movement_y_cpu,
+            grid_volume_warp_x=grid_volume_warp_x_cpu,
+            grid_volume_warp_y=grid_volume_warp_y_cpu,
+            grid_volume_warp_z=grid_volume_warp_z_cpu,
         )
 
         self.step_data.append(step_data)
@@ -190,6 +257,9 @@ class OptimizationTracker:
             "loss": step_data.loss,
             "mean_precision": step_data.mean_precision,
             "total_precision": step_data.total_precision,
+            "alignment_setting": str(step_data.alignment_setting)
+            if step_data.alignment_setting is not None
+            else None,
         }
 
         if step_data.subvolumes is not None:
@@ -204,6 +274,18 @@ class OptimizationTracker:
             save_dict["shifts_y"] = step_data.shifts_y
         if step_data.positions is not None:
             save_dict["positions"] = step_data.positions
+
+        # Save grid parameters if present
+        if step_data.grid_movement_x is not None:
+            save_dict["grid_movement_x"] = step_data.grid_movement_x
+        if step_data.grid_movement_y is not None:
+            save_dict["grid_movement_y"] = step_data.grid_movement_y
+        if step_data.grid_volume_warp_x is not None:
+            save_dict["grid_volume_warp_x"] = step_data.grid_volume_warp_x
+        if step_data.grid_volume_warp_y is not None:
+            save_dict["grid_volume_warp_y"] = step_data.grid_volume_warp_y
+        if step_data.grid_volume_warp_z is not None:
+            save_dict["grid_volume_warp_z"] = step_data.grid_volume_warp_z
 
         torch.save(save_dict, step_file)
 
@@ -273,6 +355,12 @@ def load_optimization_data(
             shifts_x=data.get("shifts_x"),
             shifts_y=data.get("shifts_y"),
             positions=data.get("positions") if load_subvolumes else None,
+            alignment_setting=data.get("alignment_setting"),
+            grid_movement_x=data.get("grid_movement_x"),
+            grid_movement_y=data.get("grid_movement_y"),
+            grid_volume_warp_x=data.get("grid_volume_warp_x"),
+            grid_volume_warp_y=data.get("grid_volume_warp_y"),
+            grid_volume_warp_z=data.get("grid_volume_warp_z"),
         )
         step_data_list.append(step_data)
 
@@ -502,6 +590,28 @@ def optimize_shifts_with_tracking(
             all_scores = None
             all_positions = None
 
+        # Prepare alignment parameters based on setting
+        shifts_x_param = None
+        shifts_y_param = None
+        grid_movement_x_param = None
+        grid_movement_y_param = None
+        grid_volume_warp_x_param = None
+        grid_volume_warp_y_param = None
+        grid_volume_warp_z_param = None
+
+        if setting == "global":
+            shifts_x_param = tilt_series.tilt_axis_offset_x
+            shifts_y_param = tilt_series.tilt_axis_offset_y
+        elif len(setting) == 2:
+            # 2D warping mode
+            grid_movement_x_param = tilt_series.grid_movement_x.values
+            grid_movement_y_param = tilt_series.grid_movement_y.values
+        elif len(setting) == 4:
+            # 3D volume warping mode
+            grid_volume_warp_x_param = tilt_series.grid_volume_warp_x.values
+            grid_volume_warp_y_param = tilt_series.grid_volume_warp_y.values
+            grid_volume_warp_z_param = tilt_series.grid_volume_warp_z.values
+
         # Call tracker
         tracker.on_closure_call(
             loss=avg_score,
@@ -512,9 +622,14 @@ def optimize_shifts_with_tracking(
             subvolumes=all_subvolumes,
             precisions=all_precisions,
             scores=all_scores,
-            shifts_x=tilt_series.tilt_axis_offset_x if setting == "global" else None,
-            shifts_y=tilt_series.tilt_axis_offset_y if setting == "global" else None,
+            shifts_x=shifts_x_param,
+            shifts_y=shifts_y_param,
             positions=all_positions,
+            grid_movement_x=grid_movement_x_param,
+            grid_movement_y=grid_movement_y_param,
+            grid_volume_warp_x=grid_volume_warp_x_param,
+            grid_volume_warp_y=grid_volume_warp_y_param,
+            grid_volume_warp_z=grid_volume_warp_z_param,
         )
 
         return avg_score
@@ -550,3 +665,384 @@ def optimize_shifts_with_tracking(
     model.to("cpu")
 
     return tilt_series, loss_values
+
+
+def create_3d_scatter_plot(
+    positions: torch.Tensor,
+    values: torch.Tensor,
+    title: str,
+    colorbar_label: str,
+    cmap: str = "viridis",
+    figsize: tuple[int, int] = (10, 8),
+    elev: float = 30,
+    azim: float = 45,
+):
+    """Create a 3D scatter plot colored by values.
+
+    Parameters
+    ----------
+    positions : torch.Tensor
+        3D positions, shape (n, 3) in (x, y, z) order.
+    values : torch.Tensor
+        Values to color points by, shape (n,).
+    title : str
+        Plot title.
+    colorbar_label : str
+        Label for the colorbar.
+    cmap : str
+        Matplotlib colormap name.
+    figsize : tuple[int, int]
+        Figure size (width, height).
+    elev : float
+        Elevation angle for 3D view.
+    azim : float
+        Azimuth angle for 3D view.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The created figure.
+    """
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Convert to numpy
+    pos = positions.cpu().numpy()
+    vals = values.cpu().numpy()
+
+    # Create scatter plot
+    scatter = ax.scatter(
+        pos[:, 0],
+        pos[:, 1],
+        pos[:, 2],
+        c=vals,
+        cmap=cmap,
+        s=50,
+        alpha=0.6,
+        edgecolors="k",
+        linewidths=0.5,
+    )
+
+    # Set labels
+    ax.set_xlabel("X (Angstroms)", fontsize=12)
+    ax.set_ylabel("Y (Angstroms)", fontsize=12)
+    ax.set_zlabel("Z (Angstroms)", fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight="bold")
+
+    # Set viewing angle
+    ax.view_init(elev=elev, azim=azim)
+
+    # Add colorbar
+    cbar = plt.colorbar(scatter, ax=ax, pad=0.1, shrink=0.8)
+    cbar.set_label(colorbar_label, fontsize=12)
+
+    plt.tight_layout()
+
+    return fig
+
+
+def generate_3d_animation_frames(
+    step_data_list: list[OptimizationStepData],
+    value_key: str = "precision",
+    cmap: str = "viridis",
+    elev: float = 30,
+    azim: float = 45,
+    figsize: tuple[int, int] = (10, 8),
+) -> list:
+    """Generate frames for 3D animation.
+
+    Parameters
+    ----------
+    step_data_list : list[OptimizationStepData]
+        List of optimization step data.
+    value_key : str
+        Which value to color by: "precision" or "loss".
+    cmap : str
+        Matplotlib colormap name.
+    elev : float
+        Elevation angle for 3D view.
+    azim : float
+        Azimuth angle for 3D view.
+    figsize : tuple[int, int]
+        Figure size (width, height).
+
+    Returns
+    -------
+    list
+        List of figure objects for each step.
+    """
+    import matplotlib.pyplot as plt
+
+    frames = []
+
+    # Determine global value range for consistent coloring
+    all_values = []
+    for step_data in step_data_list:
+        if step_data.positions is None:
+            continue
+        if value_key == "precision" and step_data.precisions is not None:
+            all_values.append(step_data.precisions)
+        elif value_key == "loss" and step_data.scores is not None:
+            all_values.append(step_data.scores)
+
+    if not all_values:
+        raise ValueError(f"No {value_key} data found in step data")
+
+    all_values = torch.cat(all_values)
+    vmin, vmax = all_values.min().item(), all_values.max().item()
+
+    for step_data in step_data_list:
+        if step_data.positions is None:
+            continue
+
+        # Get values to plot
+        if value_key == "precision":
+            values = step_data.precisions
+            title = f"Step {step_data.step}: Precision (Loss={step_data.loss:.4f})"
+            colorbar_label = "Precision"
+        elif value_key == "loss":
+            values = step_data.scores
+            title = f"Step {step_data.step}: Loss (Avg={step_data.loss:.4f})"
+            colorbar_label = "Loss"
+        else:
+            raise ValueError(f"Unknown value_key: {value_key}")
+
+        if values is None:
+            continue
+
+        # Create plot
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection="3d")
+
+        pos = step_data.positions.cpu().numpy()
+        vals = values.cpu().numpy()
+
+        scatter = ax.scatter(
+            pos[:, 0],
+            pos[:, 1],
+            pos[:, 2],
+            c=vals,
+            cmap=cmap,
+            s=50,
+            alpha=0.6,
+            edgecolors="k",
+            linewidths=0.5,
+            vmin=vmin,
+            vmax=vmax,
+        )
+
+        ax.set_xlabel("X (Angstroms)", fontsize=12)
+        ax.set_ylabel("Y (Angstroms)", fontsize=12)
+        ax.set_zlabel("Z (Angstroms)", fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.view_init(elev=elev, azim=azim)
+
+        cbar = plt.colorbar(scatter, ax=ax, pad=0.1, shrink=0.8)
+        cbar.set_label(colorbar_label, fontsize=12)
+
+        plt.tight_layout()
+
+        frames.append(fig)
+
+    return frames
+
+
+def save_animation_as_gif(
+    frames: list,
+    output_path: Path,
+    duration: float = 500,
+    dpi: int = 100,
+):
+    """Save animation frames as an animated GIF.
+
+    Parameters
+    ----------
+    frames : list
+        List of matplotlib figure objects.
+    output_path : Path
+        Output GIF file path.
+    duration : float
+        Duration of each frame in milliseconds.
+    dpi : int
+        DPI for rendering frames.
+    """
+    import io
+
+    import matplotlib.pyplot as plt
+    from PIL import Image
+
+    images = []
+
+    for fig in frames:
+        # Render figure to image
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        buf.seek(0)
+        img = Image.open(buf)
+        images.append(img.copy())
+        buf.close()
+        plt.close(fig)
+
+    # Save as GIF
+    if images:
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0,
+            optimize=False,
+        )
+
+
+def create_3d_visualizations(
+    tracking_dir: Path,
+    output_dir: Path,
+    create_gifs: bool = True,
+    gif_duration: float = 500,
+    elev: float = 30,
+    azim: float = 45,
+):
+    """Create 3D visualizations from optimization tracking data.
+
+    Creates static plots for first and last steps, and optionally
+    animated GIFs showing the evolution across all steps.
+
+    Parameters
+    ----------
+    tracking_dir : Path
+        Directory containing step data.
+    output_dir : Path
+        Directory to save visualizations.
+    create_gifs : bool
+        Whether to create animated GIFs.
+    gif_duration : float
+        Duration of each GIF frame in milliseconds.
+    elev : float
+        Elevation angle for 3D view.
+    azim : float
+        Azimuth angle for 3D view.
+    """
+    import matplotlib.pyplot as plt
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load data
+    print("Loading optimization data...")
+    step_data = load_optimization_data(tracking_dir, load_subvolumes=False)
+
+    if len(step_data) == 0:
+        print("Warning: No step data found!")
+        return
+
+    # Filter steps with position data
+    steps_with_positions = [s for s in step_data if s.positions is not None]
+
+    if len(steps_with_positions) == 0:
+        print("Warning: No position data found!")
+        return
+
+    print(f"Found {len(steps_with_positions)} steps with position data")
+
+    # Create static plots for first and last steps
+    print("Creating static plots...")
+
+    # First step - Precision
+    if steps_with_positions[0].precisions is not None:
+        fig = create_3d_scatter_plot(
+            positions=steps_with_positions[0].positions,
+            values=steps_with_positions[0].precisions,
+            title=f"Step {steps_with_positions[0].step}: Initial Precision",
+            colorbar_label="Precision",
+            cmap="viridis",
+            elev=elev,
+            azim=azim,
+        )
+        fig.savefig(
+            output_dir / "3d_precision_initial.png", dpi=300, bbox_inches="tight"
+        )
+        plt.close(fig)
+
+    # Last step - Precision
+    if steps_with_positions[-1].precisions is not None:
+        fig = create_3d_scatter_plot(
+            positions=steps_with_positions[-1].positions,
+            values=steps_with_positions[-1].precisions,
+            title=f"Step {steps_with_positions[-1].step}: Final Precision",
+            colorbar_label="Precision",
+            cmap="viridis",
+            elev=elev,
+            azim=azim,
+        )
+        fig.savefig(output_dir / "3d_precision_final.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    # First step - Loss
+    if steps_with_positions[0].scores is not None:
+        fig = create_3d_scatter_plot(
+            positions=steps_with_positions[0].positions,
+            values=steps_with_positions[0].scores,
+            title=f"Step {steps_with_positions[0].step}: Initial Loss",
+            colorbar_label="Loss",
+            cmap="coolwarm",
+            elev=elev,
+            azim=azim,
+        )
+        fig.savefig(output_dir / "3d_loss_initial.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    # Last step - Loss
+    if steps_with_positions[-1].scores is not None:
+        fig = create_3d_scatter_plot(
+            positions=steps_with_positions[-1].positions,
+            values=steps_with_positions[-1].scores,
+            title=f"Step {steps_with_positions[-1].step}: Final Loss",
+            colorbar_label="Loss",
+            cmap="coolwarm",
+            elev=elev,
+            azim=azim,
+        )
+        fig.savefig(output_dir / "3d_loss_final.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    # Create animated GIFs
+    if create_gifs:
+        print("Creating animated GIFs...")
+
+        # Precision animation
+        if steps_with_positions[0].precisions is not None:
+            print("  Generating precision animation...")
+            frames = generate_3d_animation_frames(
+                steps_with_positions,
+                value_key="precision",
+                cmap="viridis",
+                elev=elev,
+                azim=azim,
+            )
+            save_animation_as_gif(
+                frames,
+                output_dir / "3d_precision_evolution.gif",
+                duration=gif_duration,
+            )
+            print(f"    Saved: {output_dir / '3d_precision_evolution.gif'}")
+
+        # Loss animation
+        if steps_with_positions[0].scores is not None:
+            print("  Generating loss animation...")
+            frames = generate_3d_animation_frames(
+                steps_with_positions,
+                value_key="loss",
+                cmap="coolwarm",
+                elev=elev,
+                azim=azim,
+            )
+            save_animation_as_gif(
+                frames,
+                output_dir / "3d_loss_evolution.gif",
+                duration=gif_duration,
+            )
+            print(f"    Saved: {output_dir / '3d_loss_evolution.gif'}")
+
+    print("3D visualizations complete!")
