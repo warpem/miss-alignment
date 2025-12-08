@@ -177,17 +177,14 @@ class OptimizationTracker:
                     0, subvolumes.shape[0] - 1, n_samples, dtype=torch.long
                 )
                 subvolumes = subvolumes[indices].cpu()
-                if precisions is not None:
-                    precisions = precisions[indices].cpu()
-                if scores is not None:
-                    scores = scores[indices].cpu()
-                if positions is not None:
-                    positions = positions[indices].cpu()
+                precisions = precisions[indices].cpu()
+                scores = scores[indices].cpu()
+                positions = positions[indices].cpu()
             else:
                 subvolumes = subvolumes.cpu()
-                precisions = precisions.cpu() if precisions is not None else None
-                scores = scores.cpu() if scores is not None else None
-                positions = positions.cpu() if positions is not None else None
+                precisions = precisions.cpu()
+                scores = scores.cpu()
+                positions = positions.cpu()
         else:
             subvolumes = None
             precisions = None
@@ -264,16 +261,13 @@ class OptimizationTracker:
 
         if step_data.subvolumes is not None:
             save_dict["subvolumes"] = step_data.subvolumes
-        if step_data.precisions is not None:
             save_dict["precisions"] = step_data.precisions
-        if step_data.scores is not None:
             save_dict["scores"] = step_data.scores
+            save_dict["positions"] = step_data.positions
         if step_data.shifts_x is not None:
             save_dict["shifts_x"] = step_data.shifts_x
         if step_data.shifts_y is not None:
             save_dict["shifts_y"] = step_data.shifts_y
-        if step_data.positions is not None:
-            save_dict["positions"] = step_data.positions
 
         # Save grid parameters if present
         if step_data.grid_movement_x is not None:
@@ -349,12 +343,12 @@ def load_optimization_data(
             loss=data["loss"],
             mean_precision=data["mean_precision"],
             total_precision=data["total_precision"],
-            subvolumes=data.get("subvolumes") if load_subvolumes else None,
-            precisions=data.get("precisions"),
-            scores=data.get("scores"),
+            subvolumes=data["subvolumes"] if load_subvolumes else None,
+            precisions=data["precisions"],
+            scores=data["scores"],
             shifts_x=data.get("shifts_x"),
             shifts_y=data.get("shifts_y"),
-            positions=data.get("positions") if load_subvolumes else None,
+            positions=data["positions"] if load_subvolumes else None,
             alignment_setting=data.get("alignment_setting"),
             grid_movement_x=data.get("grid_movement_x"),
             grid_movement_y=data.get("grid_movement_y"),
@@ -780,11 +774,9 @@ def generate_3d_animation_frames(
     # Determine global value range for consistent coloring
     all_values = []
     for step_data in step_data_list:
-        if step_data.positions is None:
-            continue
-        if value_key == "precision" and step_data.precisions is not None:
+        if value_key == "precision":
             all_values.append(step_data.precisions)
-        elif value_key == "loss" and step_data.scores is not None:
+        elif value_key == "loss":
             all_values.append(step_data.scores)
 
     if not all_values:
@@ -794,9 +786,6 @@ def generate_3d_animation_frames(
     vmin, vmax = all_values.min().item(), all_values.max().item()
 
     for step_data in step_data_list:
-        if step_data.positions is None:
-            continue
-
         # Get values to plot
         if value_key == "precision":
             values = step_data.precisions
@@ -808,9 +797,6 @@ def generate_3d_animation_frames(
             colorbar_label = "Loss"
         else:
             raise ValueError(f"Unknown value_key: {value_key}")
-
-        if values is None:
-            continue
 
         # Create plot
         fig = plt.figure(figsize=figsize)
@@ -937,112 +923,97 @@ def create_3d_visualizations(
         print("Warning: No step data found!")
         return
 
-    # Filter steps with position data
-    steps_with_positions = [s for s in step_data if s.positions is not None]
-
-    if len(steps_with_positions) == 0:
-        print("Warning: No position data found!")
-        return
-
-    print(f"Found {len(steps_with_positions)} steps with position data")
+    print(f"Found {len(step_data)} optimization steps")
 
     # Create static plots for first and last steps
     print("Creating static plots...")
 
     # First step - Precision
-    if steps_with_positions[0].precisions is not None:
-        fig = create_3d_scatter_plot(
-            positions=steps_with_positions[0].positions,
-            values=steps_with_positions[0].precisions,
-            title=f"Step {steps_with_positions[0].step}: Initial Precision",
-            colorbar_label="Precision",
-            cmap="viridis",
-            elev=elev,
-            azim=azim,
-        )
-        fig.savefig(
-            output_dir / "3d_precision_initial.png", dpi=300, bbox_inches="tight"
-        )
-        plt.close(fig)
+    fig = create_3d_scatter_plot(
+        positions=step_data[0].positions,
+        values=step_data[0].precisions,
+        title=f"Step {step_data[0].step}: Initial Precision",
+        colorbar_label="Precision",
+        cmap="viridis",
+        elev=elev,
+        azim=azim,
+    )
+    fig.savefig(output_dir / "3d_precision_initial.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
     # Last step - Precision
-    if steps_with_positions[-1].precisions is not None:
-        fig = create_3d_scatter_plot(
-            positions=steps_with_positions[-1].positions,
-            values=steps_with_positions[-1].precisions,
-            title=f"Step {steps_with_positions[-1].step}: Final Precision",
-            colorbar_label="Precision",
-            cmap="viridis",
-            elev=elev,
-            azim=azim,
-        )
-        fig.savefig(output_dir / "3d_precision_final.png", dpi=300, bbox_inches="tight")
-        plt.close(fig)
+    fig = create_3d_scatter_plot(
+        positions=step_data[-1].positions,
+        values=step_data[-1].precisions,
+        title=f"Step {step_data[-1].step}: Final Precision",
+        colorbar_label="Precision",
+        cmap="viridis",
+        elev=elev,
+        azim=azim,
+    )
+    fig.savefig(output_dir / "3d_precision_final.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
     # First step - Loss
-    if steps_with_positions[0].scores is not None:
-        fig = create_3d_scatter_plot(
-            positions=steps_with_positions[0].positions,
-            values=steps_with_positions[0].scores,
-            title=f"Step {steps_with_positions[0].step}: Initial Loss",
-            colorbar_label="Loss",
-            cmap="coolwarm",
-            elev=elev,
-            azim=azim,
-        )
-        fig.savefig(output_dir / "3d_loss_initial.png", dpi=300, bbox_inches="tight")
-        plt.close(fig)
+    fig = create_3d_scatter_plot(
+        positions=step_data[0].positions,
+        values=step_data[0].scores,
+        title=f"Step {step_data[0].step}: Initial Loss",
+        colorbar_label="Loss",
+        cmap="coolwarm",
+        elev=elev,
+        azim=azim,
+    )
+    fig.savefig(output_dir / "3d_loss_initial.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
     # Last step - Loss
-    if steps_with_positions[-1].scores is not None:
-        fig = create_3d_scatter_plot(
-            positions=steps_with_positions[-1].positions,
-            values=steps_with_positions[-1].scores,
-            title=f"Step {steps_with_positions[-1].step}: Final Loss",
-            colorbar_label="Loss",
-            cmap="coolwarm",
-            elev=elev,
-            azim=azim,
-        )
-        fig.savefig(output_dir / "3d_loss_final.png", dpi=300, bbox_inches="tight")
-        plt.close(fig)
+    fig = create_3d_scatter_plot(
+        positions=step_data[-1].positions,
+        values=step_data[-1].scores,
+        title=f"Step {step_data[-1].step}: Final Loss",
+        colorbar_label="Loss",
+        cmap="coolwarm",
+        elev=elev,
+        azim=azim,
+    )
+    fig.savefig(output_dir / "3d_loss_final.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
     # Create animated GIFs
     if create_gifs:
         print("Creating animated GIFs...")
 
         # Precision animation
-        if steps_with_positions[0].precisions is not None:
-            print("  Generating precision animation...")
-            frames = generate_3d_animation_frames(
-                steps_with_positions,
-                value_key="precision",
-                cmap="viridis",
-                elev=elev,
-                azim=azim,
-            )
-            save_animation_as_gif(
-                frames,
-                output_dir / "3d_precision_evolution.gif",
-                duration=gif_duration,
-            )
-            print(f"    Saved: {output_dir / '3d_precision_evolution.gif'}")
+        print("  Generating precision animation...")
+        frames = generate_3d_animation_frames(
+            step_data,
+            value_key="precision",
+            cmap="viridis",
+            elev=elev,
+            azim=azim,
+        )
+        save_animation_as_gif(
+            frames,
+            output_dir / "3d_precision_evolution.gif",
+            duration=gif_duration,
+        )
+        print(f"    Saved: {output_dir / '3d_precision_evolution.gif'}")
 
         # Loss animation
-        if steps_with_positions[0].scores is not None:
-            print("  Generating loss animation...")
-            frames = generate_3d_animation_frames(
-                steps_with_positions,
-                value_key="loss",
-                cmap="coolwarm",
-                elev=elev,
-                azim=azim,
-            )
-            save_animation_as_gif(
-                frames,
-                output_dir / "3d_loss_evolution.gif",
-                duration=gif_duration,
-            )
-            print(f"    Saved: {output_dir / '3d_loss_evolution.gif'}")
+        print("  Generating loss animation...")
+        frames = generate_3d_animation_frames(
+            step_data,
+            value_key="loss",
+            cmap="coolwarm",
+            elev=elev,
+            azim=azim,
+        )
+        save_animation_as_gif(
+            frames,
+            output_dir / "3d_loss_evolution.gif",
+            duration=gif_duration,
+        )
+        print(f"    Saved: {output_dir / '3d_loss_evolution.gif'}")
 
     print("3D visualizations complete!")
