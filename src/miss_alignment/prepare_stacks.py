@@ -88,7 +88,7 @@ def _prepare_single_tilt_series(
 
     ts = TiltSeries(xml_path)
     original_pixel_size = _get_original_pixel_size(ts)
-    print(f"{xml_path.stem}: original pixel size = {original_pixel_size:.4f} Å")
+    #print(f"{xml_path.stem}: original pixel size = {original_pixel_size:.4f} Å")
 
     images, _, _ = ts.load_images(
         original_pixel_size=original_pixel_size,
