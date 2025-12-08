@@ -10,7 +10,13 @@ python examples/visualize_alignment_optimization.py \\
     --model-checkpoint /path/to/model.ckpt \\
     --tilt-series /path/to/series.xml \\
     --output-dir /path/to/output \\
-    --device cuda:0
+    --device cuda:0 \\
+    --alignment-setting global
+
+Alignment settings:
+- 'global': Single shift per image (default)
+- '(3,3)': 2D warping field per image
+- '(3,3,2,10)': 3D volume warp grid
 
 The script will:
 1. Run alignment optimization with tracking enabled
@@ -33,6 +39,36 @@ from miss_alignment.alignment.visualize_alignment import (
 )
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.models import MissAlignment
+
+
+def parse_alignment_setting(setting_str: str):
+    """Parse alignment setting string.
+
+    Parameters
+    ----------
+    setting_str : str
+        Either 'global' or a tuple string like '(3,3)' or '(3,3,2,10)'.
+
+    Returns
+    -------
+    str or tuple
+        Parsed alignment setting.
+    """
+    setting_str = setting_str.strip()
+    if setting_str.lower() == "global":
+        return "global"
+
+    # Parse tuple string like "(3,3)" or "(3,3,2,10)"
+    try:
+        # Remove parentheses and split by comma
+        tuple_str = setting_str.strip("()")
+        values = tuple(int(x.strip()) for x in tuple_str.split(","))
+        return values
+    except (ValueError, AttributeError):
+        raise ValueError(
+            f"Invalid alignment setting: {setting_str}. "
+            "Must be 'global' or tuple like '(3,3)' or '(3,3,2,10)'"
+        )
 
 
 def main():
@@ -104,8 +140,21 @@ def main():
         action="store_true",
         help="Don't save subvolumes (only track losses/precisions)",
     )
+    parser.add_argument(
+        "--alignment-setting",
+        type=str,
+        default="global",
+        help=(
+            "Alignment setting: 'global' for single shift per image, "
+            "or tuple string like '(3,3)' for 2D warping field per image, "
+            "or '(3,3,2,10)' for 3D volume warp grid (default: global)"
+        ),
+    )
 
     args = parser.parse_args()
+
+    # Parse alignment setting
+    alignment_setting = parse_alignment_setting(args.alignment_setting)
 
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +166,7 @@ def main():
     print(f"Tilt-series: {args.tilt_series}")
     print(f"Output: {args.output_dir}")
     print(f"Device: {args.device}")
+    print(f"Alignment setting: {alignment_setting}")
     print("=" * 60)
 
     # Load model
@@ -171,7 +221,7 @@ def main():
         pixel_size=pixel_size,
         positions=position_grid,
         tracker=tracker,
-        setting="global",
+        setting=alignment_setting,
         patch_size=args.patch_size,
         batch_size=args.batch_size,
         apply_ctf=True,
