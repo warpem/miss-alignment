@@ -1,5 +1,6 @@
 from pathlib import Path
 from shutil import copyfile
+from typing import Optional
 import yaml
 
 import typer
@@ -14,6 +15,7 @@ from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping
 from .alignment import run_alignment_parallel
 from .data._pool_monitor import SimplePoolMonitor
+from .prepare_stacks import prepare_stacks_parallel
 
 
 @cli.command(name="train", no_args_is_help=True)
@@ -24,6 +26,12 @@ def train_miss_align(
     pool_size: int = 1000,
     start_at_iteration: int = 0,
     monitor_production_and_consumption: bool = False,
+    prepare_stacks: Optional[float] = typer.Option(
+        None,
+        help="Pixel size (in Angstroms) for preprocessing tilt stacks. "
+        "If provided, loads raw tilt images, rescales to this pixel size, "
+        "and creates tilt stacks with thumbnails before training.",
+    ),
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
@@ -65,6 +73,16 @@ def train_miss_align(
     # track the path to the dataset
     training_directory = Path(general_config["training_directory"])
     training_directory.mkdir(exist_ok=True, parents=True)
+
+    # Prepare tilt stacks if requested
+    if prepare_stacks is not None:
+        if prepare_stacks <= 0:
+            raise ValueError("--prepare-stacks must be a positive non-zero number")
+        prepare_stacks_parallel(
+            training_directory=training_directory,
+            desired_pixel_size=prepare_stacks,
+            n_processes=4,
+        )
 
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
