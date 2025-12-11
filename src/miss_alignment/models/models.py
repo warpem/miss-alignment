@@ -356,6 +356,76 @@ class MissAlignment(pl.LightningModule):
             self.net = torch.compile(self.net)
 
 
+class MAProgressBar(Callback):
+    """Progress bar showing progress across the entire macro-iteration.
+
+    Instead of showing per-epoch progress, this shows total progress across
+    all epochs in the macro-iteration with estimated time remaining.
+
+    Parameters
+    ----------
+    max_epochs : int
+        Maximum number of epochs in the macro-iteration.
+    steps_per_epoch : int
+        Number of steps per epoch.
+    refresh_rate : int, default=10
+        How often to update the progress bar (in steps).
+    """
+
+    def __init__(self, max_epochs: int, steps_per_epoch: int, refresh_rate: int = 10):
+        self.max_epochs = max_epochs
+        self.steps_per_epoch = steps_per_epoch
+        self.refresh_rate = refresh_rate
+        self.total_steps = max_epochs * steps_per_epoch
+        self.pbar = None
+        self.start_time = None
+
+    def on_train_start(self, trainer, pl_module):
+        import sys
+        import time
+
+        from tqdm import tqdm
+
+        self.start_time = time.time()
+        self.pbar = tqdm(
+            total=self.total_steps,
+            desc="Training",
+            unit="step",
+            dynamic_ncols=True,
+            leave=True,
+            file=sys.stdout,
+        )
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        global_step = trainer.current_epoch * self.steps_per_epoch + batch_idx + 1
+
+        if global_step % self.refresh_rate == 0 or global_step == self.total_steps:
+            # Update progress bar to current position
+            self.pbar.n = global_step
+            self.pbar.refresh()
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # Update postfix with epoch metrics
+        metrics = trainer.logged_metrics
+        postfix = {}
+        if "train_loss" in metrics:
+            postfix["loss"] = f"{metrics['train_loss']:.4f}"
+        if "train_score_aligned" in metrics:
+            postfix["aligned"] = f"{metrics['train_score_aligned']:.3f}"
+        if "train_score_misaligned" in metrics:
+            postfix["misaligned"] = f"{metrics['train_score_misaligned']:.3f}"
+
+        epoch_info = f"epoch {trainer.current_epoch + 1}/{self.max_epochs}"
+        postfix["epoch"] = epoch_info
+
+        if postfix:
+            self.pbar.set_postfix(postfix)
+
+    def on_train_end(self, trainer, pl_module):
+        if self.pbar is not None:
+            self.pbar.close()
+
+
 class MAEarlyStopping(Callback):
     """Early stopping callback that waits until MultiStepLR reaches its lowest point.
 

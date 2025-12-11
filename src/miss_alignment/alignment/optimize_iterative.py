@@ -5,9 +5,12 @@ progressively expanding the set of reliable tilts while preserving
 relative offsets of unreliable tilts.
 """
 
+import os
 from typing import Callable
 
 import torch
+
+_DEBUG = os.environ.get("MISS_DEBUG", "").lower() in ("1", "true", "yes")
 from warpylib import TiltSeries
 
 from miss_alignment.models import MissAlignment
@@ -62,7 +65,8 @@ def run_iterative_anchoring(
     best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
 
     while n_unreliable_per_side > 0:
-        print(f"n_unreliable_per_side: {n_unreliable_per_side}")
+        if _DEBUG:
+            print(f"n_unreliable_per_side: {n_unreliable_per_side}")
         # Define boundary in sorted index space
         # sorted_indices[0] is most negative angle, sorted_indices[-1] most positive
         pos_boundary_sorted_idx = n_tilts - 1 - n_unreliable_per_side
@@ -106,11 +110,15 @@ def run_iterative_anchoring(
         tilt_series, loss_values = optimize_fn(tilt_series)
         all_loss_values.extend(loss_values)
         current_loss = loss_values[-1]
-        print(f"Loss went from {loss_values[0]} to {current_loss}")
+        if _DEBUG:
+            print(f"Loss went from {loss_values[0]} to {current_loss}")
 
         # Check for worse loss - immediately revert if so
         if current_loss >= best_loss:
-            print(f"  -> Loss worse ({current_loss:.4f} >= {best_loss:.4f}), reverting")
+            if _DEBUG:
+                print(
+                    f"  -> Loss worse ({current_loss:.4f} >= {best_loss:.4f}), reverting"
+                )
             # Restore best solution and skip anchoring restoration
             tilt_series.tilt_axis_offset_x = best_offsets_x.clone()
             tilt_series.tilt_axis_offset_y = best_offsets_y.clone()
@@ -119,7 +127,8 @@ def run_iterative_anchoring(
             best_loss = current_loss
             best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
             best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
-            print(f"  -> New best loss: {best_loss:.4f}")
+            if _DEBUG:
+                print(f"  -> New best loss: {best_loss:.4f}")
 
             # Restore unreliable tilts with chain-like relative offsets
             # Negative side: propagate from boundary outward (high sorted idx to low)
@@ -155,14 +164,16 @@ def run_iterative_anchoring(
     tilt_series, loss_values = optimize_fn(tilt_series)
     all_loss_values.extend(loss_values)
     final_loss = loss_values[-1]
-    print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
+    if _DEBUG:
+        print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
 
     # Check for worse than best
     if final_loss >= best_loss:
-        print(f"Final worse ({final_loss:.4f} >= {best_loss:.4f}), restoring best")
+        if _DEBUG:
+            print(f"Final worse ({final_loss:.4f} >= {best_loss:.4f}), restoring best")
         tilt_series.tilt_axis_offset_x = best_offsets_x
         tilt_series.tilt_axis_offset_y = best_offsets_y
-    else:
+    elif _DEBUG:
         print(f"Final optimization achieved best loss: {final_loss:.4f}")
 
     return tilt_series, all_loss_values
