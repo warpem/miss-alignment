@@ -16,6 +16,7 @@ from .models import MissAlignment, MAEarlyStopping
 from .alignment import run_alignment_parallel
 from .data._pool_monitor import SimplePoolMonitor
 from .prepare_stacks import prepare_stacks_parallel
+from .preprocessing import run_cross_correlation_alignment
 
 
 @cli.command(name="train", no_args_is_help=True)
@@ -31,6 +32,11 @@ def train_miss_align(
         help="Pixel size (in Angstroms) for preprocessing tilt stacks. "
         "If provided, loads raw tilt images, rescales to this pixel size, "
         "and creates tilt stacks with thumbnails before training.",
+    ),
+    preprocess: bool = typer.Option(
+        False,
+        help="Run cross-correlation based alignment before training iterations. "
+        "This performs coarse alignment with pretilt estimation.",
     ),
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
@@ -90,6 +96,22 @@ def train_miss_align(
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
+    # Run preprocessing if requested
+    if preprocess:
+        # Back up original data to pre-iter directory
+        preiter_directory = training_directory / "pre-iter"
+        preiter_directory.mkdir(parents=True, exist_ok=True)
+        for xml_file in training_directory.glob("*.xml"):
+            destination = preiter_directory / xml_file.name
+            copyfile(xml_file, destination)
+        print(f"Backed up original metadata to {preiter_directory}")
+
+        # Run cross-correlation alignment on the training directory
+        run_cross_correlation_alignment(
+            training_directory=training_directory,
+            device=devices_training[0],
+        )
+
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
@@ -138,7 +160,11 @@ def train_miss_align(
             deterministic=False,  # setting to True breaks on max_pool_3d
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
-            callbacks=[early_stopping, checkpoint_callback, TQDMProgressBar(refresh_rate=10)],
+            callbacks=[
+                early_stopping,
+                checkpoint_callback,
+                TQDMProgressBar(refresh_rate=10),
+            ],
             plugins=[SLURMEnvironment(auto_requeue=False)],
             precision="16-mixed",  # Enable automatic mixed precision
         )
