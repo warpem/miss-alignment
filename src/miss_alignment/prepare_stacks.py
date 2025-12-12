@@ -4,6 +4,7 @@ This module provides functionality to load raw tilt images and create
 preprocessed tilt stacks ready for training.
 """
 
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -154,7 +155,7 @@ def prepare_stacks_parallel(
             )
             futures.append(future)
 
-        for future in tqdm(futures, desc="Preparing stacks", unit="tilt series"):
+        for future in tqdm(futures, desc="Preparing stacks", unit="tilt series", file=sys.stdout):
             # This will raise any exception that occurred in the worker
             future.result()
 

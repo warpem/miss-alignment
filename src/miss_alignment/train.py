@@ -6,13 +6,13 @@ import yaml
 import typer
 import torch
 from lightning.pytorch import Trainer, seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
-from .models import MissAlignment, MAEarlyStopping
+from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
 from .data._pool_monitor import SimplePoolMonitor
 from .prepare_stacks import prepare_stacks_parallel
@@ -132,6 +132,10 @@ def train_miss_align(
         # ================= model training step ======================
         # ============================================================
         iteration_settings = general_config["iteration_settings"][x]
+        alignment_mode = iteration_settings["alignment"]
+        print(f"\n{'='*60}")
+        print(f"Iteration {x + 1}/{end_iter} - Alignment mode: {alignment_mode}")
+        print(f"{'='*60}\n")
 
         # Define the early stopping callback
         early_stopping = MAEarlyStopping(
@@ -149,22 +153,28 @@ def train_miss_align(
             save_on_train_epoch_end=True,
         )
 
+        # Progress bar showing total progress across all epochs
+        max_epochs = model_training_config["max_epochs_per_iteration"]
+        steps_per_epoch = data_module_config["steps_per_epoch"]
+        progress_bar = MAProgressBar(
+            max_epochs=max_epochs,
+            steps_per_epoch=steps_per_epoch,
+            refresh_rate=10,
+        )
+
         # Set up trainer with parameters from config
         trainer = Trainer(
             accelerator="gpu",
             devices=devices_training,  # use the 0 device
             default_root_dir=training_directory / "models",
-            max_epochs=model_training_config["max_epochs_per_iteration"],
+            max_epochs=max_epochs,
             log_every_n_steps=50,
             enable_checkpointing=True,
+            enable_progress_bar=False,  # disable default progress bar
             deterministic=False,  # setting to True breaks on max_pool_3d
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
-            callbacks=[
-                early_stopping,
-                checkpoint_callback,
-                TQDMProgressBar(refresh_rate=10),
-            ],
+            callbacks=[early_stopping, checkpoint_callback, progress_bar],
             plugins=[SLURMEnvironment(auto_requeue=False)],
             precision="16-mixed",  # Enable automatic mixed precision
         )

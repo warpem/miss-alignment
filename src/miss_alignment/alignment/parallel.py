@@ -1,5 +1,6 @@
 import queue
 import multiprocessing as mp
+import sys
 import time
 import torch
 import tqdm
@@ -113,7 +114,7 @@ def run_alignment_parallel(
         ]
         [p.start() for p in procs]
 
-        pbar = tqdm.tqdm(total=len(jobs), desc="tilt-series alignment")
+        pbar = tqdm.tqdm(total=len(jobs), desc="tilt-series alignment", file=sys.stdout)
         while True:
             while not result_queue.empty():
                 results.append(result_queue.get_nowait())

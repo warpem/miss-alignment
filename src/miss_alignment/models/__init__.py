@@ -12,11 +12,12 @@ from ._compact import (
     Compact3DConvNetWide,
     CompactResNet3D,
 )
-from .models import MissAlignment, MAEarlyStopping
+from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 
 __all__ = [
     "MissAlignment",
     "MAEarlyStopping",
+    "MAProgressBar",
     "Compact3DConvNet",
     "Compact3DConvNetGELU",
     "Compact3DConvNetSpread",
