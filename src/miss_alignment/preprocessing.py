@@ -11,7 +11,7 @@ def run_cross_correlation_alignment(
     training_directory: Path,
     device: int = 0,
     lowpass_cutoff: float = 0.5,
-    pretilt_search_range: tuple[float, float] = (-30.0, 30.0),
+    pretilt_search_range: tuple[float, float] = (-15.0, 15.0),
 ) -> None:
     """
     Run cross-correlation based alignment with pretilt estimation.
