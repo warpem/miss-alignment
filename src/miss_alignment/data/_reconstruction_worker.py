@@ -207,6 +207,53 @@ def reconstruction_worker(
     print(f"Reconstruction worker {partition_id} shutting down")
 
 
+def sample_positions(
+    n_particles: int,
+    volume_dimensions_angstrom: torch.Tensor,
+    patch_size_angstrom: float,
+    device: str | torch.device = "cpu",
+) -> torch.Tensor:
+    """
+    Sample random reconstruction positions within a volume, handling edge cases.
+
+    For dimensions larger than the patch size, positions are sampled uniformly
+    within the valid range. For dimensions smaller than the patch size, positions
+    are fixed at half the dimension size.
+
+    Parameters
+    ----------
+    n_particles : int
+        Number of positions to sample
+    volume_dimensions_angstrom : torch.Tensor
+        Physical volume dimensions in Angstroms, shape (3,) for ZYX
+    patch_size_angstrom : float
+        Physical patch size in Angstroms (cubic patches assumed)
+    device : str | torch.device, default "cpu"
+        Device to create the tensor on
+
+    Returns
+    -------
+    torch.Tensor
+        Sampled positions in Angstroms, shape (n_particles, 3) for ZYX
+    """
+    patch_offset_angstrom = patch_size_angstrom / 2
+
+    # Sample positions uniformly in the valid range
+    reconstruction_location = (
+        torch.rand([n_particles, 3], device=device)
+        * (volume_dimensions_angstrom - patch_size_angstrom)
+        + patch_offset_angstrom
+    )
+
+    # Fix coordinates in dimensions smaller than the patch size
+    # to just half that dimension's size
+    for dim, dim_size in enumerate(volume_dimensions_angstrom):
+        if dim_size < patch_size_angstrom:
+            reconstruction_location[:, dim] = dim_size / 2
+
+    return reconstruction_location
+
+
 def _create_pool_reconstruction(
     tilt_series: TiltSeries,
     images: torch.Tensor,
@@ -239,20 +286,14 @@ def _create_pool_reconstruction(
         / 180
     )
 
-    # select a random reconstruction position
-    patch_offset_ang = (patch_size * pixel_size) / 2
+    # Select random reconstruction positions
     patch_size_ang = patch_size * pixel_size
-
-    reconstruction_location = (
-        torch.rand([n_particles, 3], device=device)
-        * (tilt_series.volume_dimensions_physical - patch_size_ang)
-        + patch_offset_ang
+    reconstruction_location = sample_positions(
+        n_particles=n_particles,
+        volume_dimensions_angstrom=tilt_series.volume_dimensions_physical,
+        patch_size_angstrom=patch_size_ang,
+        device=device,
     )
-    # coordinates in dimensions smaller than the patch size should be set
-    # to just half that dimensions' size
-    for dim, dim_size in enumerate(tilt_series.volume_dimensions_physical):
-        if dim_size < patch_size_ang:
-            reconstruction_location[:, dim] = dim_size / 2
 
     # generate a misalignment
     r0 = Ry(-tilt_series.angles, zyx=True)
