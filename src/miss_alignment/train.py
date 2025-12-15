@@ -293,8 +293,13 @@ def train_miss_align(
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
         for xml_file in training_directory.glob("*.xml"):
-            destination = iteration_directory / xml_file.name
-            copyfile(xml_file, destination)
+            destination_xml = iteration_directory / xml_file.name
+            copyfile(xml_file, destination_xml)
+
+            # copy the file with the alignment loss
+            loss_json = xml_file.stem + "_alignment_loss.json"
+            destination_json = iteration_directory / loss_json
+            copyfile(training_directory / loss_json, destination_json)
 
         training_model_path = iteration_directory / "model.ckpt"
         copyfile(best_model_path, training_model_path)
