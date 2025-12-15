@@ -11,7 +11,7 @@ def run_cross_correlation_alignment(
     training_directory: Path,
     device: int = 0,
     lowpass_cutoff: float = 0.25,
-    pretilt_search_range: tuple[float, float] = (-15.0, 15.0),
+    pretilt_search_range: tuple[float, float] = (-30.0, 30.0),
 ) -> None:
     """
     Run cross-correlation based alignment with pretilt estimation.
@@ -27,7 +27,7 @@ def run_cross_correlation_alignment(
     device : int, optional
         CUDA device to use for alignment (default: 0).
     lowpass_cutoff : float, optional
-        Low-pass filter cutoff frequency (default: 0.5).
+        Low-pass filter cutoff frequency (default: 0.25).
     pretilt_search_range : tuple[float, float], optional
         Search range for pretilt estimation in degrees (default: (-30.0, 30.0)).
     """
