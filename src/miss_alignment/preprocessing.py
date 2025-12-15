@@ -10,7 +10,7 @@ from .data.io import TiltSeriesData
 def run_cross_correlation_alignment(
     training_directory: Path,
     device: int = 0,
-    lowpass_cutoff: float = 0.5,
+    lowpass_cutoff: float = 0.25,
     pretilt_search_range: tuple[float, float] = (-15.0, 15.0),
 ) -> None:
     """
