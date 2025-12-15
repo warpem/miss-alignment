@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Optional
 import torch
 import pickle
-import einops
 import os
 from torch_affine_utils.transforms_3d import Ry, Rz
 from warpylib import TiltSeries
@@ -60,7 +59,9 @@ class TiltSeriesFetcher:
         self._tilt_series.tilt_axis_offset_y = self._tmp_tilt_axis_offset_y.clone()
 
     def _load_next(self):
-        tilt_series_data = TiltSeriesData(xml_metadata_path=random.choice(self.tilt_series_xmls))
+        tilt_series_data = TiltSeriesData(
+            xml_metadata_path=random.choice(self.tilt_series_xmls)
+        )
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
             downsample=self.downsample
         )
@@ -139,7 +140,10 @@ def reconstruction_worker(
     """
     torch.set_num_threads(1)
 
-    print(f"Reconstruction worker {partition_id} starting (partition size: {partition_size})")
+    print(
+        f"Reconstruction worker {partition_id} "
+        f"starting (partition size: {partition_size})"
+    )
 
     # Initialize tilt series fetcher
     tilt_series_fetcher = TiltSeriesFetcher(
@@ -182,7 +186,9 @@ def reconstruction_worker(
                 triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
 
                 # Write with atomic rename
-                file_path = pool_dir / f"partition_{partition_id}_seq_{sequential_id}.pickle"
+                file_path = (
+                    pool_dir / f"partition_{partition_id}_seq_{sequential_id}.pickle"
+                )
                 with tempfile.NamedTemporaryFile(
                     dir=pool_dir,
                     prefix=f"tmp_partition_{partition_id}_",
@@ -201,6 +207,53 @@ def reconstruction_worker(
     print(f"Reconstruction worker {partition_id} shutting down")
 
 
+def sample_positions(
+    n_particles: int,
+    volume_dimensions_angstrom: torch.Tensor,
+    patch_size_angstrom: float,
+    device: str | torch.device = "cpu",
+) -> torch.Tensor:
+    """
+    Sample random reconstruction positions within a volume, handling edge cases.
+
+    For dimensions larger than the patch size, positions are sampled uniformly
+    within the valid range. For dimensions smaller than the patch size, positions
+    are fixed at half the dimension size.
+
+    Parameters
+    ----------
+    n_particles : int
+        Number of positions to sample
+    volume_dimensions_angstrom : torch.Tensor
+        Physical volume dimensions in Angstroms, shape (3,) for ZYX
+    patch_size_angstrom : float
+        Physical patch size in Angstroms (cubic patches assumed)
+    device : str | torch.device, default "cpu"
+        Device to create the tensor on
+
+    Returns
+    -------
+    torch.Tensor
+        Sampled positions in Angstroms, shape (n_particles, 3) for ZYX
+    """
+    patch_offset_angstrom = patch_size_angstrom / 2
+
+    # Sample positions uniformly in the valid range
+    reconstruction_location = (
+        torch.rand([n_particles, 3], device=device)
+        * (volume_dimensions_angstrom - patch_size_angstrom)
+        + patch_offset_angstrom
+    )
+
+    # Fix coordinates in dimensions smaller than the patch size
+    # to just half that dimension's size
+    for dim, dim_size in enumerate(volume_dimensions_angstrom):
+        if dim_size < patch_size_angstrom:
+            reconstruction_location[:, dim] = dim_size / 2
+
+    return reconstruction_location
+
+
 def _create_pool_reconstruction(
     tilt_series: TiltSeries,
     images: torch.Tensor,
@@ -217,7 +270,8 @@ def _create_pool_reconstruction(
     -------
     list[list[tuple[torch.Tensor, int]]]
         List of 8 triplets, where each triplet is a list of 3 (volume, label) tuples.
-        Positive and negative examples share the same mirror, anchor has a different mirror.
+        Positive and negative examples share the same mirror, anchor has a different
+        mirror.
     """
 
     n_particles = 2
@@ -225,15 +279,21 @@ def _create_pool_reconstruction(
     # Generate random rotation as Euler angles (ZYZ convention) for data augmentation
     # This rotation is applied to change the coordinate system of the reconstruction
     rotation_angles = torch.zeros([n_particles, 3], device=device)
-    rotation_angles[:, 1] = (torch.rand([n_particles], device=device) * 2 - 1) * MAX_ANGLE_DEGREES * math.pi / 180
+    rotation_angles[:, 1] = (
+        (torch.rand([n_particles], device=device) * 2 - 1)
+        * MAX_ANGLE_DEGREES
+        * math.pi
+        / 180
+    )
 
-    # select a random reconstruction position
-    patch_offset_ang = (patch_size * pixel_size) / 2
+    # Select random reconstruction positions
     patch_size_ang = patch_size * pixel_size
-
-    reconstruction_location = (torch.rand([n_particles, 3], device=device) * 
-                               torch.clamp(tilt_series.volume_dimensions_physical - patch_size_ang, min=0) + 
-                               patch_offset_ang)
+    reconstruction_location = sample_positions(
+        n_particles=n_particles,
+        volume_dimensions_angstrom=tilt_series.volume_dimensions_physical,
+        patch_size_angstrom=patch_size_ang,
+        device=device,
+    )
 
     # generate a misalignment
     r0 = Ry(-tilt_series.angles, zyx=True)
@@ -284,13 +344,19 @@ def _create_pool_reconstruction(
         combinations_subset = random.sample(MIRROR_COMBINATIONS, 2)
         for i, mirror_combo in enumerate(combinations_subset):
             # Apply same mirror to positive and negative
-            mirrored_aligned = apply_mirror(aligned[i_batch].clone(), mirror_combo).cpu()
-            mirrored_misaligned = apply_mirror(misaligned[i_batch].clone(), mirror_combo).cpu()
+            mirrored_aligned = apply_mirror(
+                aligned[i_batch].clone(), mirror_combo
+            ).cpu()
+            mirrored_misaligned = apply_mirror(
+                misaligned[i_batch].clone(), mirror_combo
+            ).cpu()
 
             # Pick a different mirror for anchor
             other_combos = [c for j, c in enumerate(MIRROR_COMBINATIONS) if j != i]
             anchor_mirror = random.choice(other_combos)
-            mirrored_anchor = apply_mirror(anchor_base[i_batch].clone(), anchor_mirror).cpu()
+            mirrored_anchor = apply_mirror(
+                anchor_base[i_batch].clone(), anchor_mirror
+            ).cpu()
 
             triplet = [
                 (mirrored_aligned, 1),

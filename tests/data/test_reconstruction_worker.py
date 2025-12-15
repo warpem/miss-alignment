@@ -19,6 +19,7 @@ from miss_alignment.data._reconstruction_worker import (
     _count_partition_files,
     reconstruction_worker,
     TiltSeriesFetcher,
+    sample_positions,
 )
 
 
@@ -234,6 +235,122 @@ class TestTiltSeriesFetcher:
         torch.testing.assert_close(
             tilt_series2.tilt_axis_offset_x, original_tilt_axis_offset_x
         )
+
+
+class TestSamplePositions:
+    """Test position sampling functionality."""
+
+    def test_output_shape(self):
+        """Test that output has correct shape."""
+        n_particles = 5
+        volume_dimensions_angstrom = torch.tensor([1000.0, 1000.0, 500.0])
+        patch_size_angstrom = 200.0
+
+        positions = sample_positions(
+            n_particles=n_particles,
+            volume_dimensions_angstrom=volume_dimensions_angstrom,
+            patch_size_angstrom=patch_size_angstrom,
+        )
+
+        assert positions.shape == (n_particles, 3)
+        assert positions.dtype == torch.float32
+
+    def test_all_dimensions_larger_than_patch(self):
+        """Test normal case where all dimensions are larger than patch size."""
+        n_particles = 10
+        volume_dimensions_angstrom = torch.tensor([1000.0, 1000.0, 500.0])
+        patch_size_angstrom = 200.0
+
+        positions = sample_positions(
+            n_particles=n_particles,
+            volume_dimensions_angstrom=volume_dimensions_angstrom,
+            patch_size_angstrom=patch_size_angstrom,
+        )
+
+        # Check positions are within valid range for each dimension
+        patch_offset = patch_size_angstrom / 2
+        for dim in range(3):
+            dim_size = volume_dimensions_angstrom[dim].item()
+            assert torch.all(positions[:, dim] >= patch_offset)
+            assert torch.all(positions[:, dim] <= dim_size - patch_offset)
+
+    def test_all_dimensions_smaller_than_patch(self):
+        """Test case where all dimensions are smaller than patch size."""
+        n_particles = 10
+        volume_dimensions_angstrom = torch.tensor([100.0, 150.0, 80.0])
+        patch_size_angstrom = 200.0
+
+        positions = sample_positions(
+            n_particles=n_particles,
+            volume_dimensions_angstrom=volume_dimensions_angstrom,
+            patch_size_angstrom=patch_size_angstrom,
+        )
+
+        # All positions should be centered at half the dimension size
+        for dim in range(3):
+            expected = volume_dimensions_angstrom[dim] / 2
+            assert torch.all(positions[:, dim] == expected)
+
+    def test_one_dimension_smaller_than_patch(self):
+        """Test case where one dimension is smaller than patch size."""
+        n_particles = 10
+        volume_dimensions_angstrom = torch.tensor([1000.0, 1000.0, 100.0])
+        patch_size_angstrom = 200.0
+
+        positions = sample_positions(
+            n_particles=n_particles,
+            volume_dimensions_angstrom=volume_dimensions_angstrom,
+            patch_size_angstrom=patch_size_angstrom,
+        )
+
+        # Z dimension (index 2) should be centered
+        expected_z = volume_dimensions_angstrom[2] / 2
+        assert torch.all(positions[:, 2] == expected_z)
+
+        # X and Y dimensions should be in valid range
+        patch_offset = patch_size_angstrom / 2
+        for dim in [0, 1]:
+            dim_size = volume_dimensions_angstrom[dim].item()
+            assert torch.all(positions[:, dim] >= patch_offset)
+            assert torch.all(positions[:, dim] <= dim_size - patch_offset)
+
+    def test_dimension_equals_patch_size(self):
+        """Test edge case where dimension equals patch size."""
+        n_particles = 10
+        volume_dimensions_angstrom = torch.tensor([1000.0, 200.0, 500.0])
+        patch_size_angstrom = 200.0
+
+        positions = sample_positions(
+            n_particles=n_particles,
+            volume_dimensions_angstrom=volume_dimensions_angstrom,
+            patch_size_angstrom=patch_size_angstrom,
+        )
+
+        # Y dimension equals patch size, so range is zero
+        # All positions should be at patch_offset (which equals dim_size/2)
+        patch_offset = patch_size_angstrom / 2
+        assert torch.all(positions[:, 1] == patch_offset)
+
+    def test_realistic_cryo_et_parameters(self):
+        """Test with realistic cryo-ET parameters."""
+        # Typical tomogram: 4096 x 4096 x 1024 Angstroms
+        # Patch size: 640 Angstroms (64 pixels * 10 A/pixel)
+        n_particles = 2
+        volume_dimensions_angstrom = torch.tensor([4096.0, 4096.0, 1024.0])
+        patch_size_angstrom = 640.0
+
+        positions = sample_positions(
+            n_particles=n_particles,
+            volume_dimensions_angstrom=volume_dimensions_angstrom,
+            patch_size_angstrom=patch_size_angstrom,
+        )
+
+        # Check all positions are within valid range
+        patch_offset = patch_size_angstrom / 2
+        for dim in range(3):
+            dim_size = volume_dimensions_angstrom[dim].item()
+            assert torch.all(positions[:, dim] >= patch_offset)
+            assert torch.all(positions[:, dim] <= dim_size - patch_offset)
 
 
 class TestGenerateTranslations:
