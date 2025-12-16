@@ -10,8 +10,10 @@ import einops
 import torch
 from warpylib import TiltSeries
 from warpylib.cubic_grid import CubicGrid
+from torch_affine_utils.transforms_3d import Ry, Rz
 
 from miss_alignment.models import MissAlignment
+from miss_alignment.alignment.utils import project_volume_shift_to_image_alignment
 
 
 class AlignmentNanError(Exception):
@@ -269,6 +271,11 @@ def _optimize_shifts_inner(
         initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
         initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
 
+        # Find the index of the tilt closest to zero degrees for recentering
+        zero_tilt_idx = tilt_series.angles.abs().argmin()
+        initial_zero_tilt_shift_y = initial_tilt_axis_offset_y[zero_tilt_idx].clone()
+        initial_zero_tilt_shift_x = initial_tilt_axis_offset_x[zero_tilt_idx].clone()
+
         # create the alignment parameters
         shifts_y = torch.zeros_like(
             initial_tilt_axis_offset_x,
@@ -445,6 +452,37 @@ def _optimize_shifts_inner(
         # remove gradients and finalize global shifts
         tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y.detach()
         tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x.detach()
+
+        # Recenter alignment: set the shift at zero tilt to match initial zero tilt
+        # Get the current shift at the zero tilt
+        current_zero_tilt_shift_y = tilt_series.tilt_axis_offset_y[zero_tilt_idx]
+        current_zero_tilt_shift_x = tilt_series.tilt_axis_offset_x[zero_tilt_idx]
+
+        # Calculate the difference from initial to current at zero tilt
+        delta_shift_y = current_zero_tilt_shift_y - initial_zero_tilt_shift_y
+        delta_shift_x = current_zero_tilt_shift_x - initial_zero_tilt_shift_x
+
+        # Create a 3D shift tensor with z=0 (in ZYX order)
+        shift_3d = torch.tensor(
+            [0.0, delta_shift_y, delta_shift_x],
+            device=device,
+            dtype=tilt_series.angles.dtype,
+        )
+
+        # Compute projection matrices from tilt angles
+        r0 = Ry(-tilt_series.angles, zyx=True)
+        r1 = Rz(tilt_series.tilt_axis_angles, zyx=True)
+        rotation_matrices = r1 @ r0
+        projection_matrices = rotation_matrices[..., 1:3, :3]
+
+        # Project the 3D shift to 2D shifts for all tilts
+        shifts_2d = project_volume_shift_to_image_alignment(
+            shift_3d, projection_matrices
+        )
+
+        # Apply the correction: subtract the projected delta shift from all tilts
+        tilt_series.tilt_axis_offset_y -= shifts_2d[:, 0]
+        tilt_series.tilt_axis_offset_x -= shifts_2d[:, 1]
     elif len(setting) == 2:
         # remove gradients
         tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.detach()

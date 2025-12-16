@@ -54,8 +54,8 @@ from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.alignment.correlation import (
     calculate_cross_correlation,
     get_shift_from_correlation_image,
-    project_volume_shift_to_image_alignment,
 )
+from miss_alignment.alignment.utils import project_volume_shift_to_image_alignment
 from torch_affine_utils.transforms_3d import Ry, Rz
 
 
