@@ -14,6 +14,11 @@ from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
+from .alignment.statistics import (
+    identify_outliers,
+    plot_loss_distribution,
+    filter_outlier_xml_files,
+)
 from .data._pool_monitor import SimplePoolMonitor
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment
@@ -32,6 +37,11 @@ def train_miss_align(
         help="Pixel size (in Angstroms) for preprocessing tilt stacks. "
         "If provided, loads raw tilt images, rescales to this pixel size, "
         "and creates tilt stacks with thumbnails before training.",
+    ),
+    filter_outliers: bool = typer.Option(
+        False,
+        help="Filter out tilt-series with alignment loss > mean + 3*std. "
+        "Outliers are moved to iter{N}_outliers/ directory.",
     ),
     preprocess: bool = typer.Option(
         False,
@@ -133,9 +143,9 @@ def train_miss_align(
         # ============================================================
         iteration_settings = general_config["iteration_settings"][x]
         alignment_mode = iteration_settings["alignment"]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Iteration {x + 1}/{end_iter} - Alignment mode: {alignment_mode}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         # Define the early stopping callback
         early_stopping = MAEarlyStopping(
@@ -243,7 +253,7 @@ def train_miss_align(
         tilt_series_list = list(training_directory.glob("*.xml"))
 
         # run alignment in parallel over all available devices
-        run_alignment_parallel(
+        alignment_losses = run_alignment_parallel(
             model_checkpoint=model_training_config["model_checkpoint"],
             tilt_series_list=tilt_series_list,
             output_directory=training_directory,
@@ -256,13 +266,40 @@ def train_miss_align(
             devices_list=devices_list,
         )
 
+        # Plot loss distribution
+        plot_path = training_directory / f"iter{x + 1}_alignment_losses.png"
+        plot_loss_distribution(
+            losses=alignment_losses,
+            output_path=plot_path,
+            n_std=3.0,
+            iteration=x + 1,
+        )
+
+        # Filter outliers if requested
+        if filter_outliers:
+            outliers, mean_loss, std_loss = identify_outliers(
+                alignment_losses, n_std=3.0
+            )
+            if outliers:
+                print(f"\nFiltering {len(outliers)} outlier tilt-series:")
+                filter_outlier_xml_files(
+                    training_directory=training_directory,
+                    outliers=outliers,
+                    iteration=x + 1,
+                )
+
         # make copies of the xml files and model after alignment
         iteration_directory = training_directory / ("iter" + str(x + 1))
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
         for xml_file in training_directory.glob("*.xml"):
-            destination = iteration_directory / xml_file.name
-            copyfile(xml_file, destination)
+            destination_xml = iteration_directory / xml_file.name
+            copyfile(xml_file, destination_xml)
+
+            # copy the file with the alignment loss
+            loss_json = xml_file.stem + "_alignment_loss.json"
+            destination_json = iteration_directory / loss_json
+            copyfile(training_directory / loss_json, destination_json)
 
         training_model_path = iteration_directory / "model.ckpt"
         copyfile(best_model_path, training_model_path)

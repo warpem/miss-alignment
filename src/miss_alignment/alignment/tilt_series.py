@@ -21,6 +21,7 @@ from .optimize_spline import (
     optimize_shifts_coarse_to_fine,
     optimize_shifts_spline,
 )
+from .statistics import save_loss_to_json
 
 __all__ = [
     "generate_position_grid",
@@ -245,4 +246,11 @@ def evaluate_tilt_series(
     )
     new_tilt_series_data.save_metadata_to_xml(tilt_series)
 
-    return loss
+    # save loss values to JSON
+    save_loss_to_json(
+        tilt_series_name=tilt_series_data.xml_filename,
+        loss_values=loss,
+        output_directory=output_directory,
+    )
+
+    return tilt_series_path, loss

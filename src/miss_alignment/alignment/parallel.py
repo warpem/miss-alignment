@@ -33,12 +33,18 @@ def gpu_runner(
     while True:
         try:
             task_parameters = task_queue.get_nowait()
-            evaluate_tilt_series(
+            tilt_series_path, loss_values = evaluate_tilt_series(
                 **task_parameters,
                 device=device,
             )
-            # place the name of the finished tilt_series
-            result_queue.put_nowait(task_parameters["tilt_series_path"].stem)
+            # place the name and final loss of the finished tilt_series
+            final_loss = float(loss_values[-1]) if loss_values else None
+            result_queue.put_nowait(
+                {
+                    "name": tilt_series_path.stem,
+                    "final_loss": final_loss,
+                }
+            )
         except queue.Empty:
             break
 
@@ -54,7 +60,7 @@ def run_alignment_parallel(
     apply_ctf: bool,
     downsample: int,
     devices_list: list[int],
-):
+) -> dict[str, float]:
     """Run a job in parallel over a single or multiple GPUs. If no volume_splits are
     given the search is parallelized by splitting the angular search. If volume_splits
     are provided the job will first be split by volume, if there are still more GPUs
@@ -70,6 +76,11 @@ def run_alignment_parallel(
     output_directory: Path
     devices_list: list[int]
     ground_truth_list: list[Path]
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary mapping tilt-series names to their final loss values.
     """
     jobs = []
     for i, tilt_series in enumerate(tilt_series_list):
@@ -139,3 +150,7 @@ def run_alignment_parallel(
         pbar.close()
 
         [p.join() for p in procs]
+
+    # Convert results to dictionary of losses
+    losses = {result["name"]: result["final_loss"] for result in results}
+    return losses
