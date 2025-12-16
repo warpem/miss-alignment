@@ -2,8 +2,8 @@ from pathlib import Path
 from miss_alignment.alignment.correlation import (
     calculate_cross_correlation,
     get_shift_from_correlation_image,
-    project_volume_shift_to_image_alignment,
 )
+from miss_alignment.alignment.utils import project_volume_shift_to_image_alignment
 # update file reading from warpylib
 from miss_alignment.data.io import read_tomogram_from_pickle, save_tomogram_to_pickle
 
