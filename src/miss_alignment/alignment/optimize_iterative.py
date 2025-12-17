@@ -106,7 +106,6 @@ def run_iterative_anchoring(
 
         # Run optimization
         tilt_series, loss_values = optimize_fn(tilt_series)
-        all_loss_values.extend(loss_values)
         current_loss = loss_values[-1]
         if _DEBUG:
             print(f"Loss went from {loss_values[0]} to {current_loss}")
@@ -126,6 +125,7 @@ def run_iterative_anchoring(
             best_loss = current_loss
             best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
             best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
+            all_loss_values.extend(loss_values)
             if _DEBUG:
                 print(f"  -> New best loss: {best_loss:.4f}")
 
@@ -163,7 +163,6 @@ def run_iterative_anchoring(
 
     # Final optimization with all tilts reliable
     tilt_series, loss_values = optimize_fn(tilt_series)
-    all_loss_values.extend(loss_values)
     final_loss = loss_values[-1]
     if _DEBUG:
         print(f"Last one: loss went from {loss_values[0]} to {final_loss}")
@@ -174,8 +173,10 @@ def run_iterative_anchoring(
             print(f"Final worse ({final_loss:.4f} >= {best_loss:.4f}), restoring best")
         tilt_series.tilt_axis_offset_x = best_offsets_x
         tilt_series.tilt_axis_offset_y = best_offsets_y
-    elif _DEBUG:
-        print(f"Final optimization achieved best loss: {final_loss:.4f}")
+    else:
+        all_loss_values.extend(loss_values)
+        if _DEBUG:
+            print(f"Final optimization achieved best loss: {final_loss:.4f}")
 
     return tilt_series, all_loss_values
 
