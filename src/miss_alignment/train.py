@@ -109,7 +109,7 @@ def train_miss_align(
     # Run preprocessing if requested
     if preprocess:
         if start_at_iteration != 0:
-            raise ValuerError(
+            raise ValueError(
                 'Running preprocessing at while '
                 'not starting at iteration 0. This '
                 'is likely not desirable behaviour.'
