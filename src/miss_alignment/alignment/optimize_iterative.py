@@ -7,15 +7,13 @@ relative offsets of unreliable tilts.
 
 import os
 from typing import Callable
-
+from warpylib import TiltSeries
 import torch
 
-_DEBUG = os.environ.get("MISS_DEBUG", "").lower() in ("1", "true", "yes")
-from warpylib import TiltSeries
-
 from miss_alignment.models import MissAlignment
-
 from .optimize_global import optimize_shifts
+
+_DEBUG = os.environ.get("MISS_DEBUG", "").lower() in ("1", "true", "yes")
 
 
 def run_iterative_anchoring(
@@ -113,49 +111,52 @@ def run_iterative_anchoring(
         if _DEBUG:
             print(f"Loss went from {loss_values[0]} to {current_loss}")
 
-        # Check for worse loss - immediately revert if so
+        # Check if optimization improved
         if current_loss >= best_loss:
             if _DEBUG:
                 print(
-                    f"  -> Loss worse ({current_loss:.4f} >= {best_loss:.4f}), reverting"
+                    f"  -> Loss worse ({current_loss:.4f} >= "
+                    f"{best_loss:.4f}), reverting"
                 )
-            # Restore best solution and skip anchoring restoration
+            # Restore best solution
             tilt_series.tilt_axis_offset_x = best_offsets_x.clone()
             tilt_series.tilt_axis_offset_y = best_offsets_y.clone()
         else:
-            # New best - update and apply anchoring restoration
+            # New best - update best loss and offsets (before anchoring)
             best_loss = current_loss
             best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
             best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
             if _DEBUG:
                 print(f"  -> New best loss: {best_loss:.4f}")
 
-            # Restore unreliable tilts with chain-like relative offsets
-            # Negative side: propagate from boundary outward (high sorted idx to low)
-            for i in range(n_unreliable_per_side - 1, -1, -1):
-                curr_tilt_idx = sorted_indices[i]
-                next_tilt_idx = sorted_indices[i + 1]
-                tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
-                    tilt_series.tilt_axis_offset_x[next_tilt_idx]
-                    + neg_relative_offsets_x[i]
-                )
-                tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
-                    tilt_series.tilt_axis_offset_y[next_tilt_idx]
-                    + neg_relative_offsets_y[i]
-                )
+        # ALWAYS apply anchoring restoration to ensure unreliable tilts
+        # maintain their structure relative to the current iteration's reliable set
+        # Restore unreliable tilts with chain-like relative offsets
+        # Negative side: propagate from boundary outward (high sorted idx to low)
+        for i in range(n_unreliable_per_side - 1, -1, -1):
+            curr_tilt_idx = sorted_indices[i]
+            next_tilt_idx = sorted_indices[i + 1]
+            tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
+                tilt_series.tilt_axis_offset_x[next_tilt_idx]
+                + neg_relative_offsets_x[i]
+            )
+            tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
+                tilt_series.tilt_axis_offset_y[next_tilt_idx]
+                + neg_relative_offsets_y[i]
+            )
 
-            # Positive side: propagate from boundary outward (low sorted idx to high)
-            for i, sorted_i in enumerate(range(pos_boundary_sorted_idx + 1, n_tilts)):
-                curr_tilt_idx = sorted_indices[sorted_i]
-                prev_tilt_idx = sorted_indices[sorted_i - 1]
-                tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
-                    tilt_series.tilt_axis_offset_x[prev_tilt_idx]
-                    + pos_relative_offsets_x[i]
-                )
-                tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
-                    tilt_series.tilt_axis_offset_y[prev_tilt_idx]
-                    + pos_relative_offsets_y[i]
-                )
+        # Positive side: propagate from boundary outward (low sorted idx to high)
+        for i, sorted_i in enumerate(range(pos_boundary_sorted_idx + 1, n_tilts)):
+            curr_tilt_idx = sorted_indices[sorted_i]
+            prev_tilt_idx = sorted_indices[sorted_i - 1]
+            tilt_series.tilt_axis_offset_x[curr_tilt_idx] = (
+                tilt_series.tilt_axis_offset_x[prev_tilt_idx]
+                + pos_relative_offsets_x[i]
+            )
+            tilt_series.tilt_axis_offset_y[curr_tilt_idx] = (
+                tilt_series.tilt_axis_offset_y[prev_tilt_idx]
+                + pos_relative_offsets_y[i]
+            )
 
         # Expand reliable set by 1 tilt per side
         n_unreliable_per_side -= 1

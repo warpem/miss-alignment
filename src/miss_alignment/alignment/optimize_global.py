@@ -11,6 +11,7 @@ import torch
 from warpylib import TiltSeries
 from warpylib.cubic_grid import CubicGrid
 from torch_affine_utils.transforms_3d import Ry, Rz
+from torch_affine_utils.transforms_2d import R
 
 from miss_alignment.models import MissAlignment
 from miss_alignment.alignment.utils import project_volume_shift_to_image_alignment
@@ -461,6 +462,16 @@ def _optimize_shifts_inner(
         # Calculate the difference from initial to current at zero tilt
         delta_shift_y = current_zero_tilt_shift_y - initial_zero_tilt_shift_y
         delta_shift_x = current_zero_tilt_shift_x - initial_zero_tilt_shift_x
+        
+        delta_shift_2d = torch.tensor(
+            [delta_shift_y, delta_shift_x],
+            device=device,
+            dtype=tilt_series.angles.dtype,
+        )
+        m_2d = R(tilt_series.tilt_axis_angles, yx=True)
+        m_2d = torch.linalg.inv(m_2d[zero_tilt_idx, :2, :2])
+        delta_shift_2d = m_2d @ einops.rearrange(delta_shift_2d, 'x -> x 1')
+        delta_shift_y, delta_shift_x = delta_shift_2d[0], delta_shift_2d[1]        
 
         # Create a 3D shift tensor with z=0 (in ZYX order)
         shift_3d = torch.tensor(
