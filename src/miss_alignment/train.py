@@ -108,19 +108,26 @@ def train_miss_align(
 
     # Run preprocessing if requested
     if preprocess:
-        # Back up original data to pre-iter directory
-        preiter_directory = training_directory / "pre-iter"
-        preiter_directory.mkdir(parents=True, exist_ok=True)
-        for xml_file in training_directory.glob("*.xml"):
-            destination = preiter_directory / xml_file.name
-            copyfile(xml_file, destination)
-        print(f"Backed up original metadata to {preiter_directory}")
-
-        # Run cross-correlation alignment on the training directory
-        run_cross_correlation_alignment(
-            training_directory=training_directory,
-            device=devices_training[0],
-        )
+        if start_at_iteration != 0:
+            raise ValuerError(
+                'Running preprocessing at while '
+                'not starting at iteration 0. This '
+                'is likely not desirable behaviour.'
+            )
+        else:
+            # Back up original data to pre-iter directory
+            preiter_directory = training_directory / "pre-iter"
+            preiter_directory.mkdir(parents=True, exist_ok=True)
+            for xml_file in training_directory.glob("*.xml"):
+                destination = preiter_directory / xml_file.name
+                copyfile(xml_file, destination)
+            print(f"Backed up original metadata to {preiter_directory}")
+    
+            # Run cross-correlation alignment on the training directory
+            run_cross_correlation_alignment(
+                training_directory=training_directory,
+                device=devices_training[0],
+            )
 
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
