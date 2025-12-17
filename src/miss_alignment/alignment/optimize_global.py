@@ -494,7 +494,6 @@ def _optimize_shifts_inner(
         # Apply the correction: subtract the projected delta shift from all tilts
         tilt_series.tilt_axis_offset_y -= shifts_2d[:, 0]
         tilt_series.tilt_axis_offset_x -= shifts_2d[:, 1]
-        print(tilt_series.tilt_axis_offset_y[zero_tilt_idx], tilt_series.tilt_axis_offset_x[zero_tilt_idx])
     elif len(setting) == 2:
         # remove gradients
         tilt_series.grid_movement_x.values = tilt_series.grid_movement_x.values.detach()
