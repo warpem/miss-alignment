@@ -20,6 +20,7 @@ from ..data._pool_monitor import SimplePoolMonitor
 
 model_map = {
     "default": Compact3DConvNet,
+    "simple": Compact3DConvNet,
     "gelu": Compact3DConvNetGELU,
     "spread": Compact3DConvNetSpread,
     "wide": Compact3DConvNetWide,
