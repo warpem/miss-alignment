@@ -182,7 +182,7 @@ def test_run_iterative_anchoring_boundary_movement_propagates():
 
 
 def test_run_iterative_anchoring_reverts_on_worse_loss():
-    """Test that worse iterations are immediately reverted to best."""
+    """Test that worse iterations are reverted and their losses not recorded."""
     n_tilts = 7
     ts = TiltSeries(n_tilts=n_tilts)
     ts.angles = torch.linspace(-30, 30, n_tilts)
@@ -212,14 +212,15 @@ def test_run_iterative_anchoring_reverts_on_worse_loss():
         initial_reliable_fraction=0.5,
     )
 
-    # Check that we got the expected loss values
-    assert losses == [0.5, 0.8, 0.4]
-    assert call_count[0] == 3
+    # Only losses from improving iterations are recorded
+    # Call 2 with loss=0.8 was reverted, so not included in output
+    assert losses == [0.5, 0.4]
+    assert call_count[0] == 3  # Optimizer still called 3 times
 
     # Final loss 0.4 is the best, so that solution should be kept
     # The final call added +30 to whatever state it started from
     # After call 1: best_offsets = 10.0 (loss=0.5)
-    # After call 2: loss=0.8 >= 0.5, so reverts to 10.0
+    # After call 2: loss=0.8 >= 0.5, so reverts to 10.0 (loss not recorded)
     # After call 3: starts from 10.0, adds +30 = 40.0 (loss=0.4 is new best)
     sorted_indices = ts.indices_sorted_angle()
     central_idx = sorted_indices[3]
