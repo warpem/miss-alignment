@@ -46,7 +46,7 @@ def train_miss_align(
     pool_size: int = typer.Option(
         1000,
         help="Maximum number of subtomgram reconstructions "
-        "to write to temporary storage during training of the 
+        "to write to temporary storage during training of the "
         "misalignment model."
     ),
     start_at_iteration: int = typer.Option(
