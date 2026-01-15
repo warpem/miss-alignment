@@ -17,9 +17,21 @@ conda create –n miss-alignment –c conda-forge python=3.11 cuda-toolkit=12.9 
 conda activate miss-alignment
 ```
 
-Then clone the github repository and install the software:
+You'll need to install [warpylib](https://github.com/warpem/warpylib) directly from github as it is not on pypi yet:
+```
+python -m pip install git+https://github.com/warpem/warpylib@sinc2_subtomos
+```
+
+Currently, this is a development branch (sinc2_subtomos) while awaiting a merge to main.
+
+Finally install miss-alignment with this command:
 
 ```
-git clone https://github.com/warpem/miss-alignment.git
-python -m pip install miss-alignment
+python -m pip install git+https://github.com/warpem/miss-alignment.git
+```
+
+Check that the CLI shows up with:
+
+```
+miss-alignment --help
 ```
