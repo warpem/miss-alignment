@@ -73,8 +73,8 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self,
         dataset_directory,
         shift_generator: Callable,
-        n_workers: int = 4,
-        reconstruction_accelerators: Optional[list[int]] = None,
+        n_workers: int,
+        reconstruction_accelerators: list[int],
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
         patch_size: int = 64,
@@ -98,18 +98,21 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 f"2 * batch_size ({2 * batch_size}). Increase pool_size or "
                 f"decrease n_workers/batch_size."
             )
+        
+        # This is an old code path that used cpu's for reconstruction
+        # we have abandonded it in favor of splitting the GPU's
+        if reconstruction_accelerators in [None, []]:
+            # self.reconstruction_devices = ["cpu"] * n_workers
+            raise NotImplementedError
 
         # Set up reconstruction devices
-        if reconstruction_accelerators in [None, []]:
-            self.reconstruction_devices = ["cpu"] * n_workers
-        else:
-            if len(reconstruction_accelerators) != n_workers:
-                raise ValueError(
-                    "Number of reconstruction accelerators must match n_workers"
-                )
-            self.reconstruction_devices = [
-                f"cuda:{x}" for x in reconstruction_accelerators
-            ]
+        if len(reconstruction_accelerators) != n_workers:
+            raise ValueError(
+                "Number of reconstruction accelerators must match n_workers"
+            )
+        self.reconstruction_devices = [
+            f"cuda:{x}" for x in reconstruction_accelerators
+        ]
 
         # reconstruction controls
         self.patch_size = patch_size
