@@ -27,27 +27,50 @@ from .preprocessing import run_cross_correlation_alignment
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
     config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-    n_workers: int = 4,
-    n_devices: int = 1,
-    pool_size: int = 1000,
-    start_at_iteration: int = 0,
-    monitor_production_and_consumption: bool = False,
+    n_workers: int = typer.Option(
+        2,
+        help="Number of workers that feed subtomogram reconstructions "
+        "to the data pool for training the CNN. Workers will be "
+        "divided across the available GPU devices, where multiple "
+        "workers per GPU are allowed."
+    ),
+    n_devices: int = typer.Option(
+        1,
+        help="Number of GPU devices available for miss-alignment. "
+        "GPU's are index from 0 to n and the system GPU's should be "
+        "restricted with CUDA_VISIBLE_DEVICES before the command. "
+        "One GPU's is always used to train the CNN, the others are "
+        "split across the workers. If a single GPU is provided both "
+        "the model and workers will use the same GPU."
+    ),
+    pool_size: int = typer.Option(
+        1000,
+        help="Maximum number of subtomgram reconstructions "
+        "to write to temporary storage during training of the 
+        "misalignment model."
+    ),
+    start_at_iteration: int = typer.Option(
+        0,
+        help="Continue from a specific iteration in the config.",
+    ),
     prepare_stacks: Optional[float] = typer.Option(
         None,
         help="Pixel size (in Angstroms) for preprocessing tilt stacks. "
         "If provided, loads raw tilt images, rescales to this pixel size, "
         "and creates tilt stacks with thumbnails before training.",
     ),
-    filter_outliers: bool = typer.Option(
-        False,
-        help="Filter out tilt-series with alignment loss > mean + 3*std. "
-        "Outliers are moved to iter{N}_outliers/ directory.",
-    ),
     preprocess: bool = typer.Option(
         False,
         help="Run cross-correlation based alignment before training iterations. "
         "This performs coarse alignment with pretilt estimation.",
     ),
+    filter_outliers: bool = typer.Option(
+        False,
+        help="[Experimental option] Filter out tilt-series "
+        "with alignment loss > mean + 3*std. "
+        "Outliers are moved to iter{N}_outliers/ directory.",
+    ),
+    monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
