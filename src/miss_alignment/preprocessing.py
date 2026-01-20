@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from torch_tiltxcorr import tiltxcorr_with_pretilt_offset
+from torch_tiltxcorr import tiltxcorr_with_sample_tilt_estimation
 
 from .data.io import TiltSeriesData
 
@@ -56,7 +56,7 @@ def run_cross_correlation_alignment(
         tilt_axis_angle = ts.tilt_axis_angles[0].item()
 
         # Run cross-correlation alignment with pretilt estimation
-        shifts, pretilt = tiltxcorr_with_pretilt_offset(
+        shifts, pretilt = tiltxcorr_with_sample_tilt_estimation(
             stack.to(f"cuda:{device}"),
             ts.angles.to(f"cuda:{device}"),
             tilt_axis_angle,
