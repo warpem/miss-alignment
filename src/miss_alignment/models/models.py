@@ -15,7 +15,6 @@ from miss_alignment.models import (
     Compact3DConvNetDeep,
     CompactResNet3D,
 )
-from ..data._pool_monitor import SimplePoolMonitor
 
 
 model_map = {
@@ -136,7 +135,6 @@ class MissAlignment(pl.LightningModule):
         precision_reg_weight: float = 0.01,
         # will be saved as a hyperparameter
         multistep_lr_scheduler: Optional[dict] = None,
-        monitor: Optional[SimplePoolMonitor] = None,
         model_architecture: str = "default",
     ):
         super().__init__()
@@ -156,8 +154,6 @@ class MissAlignment(pl.LightningModule):
         model = model_map[model_architecture]
         self.net = model()
 
-        self.monitor = monitor
-
     def forward(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass returning score and log_precision."""
         score, log_precision = self.net(image)
@@ -167,14 +163,6 @@ class MissAlignment(pl.LightningModule):
         # get the batch data
         img1, img2, img3, target = batch
         batch_size = target.shape[0]
-
-        # Track consumption
-        if self.monitor is not None:
-            self.monitor.record_consumption(batch_size)
-
-            # Print occasionally
-            if batch_idx % 50 == 0 and batch_idx > 0:
-                self.monitor.print_stats()
 
         # calculate scores and log_precisions for all three images
         score1, log_prec1 = self(img1)
@@ -228,8 +216,8 @@ class MissAlignment(pl.LightningModule):
         if torch.isnan(total_loss):
             raise ValueError(
                 f"NaN loss detected at batch {batch_idx}, epoch {self.current_epoch}. "
-                "This may indicate numerical instability. Check your data, learning rate, "
-                "or consider disabling AMP."
+                "This may indicate numerical instability. Check your data, learning "
+                "rate, or consider disabling AMP."
             )
 
         self.log(

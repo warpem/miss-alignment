@@ -19,7 +19,6 @@ from .alignment.statistics import (
     plot_loss_distribution,
     filter_outlier_xml_files,
 )
-from .data._pool_monitor import SimplePoolMonitor
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment
 
@@ -32,7 +31,7 @@ def train_miss_align(
         help="Number of workers that feed subtomogram reconstructions "
         "to the data pool for training the CNN. Workers will be "
         "divided across the available GPU devices, where multiple "
-        "workers per GPU are allowed."
+        "workers per GPU are allowed.",
     ),
     n_devices: int = typer.Option(
         1,
@@ -41,13 +40,13 @@ def train_miss_align(
         "restricted with CUDA_VISIBLE_DEVICES before the command. "
         "One GPU's is always used to train the CNN, the others are "
         "split across the workers. If a single GPU is provided both "
-        "the model and workers will use the same GPU."
+        "the model and workers will use the same GPU.",
     ),
     pool_size: int = typer.Option(
         1000,
         help="Maximum number of subtomgram reconstructions "
         "to write to temporary storage during training of the "
-        "misalignment model."
+        "misalignment model.",
     ),
     start_at_iteration: int = typer.Option(
         0,
@@ -70,7 +69,6 @@ def train_miss_align(
         "with alignment loss > mean + 3*std. "
         "Outliers are moved to iter{N}_outliers/ directory.",
     ),
-    monitor_production_and_consumption: bool = False,
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
@@ -133,9 +131,9 @@ def train_miss_align(
     if preprocess:
         if start_at_iteration != 0:
             raise ValueError(
-                'Running preprocessing at while '
-                'not starting at iteration 0. This '
-                'is likely not desirable behaviour.'
+                "Running preprocessing at while "
+                "not starting at iteration 0. This "
+                "is likely not desirable behaviour."
             )
         else:
             # Back up original data to pre-iter directory
@@ -145,7 +143,7 @@ def train_miss_align(
                 destination = preiter_directory / xml_file.name
                 copyfile(xml_file, destination)
             print(f"Backed up original metadata to {preiter_directory}")
-    
+
             # Run cross-correlation alignment on the training directory
             run_cross_correlation_alignment(
                 training_directory=training_directory,
@@ -219,12 +217,6 @@ def train_miss_align(
             precision="16-mixed",  # Enable automatic mixed precision
         )
 
-        # initialize the monitor for production consumption rate
-        if monitor_production_and_consumption:
-            monitor = SimplePoolMonitor()
-        else:
-            monitor = None
-
         # Initialize model with parameters from config
         model_params = {
             "learning_rate": model_training_config["learning_rate"],
@@ -232,7 +224,6 @@ def train_miss_align(
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
             "multistep_lr_scheduler": model_training_config["multistep_lr_scheduler"],
-            "monitor": monitor,
             "model_architecture": model_training_config["model_architecture"],
         }
 
