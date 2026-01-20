@@ -1,24 +1,22 @@
 general:
   # MissAlignment iteratively trains models and realigns the tilt-series
   training_directory: /data/set/  # path to directory for writing iteration output
-  apply_ctf: True                 # set to True if CTF estimates are available in .xml
+  apply_ctf: False                # set to True if CTF estimates are available in .xml
   iteration_settings:             # defines all iterations to run (length determines number of iterations)
     # alignment modes: "global" (single pass), "anchoring" (iterative), "spline" (coarse-to-fine)
     - { downsample: 2, alignment: anchoring }
     - { downsample: 2, alignment: anchoring }
     - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: global }
-    - { downsample: 1, alignment: global }
     - { downsample: 1, alignment: [3, 3] }  # local refinement with a 3x3 image warping grid
+    - { downsample: 1, alignment: [3, 3] }
+    - { downsample: 1, alignment: [3, 3] }
   seed: 45132
-
-# ====================================================================
-# Don't touch the parameters below unless you know what you are doing!
 
 model_training:
   # used to initialize model weights
   model_architecture: 'default'
-  model_checkpoint: /path/to/model.ckpt
+  model_checkpoint: model.ckpt
   loss_margin: 0.5
   learning_rate: 1.0e-3
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
@@ -44,7 +42,7 @@ shift_generation:
   outlier_probability: .5
   outlier_max_shift: 20.0         # outlier can maximally go to this value
   fracture_probability: .5
-  fracture_max_shift: 30.0       # specific strong shifts for high tilt images up to this value
+  fracture_max_shift: 20.0       # specific strong shifts for high tilt images up to this value
 
 tilt_series_alignment:
   patch_size: 96      # same as training patch size
