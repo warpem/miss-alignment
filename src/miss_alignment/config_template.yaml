@@ -16,7 +16,7 @@ general:
 model_training:
   # used to initialize model weights
   model_architecture: 'default'
-  model_checkpoint: model.ckpt
+  model_checkpoint: null
   loss_margin: 0.5
   learning_rate: 1.0e-3
   # Set to zero to disable weight decay (i.e. the AdamW optimizer)
