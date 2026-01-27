@@ -19,16 +19,14 @@ conda activate miss-alignment
 
 We need to fix some GPU dependencies for accelerated reconstruction:
 ```
-python -m pip install torch==2.8.0 numpy pillow
+python -m pip install torch==2.8.0 numpy
 pip install torch-projectors --index-url https://warpem.github.io/torch-projectors/cu129/simple/
 ```
 
 You'll need to install [warpylib](https://github.com/warpem/warpylib) directly from github as it is not on pypi yet:
 ```
-python -m pip install git+https://github.com/warpem/warpylib@sinc2_subtomos
+python -m pip install git+https://github.com/warpem/warpylib.git
 ```
-
-Currently, this is a development branch (sinc2_subtomos) while awaiting a merge to main.
 
 Finally install miss-alignment with this command:
 
