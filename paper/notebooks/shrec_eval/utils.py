@@ -1,6 +1,6 @@
 import torch
 
-from miss_alignment.alignment.tilt_series import calculate_cross_correlation, get_shift_from_correlation_image
+from miss_alignment.alignment.correlation import calculate_cross_correlation, get_shift_from_correlation_image
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 
 def read_aretomo_alignment(filepath):
