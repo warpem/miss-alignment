@@ -260,8 +260,10 @@ def train_miss_align(
             # enter datamodule context to start the reconstruction worker pool
             trainer.fit(model, train_dataloaders=training_data)
 
-        # Synchronize all ranks after training before non-distributed operations
-        distributed_barrier()
+            # Synchronize all ranks after training, while DDP is still active
+            # This must be BEFORE the context manager exits, as Lightning's DDP
+            # process group may become invalid during/after teardown
+            distributed_barrier()
 
         # Only rank 0 performs alignment and file operations
         # Other ranks wait at the barrier at the end of the iteration

@@ -36,4 +36,8 @@ def distributed_barrier() -> None:
     Use this to ensure all ranks wait before/after non-distributed operations.
     """
     if torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+        print(f"[Rank {rank}] Entering barrier (world_size={world_size})")
         torch.distributed.barrier()
+        print(f"[Rank {rank}] Exited barrier")
