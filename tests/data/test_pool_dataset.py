@@ -2,8 +2,7 @@ import pytest
 import torch
 import pickle
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from miss_alignment.data.training_dataset import ReconstructionPoolDataset
 
@@ -29,7 +28,7 @@ class TestReconstructionPoolDataset:
     def dataset(self, mock_pool_dir):
         """Create dataset instance with test parameters."""
         ds = ReconstructionPoolDataset(
-            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100
+            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100, n_partitions=1
         )
         ds.partition_id = 0  # Simulate worker_init_fn assignment
         return ds
@@ -38,14 +37,19 @@ class TestReconstructionPoolDataset:
         """Test dataset initialization."""
         batch_size = 4
         epoch_size = 100
+        n_partitions = 2
 
         dataset = ReconstructionPoolDataset(
-            pool_dir=mock_pool_dir, batch_size=batch_size, epoch_size=epoch_size
+            pool_dir=mock_pool_dir,
+            batch_size=batch_size,
+            epoch_size=epoch_size,
+            n_partitions=n_partitions,
         )
 
         assert dataset.pool_dir == mock_pool_dir
         assert dataset.batch_size == batch_size
         assert dataset.epoch_size == epoch_size
+        assert dataset.n_partitions == n_partitions
         assert dataset.partition_id is None  # Not set until worker_init_fn
 
     def test_len(self, dataset):
@@ -55,7 +59,7 @@ class TestReconstructionPoolDataset:
     def test_partition_id_not_set_raises_error(self, mock_pool_dir):
         """Test that accessing partition files without partition_id raises error."""
         dataset = ReconstructionPoolDataset(
-            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100
+            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100, n_partitions=1
         )
         # partition_id is None
         with pytest.raises(RuntimeError, match="partition_id not set"):

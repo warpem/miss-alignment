@@ -7,7 +7,6 @@ import typer
 import torch
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import MissAlignmentDataModule
@@ -222,7 +221,6 @@ def train_miss_align(
             limit_val_batches=0,  # turn on validation steps
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback, progress_bar],
-            plugins=[SLURMEnvironment(auto_requeue=False)],
             precision="16-mixed",  # Enable automatic mixed precision
         )
 
