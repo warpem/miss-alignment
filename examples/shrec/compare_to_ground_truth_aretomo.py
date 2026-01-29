@@ -50,6 +50,7 @@ import argparse
 from pathlib import Path
 import torch
 import numpy as np
+import mrcfile
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.alignment.correlation import (
     calculate_cross_correlation,
@@ -128,6 +129,7 @@ def parse_aretomo_aln_file(aln_file: Path) -> dict:
 def apply_aretomo_alignment_to_tilt_series(
     tilt_series_data: TiltSeriesData,
     aretomo_params: dict,
+    output_dir: Path,
 ) -> TiltSeriesData:
     """
     Apply AreTomo alignment parameters to a TiltSeries.
@@ -138,6 +140,8 @@ def apply_aretomo_alignment_to_tilt_series(
         Original tilt series data
     aretomo_params : dict
         AreTomo alignment parameters from parse_aretomo_aln_file
+    output_dir : Path
+        Directory to save the output XML file
 
     Returns
     -------
@@ -159,22 +163,19 @@ def apply_aretomo_alignment_to_tilt_series(
     tilt_series.tilt_axis_offset_x = tx_angstrom
     tilt_series.tilt_axis_offset_y = ty_angstrom
 
-    # Save the modified metadata to a temporary XML file
-    import tempfile
+    # Save the modified metadata to the output directory
+    output_xml = output_dir / f"{tilt_series_data.xml_metadata_path.stem}.xml"
 
-    # Create temporary directory for modified metadata
-    temp_dir = Path(tempfile.mkdtemp())
-    temp_xml = temp_dir / "aretomo_alignment.xml"
-
-    # Create new TiltSeriesData pointing to temp file
+    # Create new TiltSeriesData pointing to output file
     aretomo_tilt_series_data = tilt_series_data.replace(
-        xml_metadata_path=temp_xml,
+        xml_metadata_path=output_xml,
     )
 
     # Save the modified metadata
     aretomo_tilt_series_data.save_metadata_to_xml(tilt_series)
+    print(f"  Saved AreTomo XML to: {output_xml}")
 
-    return aretomo_tilt_series_data, temp_dir
+    return aretomo_tilt_series_data
 
 
 def reconstruct_full_volume(
@@ -230,7 +231,7 @@ def calculate_alignment_error(
     ground_truth_data: TiltSeriesData,
     aretomo_data: TiltSeriesData,
     device: str = "cpu",
-) -> dict:
+) -> tuple[dict, torch.Tensor, float]:
     """
     Calculate alignment error between ground truth and AreTomo alignments.
 
@@ -248,8 +249,8 @@ def calculate_alignment_error(
 
     Returns
     -------
-    dict
-        Dictionary with error statistics
+    tuple[dict, torch.Tensor, float]
+        Tuple of (error statistics dict, aretomo_volume, pixel_size)
     """
     print(f"  Loading ground truth: {ground_truth_data.xml_metadata_path.stem}")
     gt_tilt_series, gt_images, gt_pixel_size = ground_truth_data.load_metadata_and_stack(
@@ -338,7 +339,7 @@ def calculate_alignment_error(
         "n_tilts": len(error_magnitude),
     }
 
-    return results
+    return results, aretomo_volume, pixel_size
 
 
 def find_matching_aln_file(xml_file: Path, aretomo_dir: Path) -> Path:
@@ -425,82 +426,81 @@ def main():
     print(f"Using device: {args.device}")
 
     all_results = []
-    temp_dirs_to_cleanup = []
 
-    try:
-        for gt_file in gt_files:
-            print(f"\nProcessing {gt_file.name}...")
+    for gt_file in gt_files:
+        print(f"\nProcessing {gt_file.name}...")
 
-            # Find corresponding AreTomo .aln file
-            try:
-                aln_file = find_matching_aln_file(gt_file, args.aretomo_dir)
-            except FileNotFoundError as e:
-                print(f"Warning: {e}, skipping")
-                continue
+        # Find corresponding AreTomo .aln file
+        try:
+            aln_file = find_matching_aln_file(gt_file, args.aretomo_dir)
+        except FileNotFoundError as e:
+            print(f"Warning: {e}, skipping")
+            continue
 
-            print(f"  Found AreTomo file: {aln_file.name}")
+        print(f"  Found AreTomo file: {aln_file.name}")
 
-            # Parse AreTomo alignment file
-            aretomo_params = parse_aretomo_aln_file(aln_file)
+        # Parse AreTomo alignment file
+        aretomo_params = parse_aretomo_aln_file(aln_file)
 
-            # Load ground truth data
-            gt_data = TiltSeriesData(xml_metadata_path=gt_file)
+        # Load ground truth data
+        gt_data = TiltSeriesData(xml_metadata_path=gt_file)
 
-            # Apply AreTomo alignment to create a comparable TiltSeriesData
-            aretomo_data, temp_dir = apply_aretomo_alignment_to_tilt_series(
-                gt_data, aretomo_params
-            )
-            temp_dirs_to_cleanup.append(temp_dir)
+        # Apply AreTomo alignment to create a comparable TiltSeriesData
+        # Saves the XML to the aretomo directory
+        aretomo_data = apply_aretomo_alignment_to_tilt_series(
+            gt_data, aretomo_params, args.aretomo_dir
+        )
 
-            # Calculate errors
-            results = calculate_alignment_error(gt_data, aretomo_data, args.device)
+        # Calculate errors
+        results, aretomo_volume, pixel_size = calculate_alignment_error(
+            gt_data, aretomo_data, args.device
+        )
 
-            # Add filename to results
-            results["filename"] = gt_file.stem
-            all_results.append(results)
+        # Save the reconstructed volume to the aretomo directory
+        volume_output_path = args.aretomo_dir / f"{gt_file.stem}_reconstruction.mrc"
+        with mrcfile.new(volume_output_path, overwrite=True) as mrc:
+            mrc.set_data(aretomo_volume.cpu().numpy())
+            mrc.voxel_size = pixel_size
+        print(f"  Saved reconstruction to: {volume_output_path}")
 
-            # Print results
-            print(f"  Mean error: {results['mean_error_angstrom']:.3f} Å")
-            print(f"  Std error:  {results['std_error_angstrom']:.3f} Å")
-            print(f"  Median error: {results['median_error_angstrom']:.3f} Å")
-            print(f"  Max error:  {results['max_error_angstrom']:.3f} Å")
+        # Add filename to results
+        results["filename"] = gt_file.stem
+        all_results.append(results)
 
-        # Calculate overall statistics
-        if all_results:
-            print("\n" + "=" * 70)
-            print("Overall Statistics")
-            print("=" * 70)
+        # Print results
+        print(f"  Mean error: {results['mean_error_angstrom']:.3f} Å")
+        print(f"  Std error:  {results['std_error_angstrom']:.3f} Å")
+        print(f"  Median error: {results['median_error_angstrom']:.3f} Å")
+        print(f"  Max error:  {results['max_error_angstrom']:.3f} Å")
 
-            all_mean_errors = [r["mean_error_angstrom"] for r in all_results]
-            print(
-                f"Average mean error across all tilt series: {np.mean(all_mean_errors):.3f} Å"
-            )
-            print(f"Std of mean errors: {np.std(all_mean_errors):.3f} Å")
+    # Calculate overall statistics
+    if all_results:
+        print("\n" + "=" * 70)
+        print("Overall Statistics")
+        print("=" * 70)
 
-            # Save raw errors to JSON if requested
-            if args.output_file:
-                import json
+        all_mean_errors = [r["mean_error_angstrom"] for r in all_results]
+        print(
+            f"Average mean error across all tilt series: {np.mean(all_mean_errors):.3f} Å"
+        )
+        print(f"Std of mean errors: {np.std(all_mean_errors):.3f} Å")
 
-                # Format output: {filename: {x_error_angstrom: [...], y_error_angstrom: [...]}}
-                output_data = {}
-                for r in all_results:
-                    output_data[r["filename"]] = {
-                        "x_error_angstrom": r["x_error_angstrom"].tolist(),
-                        "y_error_angstrom": r["y_error_angstrom"].tolist(),
-                    }
+        # Save raw errors to JSON if requested
+        if args.output_file:
+            import json
 
-                with open(args.output_file, "w") as f:
-                    json.dump(output_data, f, indent=2)
+            # Format output: {filename: {x_error_angstrom: [...], y_error_angstrom: [...]}}
+            output_data = {}
+            for r in all_results:
+                output_data[r["filename"]] = {
+                    "x_error_angstrom": r["x_error_angstrom"].tolist(),
+                    "y_error_angstrom": r["y_error_angstrom"].tolist(),
+                }
 
-                print(f"\nRaw alignment errors saved to {args.output_file}")
+            with open(args.output_file, "w") as f:
+                json.dump(output_data, f, indent=2)
 
-    finally:
-        # Cleanup temporary directories
-        import shutil
-
-        for temp_dir in temp_dirs_to_cleanup:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir)
+            print(f"\nRaw alignment errors saved to {args.output_file}")
 
 
 if __name__ == "__main__":
