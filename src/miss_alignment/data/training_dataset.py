@@ -56,12 +56,16 @@ class ReconstructionPoolDataset(Dataset):
         return self.epoch_size
 
     def _list_partition_files(self) -> list[Path]:
-        """List all files in this worker's partition."""
+        """List all files in this worker's partition.
+
+        Files are named: partition_{partition_id}_worker_{worker_id}_seq_{seq_id}.pickle
+        Multiple reconstruction workers write to each partition.
+        """
         if self.partition_id is None:
             raise RuntimeError(
                 "partition_id not set. Ensure worker_init_fn assigns it."
             )
-        pattern = f"partition_{self.partition_id}_*.pickle"
+        pattern = f"partition_{self.partition_id}_worker_*_seq_*.pickle"
         # Filter out temp files (they start with tmp_)
         return [f for f in self.pool_dir.glob(pattern) if not f.name.startswith("tmp_")]
 

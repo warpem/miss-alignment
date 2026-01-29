@@ -13,13 +13,9 @@ from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
-from .alignment.statistics import (
-    identify_outliers,
-    plot_loss_distribution,
-    filter_outlier_xml_files,
-)
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment
+from .utils import distributed_barrier, is_rank_zero, rank_zero_print
 
 
 def parse_device_list(value: str) -> list[int]:
@@ -70,12 +66,6 @@ def train_miss_align(
         help="Run cross-correlation based alignment before training iterations. "
         "This performs coarse alignment with pretilt estimation.",
     ),
-    filter_outliers: bool = typer.Option(
-        False,
-        help="[Experimental option] Filter out tilt-series "
-        "with alignment loss > mean + 3*std. "
-        "Outliers are moved to iter{N}_outliers/ directory.",
-    ),
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
@@ -86,20 +76,19 @@ def train_miss_align(
     # Parse device lists from comma-separated strings
     devices_training = parse_device_list(training_devices)
     devices_reconstruction = parse_device_list(reconstruction_devices)
-    n_workers = len(devices_reconstruction)
 
     if len(devices_training) < 1:
         raise ValueError("MissAlignment needs at least 1 training device")
-    if n_workers < 1:
+    if len(devices_reconstruction) < 1:
         raise ValueError("MissAlignment needs at least 1 reconstruction worker")
 
     # For alignment stage, use all visible GPUs
     n_visible_gpus = torch.cuda.device_count()
     devices_alignment = list(range(n_visible_gpus))
 
-    print(f"Using devices {devices_training} for training")
-    print(f"Using devices {devices_reconstruction} for reconstruction workers")
-    print(f"Using devices {devices_alignment} for alignment")
+    rank_zero_print(f"Using devices {devices_training} for training")
+    rank_zero_print(f"Using devices {devices_reconstruction} for reconstruction")
+    rank_zero_print(f"Using devices {devices_alignment} for alignment")
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
@@ -147,7 +136,7 @@ def train_miss_align(
             for xml_file in training_directory.glob("*.xml"):
                 destination = preiter_directory / xml_file.name
                 copyfile(xml_file, destination)
-            print(f"Backed up original metadata to {preiter_directory}")
+            rank_zero_print(f"Backed up original metadata to {preiter_directory}")
 
             # Run cross-correlation alignment on the training directory
             run_cross_correlation_alignment(
@@ -176,9 +165,9 @@ def train_miss_align(
         # ============================================================
         iteration_settings = general_config["iteration_settings"][x]
         alignment_mode = iteration_settings["alignment"]
-        print(f"\n{'=' * 60}")
-        print(f"Iteration {x + 1}/{end_iter} - Alignment mode: {alignment_mode}")
-        print(f"{'=' * 60}\n")
+        rank_zero_print(f"\n{'=' * 60}")
+        rank_zero_print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
+        rank_zero_print(f"{'=' * 60}\n")
 
         # Define the early stopping callback
         early_stopping = MAEarlyStopping(
@@ -257,8 +246,8 @@ def train_miss_align(
         with MissAlignmentDataModule(
             training_directory,
             create_default_generator(**shift_generation_config),
-            n_workers=n_workers,
             reconstruction_accelerators=devices_reconstruction,
+            n_training_devices=len(devices_training),
             batch_size=batch_size_per_device,
             patch_size=data_module_config["patch_size"],
             apply_ctf=general_config["apply_ctf"],
@@ -271,79 +260,66 @@ def train_miss_align(
             # enter datamodule context to start the reconstruction worker pool
             trainer.fit(model, train_dataloaders=training_data)
 
-        print(
-            f"Best model after training iteration {x}:",
-            trainer.checkpoint_callback.best_model_path,
-        )
-        # update the config with the trained model
-        model_training_config["model_checkpoint"] = (
-            trainer.checkpoint_callback.best_model_path
-        )
+        # Synchronize all ranks after training before non-distributed operations
+        distributed_barrier()
 
-        # copy best model to training directory as model.ckpt
-        best_model_path = Path(trainer.checkpoint_callback.best_model_path)
-        training_model_path = training_directory / "model.ckpt"
-        copyfile(best_model_path, training_model_path)
-        print(f"Copied best model to {training_model_path}")
+        # Only rank 0 performs alignment and file operations
+        # Other ranks wait at the barrier at the end of the iteration
+        if is_rank_zero():
+            best_model_path = Path(trainer.checkpoint_callback.best_model_path)
+            rank_zero_print(f"Best model after iteration {x}:", best_model_path)
 
-        # ============================================================
-        # =============== tilt-series alignment step =================
-        # ============================================================
+            # copy best model to training directory as model.ckpt
+            # This known path is used by all ranks for the next iteration
+            training_model_path = training_directory / "model.ckpt"
+            copyfile(best_model_path, training_model_path)
+            rank_zero_print(f"Copied best model to {training_model_path}")
 
-        # get list of all files to process for alignment
-        tilt_series_list = list(training_directory.glob("*.xml"))
+            # ============================================================
+            # =============== tilt-series alignment step =================
+            # ============================================================
 
-        # run alignment in parallel over all available devices
-        alignment_losses = run_alignment_parallel(
-            model_checkpoint=model_training_config["model_checkpoint"],
-            tilt_series_list=tilt_series_list,
-            output_directory=training_directory,
-            setting=iteration_settings["alignment"],
-            patch_size=alignment_config["patch_size"],
-            patch_overlap=alignment_config["patch_overlap"],
-            batch_size=alignment_config["batch_size"],
-            apply_ctf=general_config["apply_ctf"],
-            downsample=iteration_settings["downsample"],
-            devices_list=devices_alignment,
-        )
+            # get list of all files to process for alignment
+            tilt_series_list = list(training_directory.glob("*.xml"))
 
-        # Plot loss distribution
-        plot_path = training_directory / f"iter{x + 1}_alignment_losses.png"
-        plot_loss_distribution(
-            losses=alignment_losses,
-            output_path=plot_path,
-            n_std=3.0,
-            iteration=x + 1,
-        )
-
-        # Filter outliers if requested
-        if filter_outliers:
-            outliers, mean_loss, std_loss = identify_outliers(
-                alignment_losses, n_std=3.0
+            # run alignment in parallel over all available devices
+            run_alignment_parallel(
+                model_checkpoint=str(training_model_path),
+                tilt_series_list=tilt_series_list,
+                output_directory=training_directory,
+                setting=iteration_settings["alignment"],
+                patch_size=alignment_config["patch_size"],
+                patch_overlap=alignment_config["patch_overlap"],
+                batch_size=alignment_config["batch_size"],
+                apply_ctf=general_config["apply_ctf"],
+                downsample=iteration_settings["downsample"],
+                devices_list=devices_alignment,
             )
-            if outliers:
-                print(f"\nFiltering {len(outliers)} outlier tilt-series:")
-                filter_outlier_xml_files(
-                    training_directory=training_directory,
-                    outliers=outliers,
-                    iteration=x + 1,
-                )
 
-        # make copies of the xml files and model after alignment
-        iteration_directory = training_directory / ("iter" + str(x + 1))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
+            # make copies of the xml files and model after alignment
+            iteration_directory = training_directory / ("iter" + str(x + 1))
+            iteration_directory.mkdir(parents=True, exist_ok=True)
 
-        for xml_file in training_directory.glob("*.xml"):
-            destination_xml = iteration_directory / xml_file.name
-            copyfile(xml_file, destination_xml)
+            for xml_file in training_directory.glob("*.xml"):
+                destination_xml = iteration_directory / xml_file.name
+                copyfile(xml_file, destination_xml)
 
-            # copy the file with the alignment loss
-            loss_json = xml_file.stem + "_alignment_loss.json"
-            destination_json = iteration_directory / loss_json
-            copyfile(training_directory / loss_json, destination_json)
+                # copy the file with the alignment loss
+                loss_json = xml_file.stem + "_alignment_loss.json"
+                destination_json = iteration_directory / loss_json
+                copyfile(training_directory / loss_json, destination_json)
 
-        training_model_path = iteration_directory / "model.ckpt"
-        copyfile(best_model_path, training_model_path)
-        print(f"Copied best model to {training_model_path}")
+            iteration_model_path = iteration_directory / "model.ckpt"
+            copyfile(best_model_path, iteration_model_path)
+            rank_zero_print(f"Copied best model to {iteration_model_path}")
+
+        # All ranks use the known model.ckpt path for the next iteration
+        # (rank 0 wrote it above, barrier below ensures it exists)
+        model_training_config["model_checkpoint"] = str(
+            training_directory / "model.ckpt"
+        )
+
+        # Synchronize all ranks before starting the next iteration
+        distributed_barrier()
 
     return None

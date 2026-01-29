@@ -1,7 +1,8 @@
 # standard libraries
-import os
+import hashlib
 import multiprocessing as mp
 import shutil
+import tempfile
 from pathlib import Path
 from collections.abc import Callable
 from typing import Optional
@@ -13,21 +14,7 @@ from torch.utils.data import DataLoader
 
 from ._reconstruction_worker import reconstruction_worker
 from .training_dataset import ReconstructionPoolDataset
-
-
-def _is_rank_zero() -> bool:
-    """Check if we're on the main process (rank 0) in DDP.
-
-    This checks both torch.distributed (if initialized) and the LOCAL_RANK
-    environment variable (set by DDP launchers before script execution).
-    """
-    if torch.distributed.is_initialized():
-        return torch.distributed.get_rank() == 0
-    # Check LOCAL_RANK env var (set by DDP launcher before torch.distributed init)
-    local_rank = os.environ.get("LOCAL_RANK")
-    if local_rank is not None:
-        return int(local_rank) == 0
-    return True
+from ..utils import is_rank_zero
 
 
 # Default pool size
@@ -37,12 +24,11 @@ DEFAULT_POOL_SIZE = 1000
 def _worker_init_fn(worker_id: int):
     """Initialize DataLoader worker with its partition ID.
 
-    Calculates global partition assignment for multi-GPU DDP training:
-    - global_worker_id = global_rank * num_local_workers + worker_id
-    - partition_id = global_worker_id % n_partitions
+    Each dataloader worker across all DDP ranks gets its own dedicated partition:
+    - partition_id = global_rank * num_local_workers + worker_id
 
-    This allows multiple DataLoader workers to consume from the same partition
-    when there are more consumers than producers.
+    With n_partitions = n_training_devices * dataloader_workers, each worker
+    gets exactly one partition (no sharing).
 
     Note: global_rank is obtained directly from torch.distributed here, not from
     the dataset. This is critical because the dataloader may be created before
@@ -60,24 +46,26 @@ def _worker_init_fn(worker_id: int):
         else:
             global_rank = 0
         num_local_workers = worker_info.num_workers
-        n_partitions = dataset.n_partitions
 
-        global_worker_id = global_rank * num_local_workers + worker_id
-        dataset.partition_id = global_worker_id % n_partitions
+        # Each dataloader worker gets its own partition
+        # partition_id = global_rank * num_local_workers + worker_id
+        dataset.partition_id = global_rank * num_local_workers + worker_id
 
 
 class MissAlignmentDataModule(pl.LightningDataModule):
     """
     Training datamodule with reconstruction workers and DataLoader consumers.
 
-    Reconstruction workers write to partitioned pool directories. DataLoader
-    workers consume from these partitions. Multiple DataLoader workers can
-    share a partition (they race to grab files, with retry logic handling
-    conflicts).
+    Reconstruction workers cycle through all partitions, writing to each in
+    round-robin order. Each DataLoader worker (across all DDP ranks) gets
+    its own dedicated partition.
 
-    For multi-GPU DDP training, partition assignment is global:
-        global_worker_id = global_rank * dataloader_workers + local_worker_id
-        partition_id = global_worker_id % n_workers
+    Partitioning scheme:
+        n_partitions = n_training_devices * dataloader_workers
+        partition_id = global_rank * dataloader_workers + local_worker_id
+
+    File naming:
+        partition_{partition_id}_worker_{worker_id}_seq_{sequential_id}.pickle
 
     Directory layout:
 
@@ -96,10 +84,12 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         Directory containing tilt series JSON files
     shift_generator : Callable
         Function that generates synthetic alignment shifts
-    n_workers : int
-        Number of reconstruction workers (each writes to its own partition)
     reconstruction_accelerators : list[int]
-        GPU device IDs for reconstruction workers (one per worker)
+        GPU device IDs for reconstruction workers. The number of workers is
+        determined by the length of this list. Devices can be repeated to run
+        multiple workers per GPU (e.g., [0, 0, 1, 1]).
+    n_training_devices : int
+        Number of training devices (GPUs) used for DDP training
     batch_size : int, default 4
         Batch size for training (per device in DDP)
     steps_per_epoch : int, default 1000
@@ -113,16 +103,15 @@ class MissAlignmentDataModule(pl.LightningDataModule):
     pool_size : int, default 1000
         Total size of reconstruction pool (divided among partitions)
     dataloader_workers : int, default 2
-        Number of CPU DataLoader workers per training device. Can exceed
-        n_workers; multiple DataLoader workers will share partitions.
+        Number of CPU DataLoader workers per training device.
     """
 
     def __init__(
         self,
         dataset_directory,
         shift_generator: Callable,
-        n_workers: int,
         reconstruction_accelerators: list[int],
+        n_training_devices: int,
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
         patch_size: int = 64,
@@ -132,35 +121,34 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         dataloader_workers: int = 2,
     ):
         super().__init__()
+
+        # Validate reconstruction accelerators
+        if not reconstruction_accelerators:
+            raise ValueError("reconstruction_accelerators cannot be empty")
+
+        # Number of workers is determined by the accelerators list
+        self.n_workers = len(reconstruction_accelerators)
+        self.reconstruction_devices = [f"cuda:{x}" for x in reconstruction_accelerators]
+
         # data module controls
         self.batch_size = batch_size
         self.epoch_size = steps_per_epoch * batch_size
-        self.n_workers = n_workers
         self.pool_size = pool_size
         self.dataloader_workers = dataloader_workers
+        self.n_training_devices = n_training_devices
+
+        # Calculate number of partitions: one per dataloader worker across all ranks
+        self.n_partitions = n_training_devices * dataloader_workers
 
         # Validate pool size
-        self.partition_size = pool_size // n_workers
+        self.partition_size = pool_size // self.n_partitions
         if self.partition_size < 2 * batch_size:
             raise ValueError(
-                f"Pool size {pool_size} with {n_workers} workers gives "
+                f"Pool size {pool_size} with {self.n_partitions} partitions gives "
                 f"partition_size={self.partition_size}, which is less than "
                 f"2 * batch_size ({2 * batch_size}). Increase pool_size or "
-                f"decrease n_workers/batch_size."
+                f"decrease n_training_devices/dataloader_workers/batch_size."
             )
-
-        # This is an old code path that used cpu's for reconstruction
-        # we have abandonded it in favor of splitting the GPU's
-        if reconstruction_accelerators in [None, []]:
-            # self.reconstruction_devices = ["cpu"] * n_workers
-            raise NotImplementedError
-
-        # Set up reconstruction devices
-        if len(reconstruction_accelerators) != n_workers:
-            raise ValueError(
-                "Number of reconstruction accelerators must match n_workers"
-            )
-        self.reconstruction_devices = [f"cuda:{x}" for x in reconstruction_accelerators]
 
         # reconstruction controls
         self.patch_size = patch_size
@@ -206,13 +194,15 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         if self._workers_spawned:
             return
 
-        # Use a deterministic pool directory so all ranks know the path.
-        # This is placed inside the training directory to ensure all ranks
-        # can access it (important for distributed filesystems).
-        self.pool_dir = self.dataset_directory / ".recon_pool"
+        # Use a deterministic pool directory in /tmp so all DDP ranks know the path.
+        # The path is based on a hash of the training directory to avoid collisions.
+        dir_hash = hashlib.md5(
+            str(self.dataset_directory.resolve()).encode()
+        ).hexdigest()[:12]
+        self.pool_dir = Path(tempfile.gettempdir()) / f"recon_pool_{dir_hash}"
 
         # Only rank 0 spawns reconstruction workers
-        if _is_rank_zero():
+        if is_rank_zero():
             mp.set_start_method("spawn", force=True)
 
             # Clean up any existing pool directory from previous runs
@@ -220,6 +210,10 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 shutil.rmtree(self.pool_dir)
             self.pool_dir.mkdir(parents=True, exist_ok=True)
             print(f"Created pool directory: {self.pool_dir}")
+            print(
+                f"Pool configuration: {self.n_workers} workers -> "
+                f"{self.n_partitions} partitions ({self.partition_size} files each)"
+            )
 
             # Start worker processes
             self.stop_event = mp.Event()
@@ -227,11 +221,12 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             # get a list of all the tilt series json files
             tilt_series_xmls = list(self.dataset_directory.glob("*.xml"))
 
-            for partition_id in range(self.n_workers):
+            for worker_id in range(self.n_workers):
                 p = mp.Process(
                     target=reconstruction_worker,
                     kwargs={
-                        "partition_id": partition_id,
+                        "worker_id": worker_id,
+                        "n_partitions": self.n_partitions,
                         "partition_size": self.partition_size,
                         "pool_dir": self.pool_dir,
                         "tilt_series_xmls": tilt_series_xmls,
@@ -241,7 +236,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                         "shift_generator": self.shift_generator,
                         "stop_event": self.stop_event,
                         "tilt_series_refresh_rate": 10,
-                        "device": self.reconstruction_devices[partition_id],
+                        "device": self.reconstruction_devices[worker_id],
                     },
                 )
                 p.start()
@@ -257,7 +252,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             pool_dir=self.pool_dir,
             batch_size=self.batch_size,
             epoch_size=self.epoch_size,
-            n_partitions=self.n_workers,
+            n_partitions=self.n_partitions,
         )
 
     def train_dataloader(self):
@@ -281,7 +276,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         Other ranks simply reset their local state.
         """
         # Only perform full teardown on rank 0 (where workers were spawned)
-        if _is_rank_zero():
+        if is_rank_zero():
             if self.stop_event:
                 print("Stopping reconstruction workers...")
                 self.stop_event.set()
