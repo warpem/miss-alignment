@@ -1,5 +1,5 @@
 # standard libraries
-import tempfile
+import os
 import multiprocessing as mp
 import shutil
 from pathlib import Path
@@ -13,6 +13,22 @@ from torch.utils.data import DataLoader
 
 from ._reconstruction_worker import reconstruction_worker
 from .training_dataset import ReconstructionPoolDataset
+
+
+def _is_rank_zero() -> bool:
+    """Check if we're on the main process (rank 0) in DDP.
+
+    This checks both torch.distributed (if initialized) and the LOCAL_RANK
+    environment variable (set by DDP launchers before script execution).
+    """
+    if torch.distributed.is_initialized():
+        return torch.distributed.get_rank() == 0
+    # Check LOCAL_RANK env var (set by DDP launcher before torch.distributed init)
+    local_rank = os.environ.get("LOCAL_RANK")
+    if local_rank is not None:
+        return int(local_rank) == 0
+    return True
+
 
 # Default pool size
 DEFAULT_POOL_SIZE = 1000
@@ -158,6 +174,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.pool_dir = None
         self.pool_processes: list = []
         self.stop_event: Optional[mp.Event] = None
+        self._workers_spawned = False  # Guard against duplicate worker spawning
 
     def __enter__(self):
         """Enter context manager and setup pool."""
@@ -173,44 +190,69 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         pass
 
     def setup(self, stage: str = "fit"):
-        """No stage for setup because this is used just for training."""
+        """Set up the data module for training.
+
+        This method spawns reconstruction workers (on rank 0 only) and creates
+        the dataset. All ranks share the same pool directory.
+
+        In DDP, only rank 0 spawns reconstruction workers. Other ranks skip
+        worker spawning but still create their dataset pointing to the shared
+        pool directory.
+        """
         if stage != "fit":
             raise ValueError(f"{stage} is not a valid stage")
 
-        mp.set_start_method("spawn", force=True)
+        # Guard: Only run setup once per process
+        if self._workers_spawned:
+            return
 
-        # Create temporary directory for pool
-        self.pool_dir = Path(tempfile.mkdtemp(prefix="recon_pool_"))
-        print(f"Created pool directory: {self.pool_dir}")
+        # Use a deterministic pool directory so all ranks know the path.
+        # This is placed inside the training directory to ensure all ranks
+        # can access it (important for distributed filesystems).
+        self.pool_dir = self.dataset_directory / ".recon_pool"
 
-        # Start worker processes
-        self.stop_event = mp.Event()
+        # Only rank 0 spawns reconstruction workers
+        if _is_rank_zero():
+            mp.set_start_method("spawn", force=True)
 
-        # get a list of all the tilt series json files
-        tilt_series_xmls = list(self.dataset_directory.glob("*.xml"))
+            # Clean up any existing pool directory from previous runs
+            if self.pool_dir.exists():
+                shutil.rmtree(self.pool_dir)
+            self.pool_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Created pool directory: {self.pool_dir}")
 
-        for partition_id in range(self.n_workers):
-            p = mp.Process(
-                target=reconstruction_worker,
-                kwargs={
-                    "partition_id": partition_id,
-                    "partition_size": self.partition_size,
-                    "pool_dir": self.pool_dir,
-                    "tilt_series_xmls": tilt_series_xmls,
-                    "patch_size": self.patch_size,
-                    "apply_ctf": self.apply_ctf,
-                    "downsample": self.downsample,
-                    "shift_generator": self.shift_generator,
-                    "stop_event": self.stop_event,
-                    "tilt_series_refresh_rate": 10,
-                    "device": self.reconstruction_devices[partition_id],
-                },
-            )
-            p.start()
-            self.pool_processes.append(p)
+            # Start worker processes
+            self.stop_event = mp.Event()
+
+            # get a list of all the tilt series json files
+            tilt_series_xmls = list(self.dataset_directory.glob("*.xml"))
+
+            for partition_id in range(self.n_workers):
+                p = mp.Process(
+                    target=reconstruction_worker,
+                    kwargs={
+                        "partition_id": partition_id,
+                        "partition_size": self.partition_size,
+                        "pool_dir": self.pool_dir,
+                        "tilt_series_xmls": tilt_series_xmls,
+                        "patch_size": self.patch_size,
+                        "apply_ctf": self.apply_ctf,
+                        "downsample": self.downsample,
+                        "shift_generator": self.shift_generator,
+                        "stop_event": self.stop_event,
+                        "tilt_series_refresh_rate": 10,
+                        "device": self.reconstruction_devices[partition_id],
+                    },
+                )
+                p.start()
+                self.pool_processes.append(p)
+
+        # Mark setup as complete to prevent duplicate execution
+        self._workers_spawned = True
 
         # Create dataset (global_rank is obtained in worker_init_fn
-        # from torch.distributed)
+        # from torch.distributed). All ranks create their own dataset
+        # pointing to the shared pool directory.
         self.train_dataset = ReconstructionPoolDataset(
             pool_dir=self.pool_dir,
             batch_size=self.batch_size,
@@ -233,18 +275,31 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         )
 
     def teardown(self, stage: Optional[str] = None):
-        """Clean up pool and worker processes."""
-        if self.stop_event:
-            print("Stopping reconstruction workers...")
-            self.stop_event.set()
+        """Clean up pool and worker processes.
 
-            for p in self.pool_processes:
-                p.join(timeout=5.0)
-                if p.is_alive():
-                    p.terminate()
-                    p.join()
+        Only rank 0 performs cleanup since only rank 0 spawns workers.
+        Other ranks simply reset their local state.
+        """
+        # Only perform full teardown on rank 0 (where workers were spawned)
+        if _is_rank_zero():
+            if self.stop_event:
+                print("Stopping reconstruction workers...")
+                self.stop_event.set()
 
-        if self.pool_dir and self.pool_dir.exists():
-            shutil.rmtree(self.pool_dir)
-            print(f"Cleaned up pool directory: {self.pool_dir}")
-        print("Cleanup complete")
+                for p in self.pool_processes:
+                    p.join(timeout=5.0)
+                    if p.is_alive():
+                        p.terminate()
+                        p.join()
+
+            if self.pool_dir and self.pool_dir.exists():
+                shutil.rmtree(self.pool_dir)
+                print(f"Cleaned up pool directory: {self.pool_dir}")
+
+            print("Cleanup complete")
+
+        # Reset state for potential reuse (all ranks)
+        self._workers_spawned = False
+        self.pool_processes = []
+        self.stop_event = None
+        self.pool_dir = None

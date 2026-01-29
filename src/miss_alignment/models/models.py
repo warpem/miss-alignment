@@ -227,6 +227,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         self.log(
@@ -236,6 +237,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         self.log(
@@ -245,6 +247,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         # log actual assigned score of the model
@@ -255,6 +258,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
         self.log(
             name="train_score_misaligned",
@@ -263,6 +267,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         # Log mean precision to monitor uncertainty learning
@@ -273,6 +278,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         # Log the learning rate
@@ -369,7 +375,15 @@ class MAProgressBar(Callback):
         self.pbar = None
         self.start_time = None
 
+    def _is_rank_zero(self, trainer) -> bool:
+        """Check if we're on the main process (rank 0)."""
+        return trainer.global_rank == 0
+
     def on_train_start(self, trainer, pl_module):
+        # Only create progress bar on rank 0
+        if not self._is_rank_zero(trainer):
+            return
+
         import sys
         import time
 
@@ -386,6 +400,10 @@ class MAProgressBar(Callback):
         )
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # Only update progress bar on rank 0
+        if not self._is_rank_zero(trainer) or self.pbar is None:
+            return
+
         global_step = trainer.current_epoch * self.steps_per_epoch + batch_idx + 1
 
         if global_step % self.refresh_rate == 0 or global_step == self.total_steps:
@@ -394,6 +412,10 @@ class MAProgressBar(Callback):
             self.pbar.refresh()
 
     def on_train_epoch_end(self, trainer, pl_module):
+        # Only update progress bar on rank 0
+        if not self._is_rank_zero(trainer) or self.pbar is None:
+            return
+
         # Update postfix with epoch metrics
         metrics = trainer.logged_metrics
         postfix = {}
@@ -411,7 +433,8 @@ class MAProgressBar(Callback):
             self.pbar.set_postfix(postfix)
 
     def on_train_end(self, trainer, pl_module):
-        if self.pbar is not None:
+        # Only close progress bar on rank 0
+        if self._is_rank_zero(trainer) and self.pbar is not None:
             self.pbar.close()
 
 
@@ -461,7 +484,12 @@ class MAEarlyStopping(Callback):
         return False
 
     def on_train_epoch_end(self, trainer, pl_module):
-        """Called at the end of each training batch."""
+        """Called at the end of each training epoch."""
+        # Only evaluate early stopping on rank 0 to ensure consistent decisions.
+        # Lightning will synchronize trainer.should_stop across all ranks.
+        if trainer.global_rank != 0:
+            return
+
         # Check if we should start early stopping yet
         if not self._check_scheduler_complete(trainer, pl_module):
             return
