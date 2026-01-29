@@ -90,8 +90,11 @@ class TiltSeriesFetcher:
 
 
 def _count_partition_files(pool_dir: Path, partition_id: int) -> int:
-    """Count the number of files in a partition."""
-    pattern = f"partition_{partition_id}_*.pickle"
+    """Count the number of files in a partition.
+
+    Files are named: partition_{partition_id}_worker_{worker_id}_seq_{seq_id}.pickle
+    """
+    pattern = f"partition_{partition_id}_worker_*.pickle"
     return len(list(pool_dir.glob(pattern)))
 
 

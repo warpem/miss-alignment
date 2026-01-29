@@ -44,7 +44,7 @@ def train_miss_align(
         "to run multiple workers per GPU (e.g., '0,0,1,1' runs 2 workers each "
         "on GPU 0 and GPU 1). Can overlap with training devices if needed.",
     ),
-    dataloader_workers_per_training_device: int = typer.Option(
+    dataloaders_per_trainer: int = typer.Option(
         2,
         help="Number of CPU DataLoader workers per training device. "
         "Total DataLoader workers = this value × number of training devices.",
@@ -265,7 +265,7 @@ def train_miss_align(
             downsample=iteration_settings["downsample"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
             pool_size=pool_size,
-            dataloader_workers=dataloader_workers_per_training_device,
+            dataloader_workers=dataloaders_per_trainer,
         ) as dm:
             training_data = dm.train_dataloader()
             # enter datamodule context to start the reconstruction worker pool
