@@ -371,6 +371,7 @@ class MAProgressBar(Callback):
         self.max_epochs = max_epochs
         self.steps_per_epoch = steps_per_epoch
         self.refresh_rate = refresh_rate
+        # total_steps will be adjusted for world_size in on_train_start
         self.total_steps = max_epochs * steps_per_epoch
         self.pbar = None
         self.start_time = None
@@ -389,6 +390,12 @@ class MAProgressBar(Callback):
 
         from tqdm import tqdm
 
+        # Adjust total_steps for DDP world size, since DistributedSampler
+        # divides the data among GPUs
+        world_size = trainer.world_size
+        steps_per_epoch_per_rank = self.steps_per_epoch // world_size
+        self.total_steps = self.max_epochs * steps_per_epoch_per_rank
+
         self.start_time = time.time()
         self.pbar = tqdm(
             total=self.total_steps,
@@ -404,7 +411,9 @@ class MAProgressBar(Callback):
         if not self._is_rank_zero(trainer) or self.pbar is None:
             return
 
-        global_step = trainer.current_epoch * self.steps_per_epoch + batch_idx + 1
+        # Use trainer.global_step which correctly tracks optimizer steps
+        # regardless of DDP world size
+        global_step = trainer.global_step
 
         if global_step % self.refresh_rate == 0 or global_step == self.total_steps:
             # Update progress bar to current position
