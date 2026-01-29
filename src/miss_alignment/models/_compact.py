@@ -37,22 +37,22 @@ class Compact3DConvNet(nn.Module):
 
         # Shared feature layer
         self.features = nn.Sequential(
-            nn.Linear(64, 16),
-            nn.BatchNorm1d(16),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
             nn.SiLU(),
         )
 
         # Score head
-        self.score_head = nn.Linear(16, 1, bias=False)
+        self.score_head = nn.Linear(32, 1, bias=False)
 
         # Log-precision head for uncertainty estimation
-        self.log_precision_head = nn.Linear(16, 1)
+        self.log_precision_head = nn.Linear(32, 1)
 
     def forward(self, x):
         # Assuming input shape: (batch_size, 1, 64, 64, 64)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 64)
-        x = self.features(x)  # Shared features: (batch_size, 16)
+        x = self.features(x)  # Shared features: (batch_size, 32)
         score = self.score_head(x)  # (batch_size, 1)
         log_precision = self.log_precision_head(x)  # (batch_size, 1)
         return score, log_precision
