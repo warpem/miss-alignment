@@ -33,12 +33,21 @@ class ReconstructionPoolDataset(Dataset):
         Minimum number of files required before reading (pause threshold)
     epoch_size : int
         Number of samples per epoch
+    n_partitions : int
+        Total number of partitions (reconstruction workers)
     """
 
-    def __init__(self, pool_dir: Path, batch_size: int, epoch_size: int):
+    def __init__(
+        self,
+        pool_dir: Path,
+        batch_size: int,
+        epoch_size: int,
+        n_partitions: int,
+    ):
         self.pool_dir = pool_dir
         self.batch_size = batch_size
         self.epoch_size = epoch_size
+        self.n_partitions = n_partitions
         # partition_id is set by worker_init_fn in the DataLoader
         self.partition_id: int | None = None
 
@@ -54,10 +63,7 @@ class ReconstructionPoolDataset(Dataset):
             )
         pattern = f"partition_{self.partition_id}_*.pickle"
         # Filter out temp files (they start with tmp_)
-        return [
-            f for f in self.pool_dir.glob(pattern)
-            if not f.name.startswith("tmp_")
-        ]
+        return [f for f in self.pool_dir.glob(pattern) if not f.name.startswith("tmp_")]
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
         """
@@ -116,7 +122,8 @@ class ReconstructionPoolDataset(Dataset):
         volumes, labels = zip(*combined)
         labels = torch.tensor(labels)
 
-        # run normalization and augmentation (no mirroring - done by reconstruction worker)
+        # run normalization and augmentation (no mirroring -
+        # done by reconstruction worker)
         volumes = self._prep_and_augment(list(volumes))
         # add empty channel dim to all volumes
         volumes = [einops.rearrange(v, "d h w -> 1 d h w") for v in volumes]

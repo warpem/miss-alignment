@@ -9,27 +9,27 @@ class Compact3DConvNet(nn.Module):
         self.conv = nn.Sequential(
             # Layer 0: 64x64x64 -> 64x64x64
             nn.Conv3d(1, 8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(8),
+            nn.GroupNorm(8, 8),
             nn.SiLU(),
             # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(16),
+            nn.GroupNorm(8, 16),
             nn.SiLU(),
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.SiLU(),
             # Layer 3: 16x16x16 -> 8x8x8
             nn.Conv3d(32, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(64),
+            nn.GroupNorm(8, 64),
             nn.SiLU(),
             # Layer 4: 8x8x8 -> 4x4x4
             nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(64),
+            nn.GroupNorm(8, 64),
             nn.SiLU(),
             # Layer 5: 4x4x4 -> 2x2x2
             nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(64),
+            nn.GroupNorm(8, 64),
             nn.SiLU(),
             # Global average pooling: 2x2x2 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
@@ -38,7 +38,7 @@ class Compact3DConvNet(nn.Module):
         # Shared feature layer
         self.features = nn.Sequential(
             nn.Linear(64, 32),
-            nn.BatchNorm1d(32),
+            nn.LayerNorm(32),
             nn.SiLU(),
         )
 
@@ -66,19 +66,19 @@ class Compact3DConvNetGELU(nn.Module):
         self.conv = nn.Sequential(
             # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(1, 8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(8),
+            nn.GroupNorm(8, 8),
             nn.GELU(),
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(16),
+            nn.GroupNorm(8, 16),
             nn.GELU(),
             # Layer 3: 16x16x16 -> 8x8x8
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.GELU(),
             # Layer 4: 8x8x8 -> 4x4x4
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.GELU(),
             # Global average pooling: 4x4x4 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
@@ -107,19 +107,19 @@ class Compact3DConvNetSpread(nn.Module):
         self.conv = nn.Sequential(
             # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(1, 8, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm3d(8),
+            nn.GroupNorm(8, 8),
             nn.ReLU(),
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(16),
+            nn.GroupNorm(8, 16),
             nn.ReLU(),
             # Layer 3: 16x16x16 -> 8x8x8
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             # Layer 4: 8x8x8 -> 4x4x4
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             # Global average pooling: 4x4x4 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
@@ -148,19 +148,19 @@ class Compact3DConvNetWide(nn.Module):
         self.conv = nn.Sequential(
             # Layer 1: 64x64x64 -> 32x32x32
             nn.Conv3d(1, 16, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(16),
+            nn.GroupNorm(8, 16),
             nn.ReLU(),
             # Layer 2: 32x32x32 -> 16x16x16
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             # Layer 3: 16x16x16 -> 8x8x8
             nn.Conv3d(32, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(64),
+            nn.GroupNorm(8, 64),
             nn.ReLU(),
             # Layer 4: 8x8x8 -> 4x4x4
             nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(64),
+            nn.GroupNorm(8, 64),
             nn.ReLU(),
             # Global average pooling: 4x4x4 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
@@ -188,31 +188,31 @@ class Compact3DConvNetDeep(nn.Module):
         self.conv = nn.Sequential(
             # Block 1: 64x64x64 -> 32x32x32
             nn.Conv3d(1, 8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(8),
+            nn.GroupNorm(8, 8),
             nn.ReLU(),
             nn.Conv3d(8, 8, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(8),
+            nn.GroupNorm(8, 8),
             nn.ReLU(),
             # Block 2: 32x32x32 -> 16x16x16
             nn.Conv3d(8, 16, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(16),
+            nn.GroupNorm(8, 16),
             nn.ReLU(),
             nn.Conv3d(16, 16, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(16),
+            nn.GroupNorm(8, 16),
             nn.ReLU(),
             # Block 3: 16x16x16 -> 8x8x8
             nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             # Block 4: 8x8x8 -> 4x4x4
             nn.Conv3d(32, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm3d(32),
+            nn.GroupNorm(8, 32),
             nn.ReLU(),
             # Global average pooling
             nn.AdaptiveAvgPool3d(1),
@@ -246,9 +246,13 @@ class Bottleneck3D(nn.Module):
         Stride for the 3x3x3 convolution (use 2 for downsampling)
     expansion : int, default=2
         Expansion factor for output channels
+    num_groups : int, default=8
+        Number of groups for GroupNorm
     """
 
-    def __init__(self, in_channels, bottleneck_channels, stride=1, expansion=2):
+    def __init__(
+        self, in_channels, bottleneck_channels, stride=1, expansion=2, num_groups=8
+    ):
         super().__init__()
 
         out_channels = bottleneck_channels * expansion
@@ -256,7 +260,7 @@ class Bottleneck3D(nn.Module):
         self.conv1 = nn.Conv3d(
             in_channels, bottleneck_channels, kernel_size=1, stride=1, bias=False
         )
-        self.bn1 = nn.BatchNorm3d(bottleneck_channels)
+        self.bn1 = nn.GroupNorm(num_groups, bottleneck_channels)
 
         self.conv2 = nn.Conv3d(
             bottleneck_channels,
@@ -266,12 +270,12 @@ class Bottleneck3D(nn.Module):
             padding=1,
             bias=False,
         )
-        self.bn2 = nn.BatchNorm3d(bottleneck_channels)
+        self.bn2 = nn.GroupNorm(num_groups, bottleneck_channels)
 
         self.conv3 = nn.Conv3d(
             bottleneck_channels, out_channels, kernel_size=1, stride=1, bias=False
         )
-        self.bn3 = nn.BatchNorm3d(out_channels)
+        self.bn3 = nn.GroupNorm(num_groups, out_channels)
 
         self.gelu = nn.GELU()
 
@@ -281,7 +285,7 @@ class Bottleneck3D(nn.Module):
                 nn.Conv3d(
                     in_channels, out_channels, kernel_size=1, stride=stride, bias=False
                 ),
-                nn.BatchNorm3d(out_channels),
+                nn.GroupNorm(num_groups, out_channels),
             )
 
     def forward(self, x):
@@ -320,9 +324,9 @@ class CompactResNet3D(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # Initial convolution: 64^3 -> 64^3, 1 -> 24 channels
+        # Initial convolution: 64^3 -> 64^3, 1 -> 16 channels
         self.conv1 = nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm3d(16)
+        self.bn1 = nn.GroupNorm(8, 16)
         self.gelu = nn.GELU()
 
         # Stage 1: 64^3 -> 32^3, 16 -> 16

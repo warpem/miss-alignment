@@ -19,20 +19,49 @@ DEFAULT_POOL_SIZE = 1000
 
 
 def _worker_init_fn(worker_id: int):
-    """Initialize DataLoader worker with its partition ID."""
+    """Initialize DataLoader worker with its partition ID.
+
+    Calculates global partition assignment for multi-GPU DDP training:
+    - global_worker_id = global_rank * num_local_workers + worker_id
+    - partition_id = global_worker_id % n_partitions
+
+    This allows multiple DataLoader workers to consume from the same partition
+    when there are more consumers than producers.
+
+    Note: global_rank is obtained directly from torch.distributed here, not from
+    the dataset. This is critical because the dataloader may be created before
+    DDP is initialized, but worker_init_fn runs after DDP setup (workers are
+    forked from DDP processes).
+    """
     worker_info = torch.utils.data.get_worker_info()
     if worker_info is not None:
         dataset = worker_info.dataset
-        dataset.partition_id = worker_id
+        # Get global_rank directly from distributed - this works because
+        # DataLoader workers are forked AFTER DDP is initialized, so they
+        # inherit the distributed state from their parent DDP process.
+        if torch.distributed.is_initialized():
+            global_rank = torch.distributed.get_rank()
+        else:
+            global_rank = 0
+        num_local_workers = worker_info.num_workers
+        n_partitions = dataset.n_partitions
+
+        global_worker_id = global_rank * num_local_workers + worker_id
+        dataset.partition_id = global_worker_id % n_partitions
 
 
 class MissAlignmentDataModule(pl.LightningDataModule):
     """
-    Training datamodule with coupled reconstruction and data loading workers.
+    Training datamodule with reconstruction workers and DataLoader consumers.
 
-    Each reconstruction worker is paired 1:1 with a DataLoader worker, sharing
-    a partition of the pool. Reconstruction workers pause when their partition
-    is full, and DataLoader workers pause when their partition is too empty.
+    Reconstruction workers write to partitioned pool directories. DataLoader
+    workers consume from these partitions. Multiple DataLoader workers can
+    share a partition (they race to grab files, with retry logic handling
+    conflicts).
+
+    For multi-GPU DDP training, partition assignment is global:
+        global_worker_id = global_rank * dataloader_workers + local_worker_id
+        partition_id = global_worker_id % n_workers
 
     Directory layout:
 
@@ -51,12 +80,12 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         Directory containing tilt series JSON files
     shift_generator : Callable
         Function that generates synthetic alignment shifts
-    n_workers : int, default 4
-        Number of reconstruction/DataLoader worker pairs
-    reconstruction_accelerators : Optional[list[int]], default None
-        GPU device IDs for reconstruction workers
+    n_workers : int
+        Number of reconstruction workers (each writes to its own partition)
+    reconstruction_accelerators : list[int]
+        GPU device IDs for reconstruction workers (one per worker)
     batch_size : int, default 4
-        Batch size for training
+        Batch size for training (per device in DDP)
     steps_per_epoch : int, default 1000
         Number of steps per training epoch
     patch_size : int, default 64
@@ -67,6 +96,9 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         Downsampling factor for reconstructions
     pool_size : int, default 1000
         Total size of reconstruction pool (divided among partitions)
+    dataloader_workers : int, default 2
+        Number of CPU DataLoader workers per training device. Can exceed
+        n_workers; multiple DataLoader workers will share partitions.
     """
 
     def __init__(
@@ -81,6 +113,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         apply_ctf: bool = False,
         downsample: int = 1,
         pool_size: int = DEFAULT_POOL_SIZE,
+        dataloader_workers: int = 2,
     ):
         super().__init__()
         # data module controls
@@ -88,6 +121,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         self.epoch_size = steps_per_epoch * batch_size
         self.n_workers = n_workers
         self.pool_size = pool_size
+        self.dataloader_workers = dataloader_workers
 
         # Validate pool size
         self.partition_size = pool_size // n_workers
@@ -98,7 +132,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 f"2 * batch_size ({2 * batch_size}). Increase pool_size or "
                 f"decrease n_workers/batch_size."
             )
-        
+
         # This is an old code path that used cpu's for reconstruction
         # we have abandonded it in favor of splitting the GPU's
         if reconstruction_accelerators in [None, []]:
@@ -110,9 +144,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             raise ValueError(
                 "Number of reconstruction accelerators must match n_workers"
             )
-        self.reconstruction_devices = [
-            f"cuda:{x}" for x in reconstruction_accelerators
-        ]
+        self.reconstruction_devices = [f"cuda:{x}" for x in reconstruction_accelerators]
 
         # reconstruction controls
         self.patch_size = patch_size
@@ -177,9 +209,13 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             p.start()
             self.pool_processes.append(p)
 
-        # Create dataset
+        # Create dataset (global_rank is obtained in worker_init_fn
+        # from torch.distributed)
         self.train_dataset = ReconstructionPoolDataset(
-            self.pool_dir, self.batch_size, self.epoch_size
+            pool_dir=self.pool_dir,
+            batch_size=self.batch_size,
+            epoch_size=self.epoch_size,
+            n_partitions=self.n_workers,
         )
 
     def train_dataloader(self):
@@ -189,7 +225,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,  # data is already randomized by recon workers
             drop_last=True,
-            num_workers=self.n_workers,
+            num_workers=self.dataloader_workers,
             worker_init_fn=_worker_init_fn,
             multiprocessing_context="fork",
             persistent_workers=True,

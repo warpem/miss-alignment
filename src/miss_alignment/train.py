@@ -23,24 +23,32 @@ from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment
 
 
+def parse_device_list(value: str) -> list[int]:
+    """Parse comma-separated device list like '0,1,2' into [0, 1, 2]."""
+    return [int(x.strip()) for x in value.split(",")]
+
+
 @cli.command(name="train", no_args_is_help=True)
 def train_miss_align(
     config_file: Path = typer.Option("config_template.yaml", **OPTION_PROMPT_KWARGS),
-    n_workers: int = typer.Option(
-        2,
-        help="Number of workers that feed subtomogram reconstructions "
-        "to the data pool for training the CNN. Workers will be "
-        "divided across the available GPU devices, where multiple "
-        "workers per GPU are allowed.",
+    training_devices: str = typer.Option(
+        "0",
+        help="Comma-separated list of GPU device indices for model training. "
+        "For multi-GPU training, specify multiple devices (e.g., '0,1'). "
+        "The batch size from config will be divided by the number of "
+        "training devices to maintain the same effective batch size.",
     ),
-    n_devices: int = typer.Option(
-        1,
-        help="Number of GPU devices available for miss-alignment. "
-        "GPU's are index from 0 to n and the system GPU's should be "
-        "restricted with CUDA_VISIBLE_DEVICES before the command. "
-        "One GPU's is always used to train the CNN, the others are "
-        "split across the workers. If a single GPU is provided both "
-        "the model and workers will use the same GPU.",
+    reconstruction_devices: str = typer.Option(
+        "0",
+        help="Comma-separated list of GPU device indices for reconstruction workers. "
+        "Each entry spawns one worker on that device. Devices can be repeated "
+        "to run multiple workers per GPU (e.g., '0,0,1,1' runs 2 workers each "
+        "on GPU 0 and GPU 1). Can overlap with training devices if needed.",
+    ),
+    dataloader_workers_per_training_device: int = typer.Option(
+        2,
+        help="Number of CPU DataLoader workers per training device. "
+        "Total DataLoader workers = this value × number of training devices.",
     ),
     pool_size: int = typer.Option(
         1000,
@@ -76,25 +84,23 @@ def train_miss_align(
     # cpu multithreading
     torch.set_num_threads(1)
 
-    # gpu devices is a number of available devices for processing
-    # the devices should be limited by CUDA_VISIBLE_DEVICES
-    if n_devices < 1:
-        raise ValueError("MissAlignment needs at least 1 GPU")
-    devices_list = list(range(n_devices))
+    # Parse device lists from comma-separated strings
+    devices_training = parse_device_list(training_devices)
+    devices_reconstruction = parse_device_list(reconstruction_devices)
+    n_workers = len(devices_reconstruction)
 
-    devices_training = devices_list[0:1]
-    print(f"Using device {devices_training[0]} for training")
+    if len(devices_training) < 1:
+        raise ValueError("MissAlignment needs at least 1 training device")
+    if n_workers < 1:
+        raise ValueError("MissAlignment needs at least 1 reconstruction worker")
 
-    if len(devices_list) == 1:
-        devices_reconstruction = devices_list * n_workers
-    else:
-        # distribute remaining devices equally among reconstruction workers,
-        # cycling through devices if there are fewer devices than workers
-        devices_remaining = devices_list[1:]
-        devices_reconstruction = [
-            devices_remaining[i % len(devices_remaining)] for i in range(n_workers)
-        ]
+    # For alignment stage, use all visible GPUs
+    n_visible_gpus = torch.cuda.device_count()
+    devices_alignment = list(range(n_visible_gpus))
+
+    print(f"Using devices {devices_training} for training")
     print(f"Using devices {devices_reconstruction} for reconstruction workers")
+    print(f"Using devices {devices_alignment} for alignment")
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
@@ -119,7 +125,7 @@ def train_miss_align(
             training_directory=training_directory,
             desired_pixel_size=prepare_stacks,
             n_processes=4,
-            devices=devices_list,
+            devices=devices_alignment,
         )
 
     # Set up training environment
@@ -201,9 +207,12 @@ def train_miss_align(
         )
 
         # Set up trainer with parameters from config
+        # Use DDP strategy for multi-GPU training
+        strategy = "ddp" if len(devices_training) > 1 else "auto"
         trainer = Trainer(
             accelerator="gpu",
-            devices=devices_training,  # use the 0 device
+            devices=devices_training,
+            strategy=strategy,
             default_root_dir=training_directory / "models",
             max_epochs=max_epochs,
             log_every_n_steps=50,
@@ -235,17 +244,30 @@ def train_miss_align(
             model = MissAlignment(**model_params)
 
         # Initialize data module with parameters from config
+        # Divide batch size by number of training devices to maintain
+        # effective batch size
+        batch_size_per_device = data_module_config["batch_size"] // len(
+            devices_training
+        )
+        if batch_size_per_device < 1:
+            raise ValueError(
+                f"Batch size {data_module_config['batch_size']} is too small for "
+                f"{len(devices_training)} training devices. Increase batch_size "
+                f"in config."
+            )
+
         with MissAlignmentDataModule(
             training_directory,
             create_default_generator(**shift_generation_config),
             n_workers=n_workers,
             reconstruction_accelerators=devices_reconstruction,
-            batch_size=data_module_config["batch_size"],
+            batch_size=batch_size_per_device,
             patch_size=data_module_config["patch_size"],
             apply_ctf=general_config["apply_ctf"],
             downsample=iteration_settings["downsample"],
             steps_per_epoch=data_module_config["steps_per_epoch"],
             pool_size=pool_size,
+            dataloader_workers=dataloader_workers_per_training_device,
         ) as dm:
             training_data = dm.train_dataloader()
             # enter datamodule context to start the reconstruction worker pool
@@ -284,7 +306,7 @@ def train_miss_align(
             batch_size=alignment_config["batch_size"],
             apply_ctf=general_config["apply_ctf"],
             downsample=iteration_settings["downsample"],
-            devices_list=devices_list,
+            devices_list=devices_alignment,
         )
 
         # Plot loss distribution
