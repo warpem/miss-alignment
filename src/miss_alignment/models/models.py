@@ -487,18 +487,24 @@ class MAEarlyStopping(Callback):
         return False
 
     def on_train_epoch_end(self, trainer, pl_module):
-        """Called at the end of each training epoch."""
-        # Only evaluate early stopping on rank 0 to ensure consistent decisions.
-        # We must manually broadcast should_stop to all ranks after.
+        """Called at the end of each training epoch.
+
+        Only rank 0 evaluates early stopping logic. The decision is then
+        synchronized using Lightning's strategy.reduce_boolean_decision,
+        which is designed to work with Lightning's internal DDP operations.
+        """
+        should_stop = False
+
+        # Only rank 0 evaluates early stopping
         if trainer.global_rank == 0:
             # Check if we should start early stopping yet
             if self._check_scheduler_complete(trainer, pl_module):
                 logged_metrics = trainer.logged_metrics
 
-                if "train_loss" in logged_metrics:
-                    current_score = logged_metrics["train_loss"]
-                else:
-                    raise ValueError("Couldn't find train_loss in pl_module")
+                if "train_loss" not in logged_metrics:
+                    raise ValueError("Couldn't find train_loss in logged_metrics")
+
+                current_score = float(logged_metrics["train_loss"])
 
                 if (
                     self.best_score is None
@@ -510,14 +516,10 @@ class MAEarlyStopping(Callback):
                     self.wait_count += 1
 
                 if self.wait_count >= self.patience:
-                    trainer.should_stop = True
+                    should_stop = True
 
-        # Synchronize should_stop across all ranks to prevent NCCL deadlock.
-        # Without this, rank 0 may stop while other ranks continue, causing
-        # them to diverge in their collective operations.
-        if torch.distributed.is_initialized():
-            should_stop_tensor = torch.tensor(
-                [trainer.should_stop], dtype=torch.int, device=pl_module.device
-            )
-            torch.distributed.broadcast(should_stop_tensor, src=0)
-            trainer.should_stop = bool(should_stop_tensor.item())
+        # Use Lightning's strategy to sync the decision across ranks.
+        # This is the Lightning-approved way to broadcast boolean decisions
+        # and avoids conflicts with internal DDP operations.
+        should_stop = trainer.strategy.reduce_boolean_decision(should_stop, all=False)
+        trainer.should_stop = should_stop
