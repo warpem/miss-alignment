@@ -231,6 +231,11 @@ def train_miss_align(
         else:
             model = MissAlignment(**model_params)
 
+        # Convert BatchNorm to SyncBatchNorm for DDP training
+        # This synchronizes batch statistics across all GPUs
+        if len(devices_training) > 1:
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
         # Initialize data module with parameters from config
         # Divide batch size by number of training devices to maintain
         # effective batch size
