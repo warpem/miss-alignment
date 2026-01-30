@@ -211,6 +211,7 @@ def train_miss_align(
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback, progress_bar],
             precision="16-mixed",  # Enable automatic mixed precision
+            use_distributed_sampler=False,  # our dataset is already split
         )
 
         # Initialize model with parameters from config

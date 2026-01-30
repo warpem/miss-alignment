@@ -390,12 +390,6 @@ class MAProgressBar(Callback):
 
         from tqdm import tqdm
 
-        # Adjust total_steps for DDP world size, since DistributedSampler
-        # divides the data among GPUs
-        world_size = trainer.world_size
-        steps_per_epoch_per_rank = self.steps_per_epoch // world_size
-        self.total_steps = self.max_epochs * steps_per_epoch_per_rank
-
         self.start_time = time.time()
         self.pbar = tqdm(
             total=self.total_steps,
