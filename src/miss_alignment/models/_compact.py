@@ -38,7 +38,7 @@ class Compact3DConvNet(nn.Module):
         # Shared feature layer
         self.features = nn.Sequential(
             nn.Linear(64, 16),
-            nn.LayerNorm(16),
+            nn.BatchNorm1d(16),
             nn.SiLU(),
         )
 
