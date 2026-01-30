@@ -489,26 +489,35 @@ class MAEarlyStopping(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         """Called at the end of each training epoch."""
         # Only evaluate early stopping on rank 0 to ensure consistent decisions.
-        # Lightning will synchronize trainer.should_stop across all ranks.
-        if trainer.global_rank != 0:
-            return
+        # We must manually broadcast should_stop to all ranks after.
+        if trainer.global_rank == 0:
+            # Check if we should start early stopping yet
+            if self._check_scheduler_complete(trainer, pl_module):
+                logged_metrics = trainer.logged_metrics
 
-        # Check if we should start early stopping yet
-        if not self._check_scheduler_complete(trainer, pl_module):
-            return
+                if "train_loss" in logged_metrics:
+                    current_score = logged_metrics["train_loss"]
+                else:
+                    raise ValueError("Couldn't find train_loss in pl_module")
 
-        logged_metrics = trainer.logged_metrics
+                if (
+                    self.best_score is None
+                    or current_score < self.best_score - self.min_delta
+                ):
+                    self.best_score = current_score
+                    self.wait_count = 0
+                else:
+                    self.wait_count += 1
 
-        if "train_loss" in logged_metrics:
-            current_score = logged_metrics["train_loss"]
-        else:
-            raise ValueError("Couldn't find train_loss in pl_module")
+                if self.wait_count >= self.patience:
+                    trainer.should_stop = True
 
-        if self.best_score is None or current_score < self.best_score - self.min_delta:
-            self.best_score = current_score
-            self.wait_count = 0
-        else:
-            self.wait_count += 1
-
-        if self.wait_count >= self.patience:
-            trainer.should_stop = True
+        # Synchronize should_stop across all ranks to prevent NCCL deadlock.
+        # Without this, rank 0 may stop while other ranks continue, causing
+        # them to diverge in their collective operations.
+        if torch.distributed.is_initialized():
+            should_stop_tensor = torch.tensor(
+                [trainer.should_stop], dtype=torch.int, device=pl_module.device
+            )
+            torch.distributed.broadcast(should_stop_tensor, src=0)
+            trainer.should_stop = bool(should_stop_tensor.item())
