@@ -521,8 +521,12 @@ class MAEarlyStopping(Callback):
                 if self.wait_count >= self.patience:
                     should_stop = True
 
-        # Broadcast rank 0's decision to all ranks using a tensor
-        device = pl_module.device
-        stop_tensor = torch.tensor([should_stop], dtype=torch.int, device=device)
-        torch.distributed.broadcast(stop_tensor, src=0)
-        trainer.should_stop = bool(stop_tensor.item())
+        # Sync all ranks before broadcasting
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+            device = pl_module.device
+            stop_tensor = torch.tensor([should_stop], dtype=torch.int, device=device)
+            torch.distributed.broadcast(stop_tensor, src=0)
+            trainer.should_stop = bool(stop_tensor.item())
+        else:
+            trainer.should_stop = should_stop
