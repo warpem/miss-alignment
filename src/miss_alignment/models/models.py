@@ -521,6 +521,12 @@ class MAEarlyStopping(Callback):
                 if self.wait_count >= self.patience:
                     should_stop = True
 
-        # Just set on rank 0 - Lightning should sync this internally
-        if trainer.global_rank == 0:
+        # Sync across all ranks using all_reduce (all ranks participate equally)
+        if torch.distributed.is_initialized():
+            stop_tensor = torch.tensor(
+                [1 if should_stop else 0], device=pl_module.device, dtype=torch.int
+            )
+            torch.distributed.all_reduce(stop_tensor, op=torch.distributed.ReduceOp.MAX)
+            trainer.should_stop = stop_tensor.item() > 0
+        else:
             trainer.should_stop = should_stop
