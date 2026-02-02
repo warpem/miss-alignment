@@ -222,6 +222,7 @@ def reconstruct_full_volume(
         ctf_weighted=False,
         correct_attenuation=True,
         batch_size=8,
+        tilt_ids=torch.tensor(list(range(61 // 2 - 5, 61 // 2 + 6))),
     )
 
     return volume
