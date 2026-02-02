@@ -256,9 +256,9 @@ def train_miss_align(
             pool_size=pool_size,
             dataloader_workers=dataloaders_per_trainer,
         ) as dm:
-            training_data = dm.train_dataloader()
             # enter datamodule context to start the reconstruction worker pool
-            trainer.fit(model, train_dataloaders=training_data)
+            # passing datamodule lets Lightning apply DistributedSampler
+            trainer.fit(model, datamodule=dm)
 
             # Synchronize all ranks after training, while DDP is still active
             # This must be BEFORE the context manager exits, as Lightning's DDP
