@@ -169,6 +169,17 @@ class MissAlignment(pl.LightningModule):
         score2, log_prec2 = self(img2)
         score3, log_prec3 = self(img3)
 
+        # DEBUG: Check for model collapse (all zeros or NaN)
+        if self.current_epoch >= 2:
+            scores_raw = torch.stack([score1, score2, score3])
+            log_prec_raw = torch.stack([log_prec1, log_prec2, log_prec3])
+            print(f"  [RAW] scores: {scores_raw.flatten()[:6].tolist()}")
+            print(f"  [RAW] log_prec: {log_prec_raw.flatten()[:6].tolist()}")
+            if (scores_raw == 0).all():
+                print("  [WARN] All scores are exactly zero!")
+            if torch.isnan(scores_raw).any():
+                print("  [WARN] NaN detected in scores!")
+
         # Stack into (batch, 3) format
         scores = torch.stack((score1, score2, score3), dim=1)
         scores = einops.rearrange(scores, "b d 1 -> b d")
