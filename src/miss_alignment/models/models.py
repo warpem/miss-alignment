@@ -390,6 +390,10 @@ class MAProgressBar(Callback):
 
         from tqdm import tqdm
 
+        # Adjust total_steps for distributed training
+        world_size = trainer.world_size
+        self.total_steps = self.total_steps // world_size
+
         self.start_time = time.time()
         self.pbar = tqdm(
             total=self.total_steps,
