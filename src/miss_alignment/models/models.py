@@ -212,6 +212,33 @@ class MissAlignment(pl.LightningModule):
             mean_precision,
         ) = self._common_step(batch, batch_idx)
 
+        # DEBUG: Print diagnostics at start of each epoch (first batch)
+        if batch_idx == 0 and self.global_rank == 0:
+            # Check input data statistics
+            img1, img2, img3, target = batch
+            print(f"\n[DEBUG] Epoch {self.current_epoch}, Step {self.global_step}")
+            print(
+                f"  img1: mean={img1.mean():.4f}, std={img1.std():.4f}, "
+                f"min={img1.min():.4f}, max={img1.max():.4f}"
+            )
+            print(f"  img2: mean={img2.mean():.4f}, std={img2.std():.4f}")
+            print(f"  img3: mean={img3.mean():.4f}, std={img3.std():.4f}")
+            print(
+                f"  Loss: {total_loss.item():.6f} "
+                f"(triplet: {triplet_loss.item():.6f}, "
+                f"prec_reg: {precision_reg.item():.6f})"
+            )
+            score_diff = score_aligned.item() - score_misaligned.item()
+            print(
+                f"  Scores: aligned={score_aligned.item():.6f}, "
+                f"misaligned={score_misaligned.item():.6f}, diff={score_diff:.6f}"
+            )
+            print(f"  Mean precision: {mean_precision.item():.6f}")
+
+            # Get current learning rate
+            lr = self.optimizers().param_groups[0]["lr"]
+            print(f"  Learning rate: {lr:.2e}")
+
         # Fail fast on NaN loss to prevent corrupted training
         if torch.isnan(total_loss):
             raise ValueError(
@@ -306,6 +333,30 @@ class MissAlignment(pl.LightningModule):
 
     def predict_step(self):
         pass
+
+    def on_train_epoch_end(self):
+        """DEBUG: Print gradient and weight statistics at end of each epoch."""
+        if self.global_rank == 0:
+            grad_norm = 0.0
+            param_norm = 0.0
+            num_zero_grad = 0
+            num_params = 0
+            for name, p in self.named_parameters():
+                num_params += 1
+                param_norm += p.data.norm(2).item() ** 2
+                if p.grad is not None:
+                    g_norm = p.grad.data.norm(2).item()
+                    grad_norm += g_norm**2
+                    if g_norm < 1e-10:
+                        num_zero_grad += 1
+                else:
+                    num_zero_grad += 1
+            grad_norm = grad_norm**0.5
+            param_norm = param_norm**0.5
+
+            print(f"[DEBUG] End of Epoch {self.current_epoch}")
+            print(f"  Grad norm: {grad_norm:.6f}, Param norm: {param_norm:.6f}")
+            print(f"  Params with zero/no grad: {num_zero_grad}/{num_params}")
 
     def configure_optimizers(self):
         """Configure optimizer and learning rate schedulers.
