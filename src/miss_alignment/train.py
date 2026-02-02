@@ -215,8 +215,12 @@ def train_miss_align(
         )
 
         # Initialize model with parameters from config
+        # Scale learning rate by number of GPUs (linear scaling rule)
+        scaled_learning_rate = model_training_config["learning_rate"] * len(
+            devices_training
+        )
         model_params = {
-            "learning_rate": model_training_config["learning_rate"],
+            "learning_rate": scaled_learning_rate,
             "margin": model_training_config["loss_margin"],
             "weight_decay": float(model_training_config["weight_decay"]),
             "warmup_steps": model_training_config["warmup_steps"],
@@ -237,17 +241,8 @@ def train_miss_align(
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
         # Initialize data module with parameters from config
-        # Divide batch size by number of training devices to maintain
-        # effective batch size
-        batch_size_per_device = data_module_config["batch_size"] // len(
-            devices_training
-        )
-        if batch_size_per_device < 1:
-            raise ValueError(
-                f"Batch size {data_module_config['batch_size']} is too small for "
-                f"{len(devices_training)} training devices. Increase batch_size "
-                f"in config."
-            )
+        # Each GPU uses the full batch size (effective batch size scales with GPUs)
+        batch_size_per_device = data_module_config["batch_size"]
 
         with MissAlignmentDataModule(
             training_directory,
