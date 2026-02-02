@@ -493,40 +493,31 @@ class MAEarlyStopping(Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         """Called at the end of each training epoch.
 
-        Only rank 0 evaluates early stopping logic. The decision is then
-        broadcast to all ranks to ensure synchronized stopping.
+        All ranks evaluate stopping logic (metrics are synced via sync_dist=True),
+        then the decision is synchronized using Lightning's reduce_boolean_decision.
+        This mirrors PyTorch Lightning's built-in EarlyStopping approach.
         """
+        # Check if we should start early stopping yet
+        if not self._check_scheduler_complete(trainer, pl_module):
+            return
+
+        # Get the monitored metric (synced across ranks via sync_dist=True)
+        logged_metrics = trainer.callback_metrics
+        if "train_loss" not in logged_metrics:
+            return  # Metric not available yet
+
+        current_score = float(logged_metrics["train_loss"])
+
+        # Evaluate stopping criteria (all ranks do this)
         should_stop = False
-
-        # Only rank 0 evaluates early stopping
-        if trainer.global_rank == 0:
-            # Check if we should start early stopping yet
-            if self._check_scheduler_complete(trainer, pl_module):
-                logged_metrics = trainer.logged_metrics
-
-                if "train_loss" not in logged_metrics:
-                    raise ValueError("Couldn't find train_loss in logged_metrics")
-
-                current_score = float(logged_metrics["train_loss"])
-
-                if (
-                    self.best_score is None
-                    or current_score < self.best_score - self.min_delta
-                ):
-                    self.best_score = current_score
-                    self.wait_count = 0
-                else:
-                    self.wait_count += 1
-
-                if self.wait_count >= self.patience:
-                    should_stop = True
-
-        # Sync across all ranks using all_reduce (all ranks participate equally)
-        if torch.distributed.is_initialized():
-            stop_tensor = torch.tensor(
-                [1 if should_stop else 0], device=pl_module.device, dtype=torch.int
-            )
-            torch.distributed.all_reduce(stop_tensor, op=torch.distributed.ReduceOp.MAX)
-            trainer.should_stop = stop_tensor.item() > 0
+        if self.best_score is None or current_score < self.best_score - self.min_delta:
+            self.best_score = current_score
+            self.wait_count = 0
         else:
-            trainer.should_stop = should_stop
+            self.wait_count += 1
+            if self.wait_count >= self.patience:
+                should_stop = True
+
+        # Sync decision across all ranks (stop if ANY rank decides to stop)
+        should_stop = trainer.strategy.reduce_boolean_decision(should_stop, all=False)
+        trainer.should_stop = trainer.should_stop or should_stop
