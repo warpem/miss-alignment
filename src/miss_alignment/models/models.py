@@ -521,12 +521,6 @@ class MAEarlyStopping(Callback):
                 if self.wait_count >= self.patience:
                     should_stop = True
 
-        # Sync all ranks before broadcasting
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-            device = pl_module.device
-            stop_tensor = torch.tensor([should_stop], dtype=torch.int, device=device)
-            torch.distributed.broadcast(stop_tensor, src=0)
-            trainer.should_stop = bool(stop_tensor.item())
-        else:
+        # Just set on rank 0 - Lightning should sync this internally
+        if trainer.global_rank == 0:
             trainer.should_stop = should_stop
