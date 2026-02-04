@@ -5,8 +5,11 @@ import yaml
 
 import typer
 import torch
+from datetime import timedelta
+
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.strategies import DDPStrategy
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .data import MissAlignmentDataModule
@@ -195,8 +198,13 @@ def train_miss_align(
         )
 
         # Set up trainer with parameters from config
-        # Use DDP strategy for multi-GPU training
-        strategy = "ddp" if len(devices_training) > 1 else "auto"
+        # Use DDP strategy for multi-GPU training with extended timeout
+        # Default is 30 min, but alignment can take much longer while other ranks wait
+        strategy = (
+            DDPStrategy(timeout=timedelta(days=7))
+            if len(devices_training) > 1
+            else "auto"
+        )
         trainer = Trainer(
             accelerator="gpu",
             devices=devices_training,
