@@ -108,44 +108,45 @@ def train_miss_align(
     training_directory = Path(general_config["training_directory"])
     training_directory.mkdir(exist_ok=True, parents=True)
 
-    # Prepare tilt stacks if requested
-    if prepare_stacks is not None:
-        if prepare_stacks <= 0:
-            raise ValueError("--prepare-stacks must be a positive non-zero number")
-        prepare_stacks_parallel(
-            training_directory=training_directory,
-            desired_pixel_size=prepare_stacks,
-            n_processes=4,
-            devices=devices_alignment,
-        )
-
     # Set up training environment
     torch.set_float32_matmul_precision("medium")
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
-    # Run preprocessing if requested
-    if preprocess:
-        if start_at_iteration != 0:
-            raise ValueError(
-                "Running preprocessing at while "
-                "not starting at iteration 0. This "
-                "is likely not desirable behaviour."
-            )
-        else:
-            # Back up original data to pre-iter directory
-            preiter_directory = training_directory / "pre-iter"
-            preiter_directory.mkdir(parents=True, exist_ok=True)
-            for xml_file in training_directory.glob("*.xml"):
-                destination = preiter_directory / xml_file.name
-                copyfile(xml_file, destination)
-            rank_zero_print(f"Backed up original metadata to {preiter_directory}")
-
-            # Run cross-correlation alignment on the training directory
-            run_cross_correlation_alignment(
+    if is_rank_zero():
+        # Prepare tilt stacks if requested
+        if prepare_stacks is not None:
+            if prepare_stacks <= 0:
+                raise ValueError("--prepare-stacks must be a positive non-zero number")
+            prepare_stacks_parallel(
                 training_directory=training_directory,
-                device=devices_training[0],
+                desired_pixel_size=prepare_stacks,
+                n_processes=4,
+                devices=devices_alignment,
             )
+
+        # Run preprocessing if requested
+        if preprocess:
+            if start_at_iteration != 0:
+                raise ValueError(
+                    "Running preprocessing at while "
+                    "not starting at iteration 0. This "
+                    "is likely not desirable behaviour."
+                )
+            else:
+                # Back up original data to pre-iter directory
+                preiter_directory = training_directory / "pre-iter"
+                preiter_directory.mkdir(parents=True, exist_ok=True)
+                for xml_file in training_directory.glob("*.xml"):
+                    destination = preiter_directory / xml_file.name
+                    copyfile(xml_file, destination)
+                rank_zero_print(f"Backed up original metadata to {preiter_directory}")
+
+                # Run cross-correlation alignment on the training directory
+                run_cross_correlation_alignment(
+                    training_directory=training_directory,
+                    device=devices_training[0],
+                )
 
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
