@@ -57,11 +57,12 @@ def run_cross_correlation_alignment(
 
         # Run cross-correlation alignment with pretilt estimation
         shifts, pretilt = tiltxcorr_with_sample_tilt_estimation(
-            stack.to(f"cuda:{device}"),
-            ts.angles.to(f"cuda:{device}"),
-            tilt_axis_angle,
-            lowpass_cutoff,
-            pretilt_search_range,
+            tilt_series=stack.to(f"cuda:{device}"),
+            tilt_angles=ts.angles.to(f"cuda:{device}"),
+            tilt_axis_angle=tilt_axis_angle,
+            pixel_spacing_angstroms=pixel_size,
+            lowpass_angstroms=pixel_size / lowpass_cutoff,
+            sample_tilt_range=pretilt_search_range,
         )
 
         # Convert shifts from pixels to Angstroms
