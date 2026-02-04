@@ -17,7 +17,7 @@ from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
-from .preprocessing import run_cross_correlation_alignment
+from .preprocessing import run_cross_correlation_alignment_parallel
 from .utils import distributed_barrier, is_rank_zero, rank_zero_print
 
 
@@ -68,6 +68,11 @@ def train_miss_align(
         False,
         help="Run cross-correlation based alignment before training iterations. "
         "This performs coarse alignment with pretilt estimation.",
+    ),
+    ddp_timeout_hours: float = typer.Option(
+        6.0,
+        help="Timeout in hours for DDP communication during multi-GPU training. "
+        "Increase this if alignment takes longer than expected.",
     ),
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
@@ -143,9 +148,10 @@ def train_miss_align(
                 rank_zero_print(f"Backed up original metadata to {preiter_directory}")
 
                 # Run cross-correlation alignment on the training directory
-                run_cross_correlation_alignment(
+                run_cross_correlation_alignment_parallel(
                     training_directory=training_directory,
-                    device=devices_training[0],
+                    devices=devices_alignment,
+                    n_processes=4,
                 )
 
     start_iter = start_at_iteration
@@ -202,7 +208,7 @@ def train_miss_align(
         # Use DDP strategy for multi-GPU training with extended timeout
         # Default is 30 min, but alignment can take much longer while other ranks wait
         strategy = (
-            DDPStrategy(timeout=timedelta(days=7))
+            DDPStrategy(timeout=timedelta(hours=ddp_timeout_hours))
             if len(devices_training) > 1
             else "auto"
         )

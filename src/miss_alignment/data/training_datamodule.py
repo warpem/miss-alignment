@@ -203,7 +203,8 @@ class MissAlignmentDataModule(pl.LightningDataModule):
 
         # Only rank 0 spawns reconstruction workers
         if is_rank_zero():
-            mp.set_start_method("spawn", force=True)
+            # Use explicit spawn context to avoid affecting global multiprocessing state
+            ctx = mp.get_context("spawn")
 
             # Clean up any existing pool directory from previous runs
             if self.pool_dir.exists():
@@ -216,13 +217,13 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             )
 
             # Start worker processes
-            self.stop_event = mp.Event()
+            self.stop_event = ctx.Event()
 
             # get a list of all the tilt series json files
             tilt_series_xmls = list(self.dataset_directory.glob("*.xml"))
 
             for worker_id in range(self.n_workers):
-                p = mp.Process(
+                p = ctx.Process(
                     target=reconstruction_worker,
                     kwargs={
                         "worker_id": worker_id,

@@ -99,7 +99,9 @@ def run_alignment_parallel(
         )
 
     results = []
-    with mp.Manager() as manager:
+    # Use explicit spawn context to avoid CUDA issues with fork
+    ctx = mp.get_context("spawn")
+    with ctx.Manager() as manager:
         task_queue = (
             manager.Queue()
         )  # the list of tasks where processes can get there next task from
@@ -113,7 +115,7 @@ def run_alignment_parallel(
         # if a device occurs multiple times in devices_list,
         # use it only once to keep memory footprint deterministic per GPU
         procs = [
-            mp.Process(
+            ctx.Process(
                 target=gpu_runner,
                 args=(
                     "cuda:" + str(g),
