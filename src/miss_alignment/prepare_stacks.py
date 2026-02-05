@@ -4,6 +4,7 @@ This module provides functionality to load raw tilt images and create
 preprocessed tilt stacks ready for training.
 """
 
+import multiprocessing as mp
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -89,7 +90,7 @@ def _prepare_single_tilt_series(
 
     ts = TiltSeries(xml_path)
     original_pixel_size = _get_original_pixel_size(ts)
-    #print(f"{xml_path.stem}: original pixel size = {original_pixel_size:.4f} Å")
+    # print(f"{xml_path.stem}: original pixel size = {original_pixel_size:.4f} Å")
 
     images, _, _ = ts.load_images(
         original_pixel_size=original_pixel_size,
@@ -145,7 +146,9 @@ def prepare_stacks_parallel(
         f"Preparing stacks for {len(xml_files)} tilt series at {desired_pixel_size} Å"
     )
 
-    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+    # Use explicit spawn context to avoid CUDA issues with fork
+    ctx = mp.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=n_processes, mp_context=ctx) as executor:
         # Submit all tasks with round-robin device assignment
         futures = []
         for i, xml_path in enumerate(xml_files):
@@ -155,7 +158,9 @@ def prepare_stacks_parallel(
             )
             futures.append(future)
 
-        for future in tqdm(futures, desc="Preparing stacks", unit="tilt series", file=sys.stdout):
+        for future in tqdm(
+            futures, desc="Preparing stacks", unit="tilt series", file=sys.stdout
+        ):
             # This will raise any exception that occurred in the worker
             future.result()
 

@@ -405,18 +405,27 @@ class TestCountPartitionFiles:
     """Test partition file counting."""
 
     def test_count_partition_files(self, temp_dir):
-        """Test counting files in a partition."""
-        # Create some partition files
-        for i in range(5):
-            (temp_dir / f"partition_0_seq_{i}.pickle").touch()
+        """Test counting files in a partition.
+
+        Files are named: partition_{partition_id}_worker_{worker_id}_seq_{seq_id}.pickle
+        Multiple workers can write to the same partition.
+        """
+        # Create some partition files from worker 0
+        for i in range(3):
+            (temp_dir / f"partition_0_worker_0_seq_{i}.pickle").touch()
+
+        # Create some partition files from worker 1 (same partition)
+        for i in range(2):
+            (temp_dir / f"partition_0_worker_1_seq_{i}.pickle").touch()
 
         # Create files for another partition
         for i in range(3):
-            (temp_dir / f"partition_1_seq_{i}.pickle").touch()
+            (temp_dir / f"partition_1_worker_0_seq_{i}.pickle").touch()
 
         # Create a temp file (starts with tmp_ so won't match pattern)
-        (temp_dir / "tmp_partition_0_xyz.pickle").touch()
+        (temp_dir / "tmp_partition_0_worker_0_xyz.pickle").touch()
 
+        # Partition 0 should have 5 files (3 from worker 0 + 2 from worker 1)
         assert _count_partition_files(temp_dir, 0) == 5
         assert _count_partition_files(temp_dir, 1) == 3
         assert _count_partition_files(temp_dir, 2) == 0
@@ -486,8 +495,13 @@ class TestReconstructionWorker:
     def test_worker_writes_partition_files(
         self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
     ):
-        """Test that worker writes files with correct partition naming."""
-        partition_id = 0
+        """Test that worker writes files with correct partition naming.
+
+        Worker cycles through all partitions in round-robin order.
+        File naming: partition_{partition_id}_worker_{worker_id}_seq_{seq_id}.pickle
+        """
+        worker_id = 0
+        n_partitions = 2
         partition_size = 10
         stop_event = mp.Event()
 
@@ -530,7 +544,8 @@ class TestReconstructionWorker:
             side_effect=mock_create,
         ):
             reconstruction_worker(
-                partition_id=partition_id,
+                worker_id=worker_id,
+                n_partitions=n_partitions,
                 partition_size=partition_size,
                 pool_dir=temp_dir,
                 tilt_series_xmls=[mock_tilt_series_data],
@@ -543,7 +558,8 @@ class TestReconstructionWorker:
             )
 
         # Check that files were created with correct naming
-        files = list(temp_dir.glob(f"partition_{partition_id}_seq_*.pickle"))
+        # (distributed across partitions)
+        files = list(temp_dir.glob(f"partition_*_worker_{worker_id}_seq_*.pickle"))
         assert len(files) == 8  # 2 calls × 4 triplets
 
         # Verify file contents
@@ -555,17 +571,19 @@ class TestReconstructionWorker:
                 assert data[0][0].dtype == torch.float16
 
     @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
-    def test_worker_pauses_when_partition_full(
+    def test_worker_pauses_when_all_partitions_full(
         self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
     ):
-        """Test that worker pauses when partition is full."""
-        partition_id = 0
+        """Test that worker pauses when all partitions are full."""
+        worker_id = 0
+        n_partitions = 2
         partition_size = 5  # Small partition
         stop_event = mp.Event()
 
-        # Pre-fill the partition
-        for i in range(partition_size):
-            (temp_dir / f"partition_{partition_id}_seq_{i}.pickle").touch()
+        # Pre-fill all partitions
+        for partition_id in range(n_partitions):
+            for i in range(partition_size):
+                (temp_dir / f"partition_{partition_id}_worker_0_seq_{i}.pickle").touch()
 
         # Create mock returns
         mock_tilt_series = Mock(spec=TiltSeries)
@@ -606,7 +624,8 @@ class TestReconstructionWorker:
             side_effect=mock_create,
         ):
             reconstruction_worker(
-                partition_id=partition_id,
+                worker_id=worker_id,
+                n_partitions=n_partitions,
                 partition_size=partition_size,
                 pool_dir=temp_dir,
                 tilt_series_xmls=[mock_tilt_series_data],
@@ -621,15 +640,16 @@ class TestReconstructionWorker:
         stop_thread.join()
 
         # Worker should have been paused (no reconstruction created)
-        # because partition was already full
+        # because all partitions were already full
         assert create_call_count == 0
 
     @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
     def test_worker_sequential_ids_increment(
         self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
     ):
-        """Test that sequential IDs increment correctly."""
-        partition_id = 0
+        """Test that sequential IDs increment correctly for a worker."""
+        worker_id = 0
+        n_partitions = 2
         partition_size = 100
         stop_event = mp.Event()
 
@@ -661,7 +681,8 @@ class TestReconstructionWorker:
             side_effect=mock_create,
         ):
             reconstruction_worker(
-                partition_id=partition_id,
+                worker_id=worker_id,
+                n_partitions=n_partitions,
                 partition_size=partition_size,
                 pool_dir=temp_dir,
                 tilt_series_xmls=[mock_tilt_series_data],
@@ -673,14 +694,14 @@ class TestReconstructionWorker:
                 tilt_series_refresh_rate=10,
             )
 
-        # Check sequential IDs
-        files = sorted(temp_dir.glob(f"partition_{partition_id}_seq_*.pickle"))
+        # Check sequential IDs (files are distributed across partitions)
+        files = sorted(temp_dir.glob(f"partition_*_worker_{worker_id}_seq_*.pickle"))
         assert len(files) == 16  # 4 calls × 4 triplets
 
         # Extract IDs and verify they're sequential
         ids = []
         for f in files:
-            # Extract ID from "partition_0_seq_X.pickle"
+            # Extract ID from "partition_X_worker_Y_seq_Z.pickle"
             id_str = f.stem.split("_")[-1]
             ids.append(int(id_str))
 

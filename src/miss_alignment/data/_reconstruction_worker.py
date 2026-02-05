@@ -90,13 +90,18 @@ class TiltSeriesFetcher:
 
 
 def _count_partition_files(pool_dir: Path, partition_id: int) -> int:
-    """Count the number of files in a partition."""
-    pattern = f"partition_{partition_id}_*.pickle"
+    """Count the number of files in a partition.
+
+    Files are named: partition_{partition_id}_worker_{worker_id}_seq_{seq_id}.pickle
+    All workers write to all partitions, so we count files from all workers.
+    """
+    pattern = f"partition_{partition_id}_worker_*_seq_*.pickle"
     return len(list(pool_dir.glob(pattern)))
 
 
 def reconstruction_worker(
-    partition_id: int,
+    worker_id: int,
+    n_partitions: int,
     partition_size: int,
     pool_dir: Path,
     tilt_series_xmls: list[Path],
@@ -109,14 +114,19 @@ def reconstruction_worker(
     device: str | torch.device = "cpu",
 ):
     """
-    Worker process that maintains a partition of the reconstruction pool.
+    Worker process that cycles through all partitions of the reconstruction pool.
+
+    Each worker writes to all partitions in round-robin order. File names include
+    the worker_id to ensure uniqueness across workers.
 
     Parameters
     ----------
-    partition_id : int
-        ID of this worker's partition
+    worker_id : int
+        Unique ID of this worker (used in file naming for uniqueness)
+    n_partitions : int
+        Total number of partitions to cycle through
     partition_size : int
-        Maximum number of files to maintain in this partition
+        Maximum number of files to maintain per partition
     pool_dir : Path
         Directory to store reconstructions
     tilt_series_xmls : list[Path]
@@ -141,8 +151,8 @@ def reconstruction_worker(
     torch.set_num_threads(1)
 
     print(
-        f"Reconstruction worker {partition_id} "
-        f"starting (partition size: {partition_size})"
+        f"Reconstruction worker {worker_id} starting "
+        f"(cycling through {n_partitions} partitions, {partition_size} files each)"
     )
 
     # Initialize tilt series fetcher
@@ -154,17 +164,25 @@ def reconstruction_worker(
         device=device,
     )
 
-    # Sequential ID counter for this partition
+    # Sequential ID counter for this worker (unique per worker)
     sequential_id = 0
+    # Current partition index (cycles through 0 to n_partitions-1)
+    current_partition = 0
 
     # Continuously generate reconstructions
     while not stop_event.is_set():
-        # Check if partition is full, pause if so
-        while _count_partition_files(pool_dir, partition_id) >= partition_size:
-            if stop_event.is_set():
-                print(f"Reconstruction worker {partition_id} shutting down")
-                return
-            time.sleep(PAUSE_POLL_INTERVAL)
+        # Check if current partition is full, if so try next partition
+        partitions_checked = 0
+        while _count_partition_files(pool_dir, current_partition) >= partition_size:
+            current_partition = (current_partition + 1) % n_partitions
+            partitions_checked += 1
+            # If all partitions are full, wait
+            if partitions_checked >= n_partitions:
+                if stop_event.is_set():
+                    print(f"Reconstruction worker {worker_id} shutting down")
+                    return
+                time.sleep(PAUSE_POLL_INTERVAL)
+                partitions_checked = 0
 
         # Generate reconstruction and 8 mirrored triplets
         tilt_series, images, pixel_size = tilt_series_fetcher()
@@ -186,12 +204,15 @@ def reconstruction_worker(
                 triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
 
                 # Write with atomic rename
-                file_path = (
-                    pool_dir / f"partition_{partition_id}_seq_{sequential_id}.pickle"
+                # File name includes worker_id for uniqueness across workers
+                filename = (
+                    f"partition_{current_partition}_worker_{worker_id}"
+                    f"_seq_{sequential_id}.pickle"
                 )
+                file_path = pool_dir / filename
                 with tempfile.NamedTemporaryFile(
                     dir=pool_dir,
-                    prefix=f"tmp_partition_{partition_id}_",
+                    prefix=f"tmp_partition_{current_partition}_worker_{worker_id}_",
                     suffix=".pickle",
                     delete=False,
                 ) as tmp_file:
@@ -204,7 +225,10 @@ def reconstruction_worker(
                 # Increment and wrap sequential ID
                 sequential_id = (sequential_id + 1) % MAX_SEQUENTIAL_ID
 
-    print(f"Reconstruction worker {partition_id} shutting down")
+                # Move to next partition (round-robin)
+                current_partition = (current_partition + 1) % n_partitions
+
+    print(f"Reconstruction worker {worker_id} shutting down")
 
 
 def sample_positions(

@@ -227,6 +227,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         self.log(
@@ -236,6 +237,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         self.log(
@@ -245,6 +247,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         # log actual assigned score of the model
@@ -255,6 +258,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
         self.log(
             name="train_score_misaligned",
@@ -263,6 +267,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         # Log mean precision to monitor uncertainty learning
@@ -273,6 +278,7 @@ class MissAlignment(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
+            sync_dist=True,
         )
 
         # Log the learning rate
@@ -365,15 +371,28 @@ class MAProgressBar(Callback):
         self.max_epochs = max_epochs
         self.steps_per_epoch = steps_per_epoch
         self.refresh_rate = refresh_rate
+        # total_steps will be adjusted for world_size in on_train_start
         self.total_steps = max_epochs * steps_per_epoch
         self.pbar = None
         self.start_time = None
 
+    def _is_rank_zero(self, trainer) -> bool:
+        """Check if we're on the main process (rank 0)."""
+        return trainer.global_rank == 0
+
     def on_train_start(self, trainer, pl_module):
+        # Only create progress bar on rank 0
+        if not self._is_rank_zero(trainer):
+            return
+
         import sys
         import time
 
         from tqdm import tqdm
+
+        # Adjust total_steps for distributed training
+        world_size = trainer.world_size
+        self.total_steps = self.total_steps // world_size
 
         self.start_time = time.time()
         self.pbar = tqdm(
@@ -386,7 +405,13 @@ class MAProgressBar(Callback):
         )
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        global_step = trainer.current_epoch * self.steps_per_epoch + batch_idx + 1
+        # Only update progress bar on rank 0
+        if not self._is_rank_zero(trainer) or self.pbar is None:
+            return
+
+        # Use trainer.global_step which correctly tracks optimizer steps
+        # regardless of DDP world size
+        global_step = trainer.global_step
 
         if global_step % self.refresh_rate == 0 or global_step == self.total_steps:
             # Update progress bar to current position
@@ -394,6 +419,10 @@ class MAProgressBar(Callback):
             self.pbar.refresh()
 
     def on_train_epoch_end(self, trainer, pl_module):
+        # Only update progress bar on rank 0
+        if not self._is_rank_zero(trainer) or self.pbar is None:
+            return
+
         # Update postfix with epoch metrics
         metrics = trainer.logged_metrics
         postfix = {}
@@ -411,7 +440,8 @@ class MAProgressBar(Callback):
             self.pbar.set_postfix(postfix)
 
     def on_train_end(self, trainer, pl_module):
-        if self.pbar is not None:
+        # Only close progress bar on rank 0
+        if self._is_rank_zero(trainer) and self.pbar is not None:
             self.pbar.close()
 
 
@@ -461,23 +491,33 @@ class MAEarlyStopping(Callback):
         return False
 
     def on_train_epoch_end(self, trainer, pl_module):
-        """Called at the end of each training batch."""
+        """Called at the end of each training epoch.
+
+        All ranks evaluate stopping logic (metrics are synced via sync_dist=True),
+        then the decision is synchronized using Lightning's reduce_boolean_decision.
+        This mirrors PyTorch Lightning's built-in EarlyStopping approach.
+        """
         # Check if we should start early stopping yet
         if not self._check_scheduler_complete(trainer, pl_module):
             return
 
-        logged_metrics = trainer.logged_metrics
+        # Get the monitored metric (synced across ranks via sync_dist=True)
+        logged_metrics = trainer.callback_metrics
+        if "train_loss" not in logged_metrics:
+            return  # Metric not available yet
 
-        if "train_loss" in logged_metrics:
-            current_score = logged_metrics["train_loss"]
-        else:
-            raise ValueError("Couldn't find train_loss in pl_module")
+        current_score = float(logged_metrics["train_loss"])
 
+        # Evaluate stopping criteria (all ranks do this)
+        should_stop = False
         if self.best_score is None or current_score < self.best_score - self.min_delta:
             self.best_score = current_score
             self.wait_count = 0
         else:
             self.wait_count += 1
+            if self.wait_count >= self.patience:
+                should_stop = True
 
-        if self.wait_count >= self.patience:
-            trainer.should_stop = True
+        # Sync decision across all ranks (stop if ANY rank decides to stop)
+        should_stop = trainer.strategy.reduce_boolean_decision(should_stop, all=False)
+        trainer.should_stop = trainer.should_stop or should_stop

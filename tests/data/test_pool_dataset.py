@@ -2,8 +2,7 @@ import pytest
 import torch
 import pickle
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from miss_alignment.data.training_dataset import ReconstructionPoolDataset
 
@@ -29,7 +28,7 @@ class TestReconstructionPoolDataset:
     def dataset(self, mock_pool_dir):
         """Create dataset instance with test parameters."""
         ds = ReconstructionPoolDataset(
-            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100
+            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100, n_partitions=1
         )
         ds.partition_id = 0  # Simulate worker_init_fn assignment
         return ds
@@ -38,14 +37,19 @@ class TestReconstructionPoolDataset:
         """Test dataset initialization."""
         batch_size = 4
         epoch_size = 100
+        n_partitions = 2
 
         dataset = ReconstructionPoolDataset(
-            pool_dir=mock_pool_dir, batch_size=batch_size, epoch_size=epoch_size
+            pool_dir=mock_pool_dir,
+            batch_size=batch_size,
+            epoch_size=epoch_size,
+            n_partitions=n_partitions,
         )
 
         assert dataset.pool_dir == mock_pool_dir
         assert dataset.batch_size == batch_size
         assert dataset.epoch_size == epoch_size
+        assert dataset.n_partitions == n_partitions
         assert dataset.partition_id is None  # Not set until worker_init_fn
 
     def test_len(self, dataset):
@@ -55,32 +59,42 @@ class TestReconstructionPoolDataset:
     def test_partition_id_not_set_raises_error(self, mock_pool_dir):
         """Test that accessing partition files without partition_id raises error."""
         dataset = ReconstructionPoolDataset(
-            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100
+            pool_dir=mock_pool_dir, batch_size=4, epoch_size=100, n_partitions=1
         )
         # partition_id is None
         with pytest.raises(RuntimeError, match="partition_id not set"):
             dataset._list_partition_files()
 
     def test_list_partition_files(self, dataset, mock_pool_dir, sample_data):
-        """Test that _list_partition_files returns correct files."""
-        # Create some test files
-        for i in range(5):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+        """Test that _list_partition_files returns correct files.
+
+        Files follow the naming:
+        partition_{partition_id}_worker_{worker_id}_seq_{seq_id}.pickle
+        """
+        # Create some test files from worker 0
+        for i in range(3):
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
+            with open(file_path, "wb") as f:
+                pickle.dump(sample_data, f)
+
+        # Create some test files from worker 1 (same partition)
+        for i in range(2):
+            file_path = mock_pool_dir / f"partition_0_worker_1_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
         # Create a file for different partition (should be ignored)
-        other_file = mock_pool_dir / "partition_1_seq_0.pickle"
+        other_file = mock_pool_dir / "partition_1_worker_0_seq_0.pickle"
         with open(other_file, "wb") as f:
             pickle.dump(sample_data, f)
 
         # Create a temp file (should be filtered out)
-        tmp_file = mock_pool_dir / "tmp_partition_0_xyz.pickle"
+        tmp_file = mock_pool_dir / "tmp_partition_0_worker_0_xyz.pickle"
         with open(tmp_file, "wb") as f:
             pickle.dump(sample_data, f)
 
         files = dataset._list_partition_files()
-        assert len(files) == 5
+        assert len(files) == 5  # 3 from worker 0 + 2 from worker 1
         assert all("partition_0" in f.name for f in files)
         assert all(not f.name.startswith("tmp_") for f in files)
 
@@ -88,7 +102,7 @@ class TestReconstructionPoolDataset:
         """Test that __getitem__ reads file and deletes it after."""
         # Create enough files to meet batch_size threshold
         for i in range(5):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
@@ -110,7 +124,7 @@ class TestReconstructionPoolDataset:
         """Test that volumes are converted from fp16 to fp32."""
         # Create test files
         for i in range(5):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
@@ -124,7 +138,7 @@ class TestReconstructionPoolDataset:
         """Test that __getitem__ waits when not enough files available."""
         # Start with fewer files than batch_size
         for i in range(2):  # Less than batch_size=4
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
@@ -134,7 +148,7 @@ class TestReconstructionPoolDataset:
         def add_files():
             time.sleep(0.1)  # Wait a bit
             for i in range(2, 5):  # Add more files
-                file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+                file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
                 with open(file_path, "wb") as f:
                     pickle.dump(sample_data, f)
 
@@ -191,7 +205,7 @@ class TestReconstructionPoolDataset:
         """Test that channel dimension is added correctly."""
         # Create test files
         for i in range(5):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
@@ -208,7 +222,7 @@ class TestReconstructionPoolDataset:
         invalid_data = [(torch.randn(64, 64, 64).half(), 1) for _ in range(3)]
 
         for i in range(5):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(invalid_data, f)
 
@@ -221,13 +235,13 @@ class TestReconstructionPoolDataset:
     def test_corrupted_file_retry(self, dataset, mock_pool_dir, sample_data):
         """Test that corrupted files trigger retry."""
         # Create a corrupted file
-        corrupted_path = mock_pool_dir / "partition_0_seq_0.pickle"
+        corrupted_path = mock_pool_dir / "partition_0_worker_0_seq_0.pickle"
         with open(corrupted_path, "wb") as f:
             f.write(b"corrupted data")
 
         # Create valid files
         for i in range(1, 6):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
@@ -239,7 +253,7 @@ class TestReconstructionPoolDataset:
         """Test that FileNotFoundError (race condition) triggers retry."""
         # Create valid files
         for i in range(5):
-            file_path = mock_pool_dir / f"partition_0_seq_{i}.pickle"
+            file_path = mock_pool_dir / f"partition_0_worker_0_seq_{i}.pickle"
             with open(file_path, "wb") as f:
                 pickle.dump(sample_data, f)
 
