@@ -12,8 +12,8 @@ Now you should be set to run miss-alignment. You need to put a miss-alignment co
 
 Then start the program with this, I would advise running with 4 GPUs:
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 miss-alignment --config-file /path/to/warp_tiltseries/config.yaml --n-workers 3 --n-devices 4 --start-at-iteration 0 --prepare-stacks 10.0
+CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment --config-file /path/to/config.yaml --training-devices 0,1 --reconstruction-devices 2,2,2,3,3,3 --dataloaders-per-trainer 5 --start-at-iteration 0 --prepare-stacks 10.0
 ```
 If the program crashed after fully finishing iterations, you can continue at later iterations with the `—start-at-iteration` where the start is indicated counting from 0.
 
-After finishing, you need to make reconstructions with WarpTools ts_reconstruct to see the results.
+After finishing MissAlignment, in WarpTools you need to update the ctf parameters (`ts_ctf`) and then make reconstructions (`ts_reconstruct`) to see the results.
