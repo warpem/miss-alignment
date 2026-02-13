@@ -33,12 +33,38 @@ class TiltSeriesData:
         tilt_series.save_meta(self.xml_metadata_path)
 
 
+def _validate_tilt_series_dimensions(tilt_series: TiltSeries, path: Path) -> None:
+    """Validate that image and volume dimensions are present and non-zero."""
+    image_dims = tilt_series.image_dimensions_physical
+    volume_dims = tilt_series.volume_dimensions_physical
+
+    if image_dims is None or image_dims.numel() == 0:
+        raise ValueError(
+            f"XML metadata at {path} is missing 'ImageDimensionsAngstrom'."
+        )
+    if volume_dims is None or volume_dims.numel() == 0:
+        raise ValueError(
+            f"XML metadata at {path} is missing 'VolumeDimensionsAngstrom'."
+        )
+    if torch.any(image_dims == 0):
+        raise ValueError(
+            f"XML metadata at {path} has zero values in "
+            f"'ImageDimensionsAngstrom': {image_dims.tolist()}"
+        )
+    if torch.any(volume_dims == 0):
+        raise ValueError(
+            f"XML metadata at {path} has zero values in "
+            f"'VolumeDimensionsAngstrom': {volume_dims.tolist()}"
+        )
+
+
 def _load_metadata_and_stack(
     metadata_path: Path,
     downsample: int = 1,
 ) -> tuple[TiltSeries, torch.Tensor, float]:
     # load metadata
     tilt_series = TiltSeries(metadata_path)
+    _validate_tilt_series_dimensions(tilt_series, metadata_path)
 
     stack_path = tilt_series.tilt_stack_path
 
