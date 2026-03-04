@@ -411,7 +411,7 @@ def _optimize_shifts_inner(
                 # Get score and precision for this batch
                 batch_scores, batch_log_precisions = model(subvolumes)
 
-                batch_precisions = batch_log_precisions.exp()
+                batch_precisions = batch_log_precisions.exp().detach()
 
                 # Precision-weighted average score for this batch
                 batch_weighted_score = (batch_scores * batch_precisions).sum()
@@ -462,7 +462,7 @@ def _optimize_shifts_inner(
         # Calculate the difference from initial to current at zero tilt
         delta_shift_y = current_zero_tilt_shift_y - initial_zero_tilt_shift_y
         delta_shift_x = current_zero_tilt_shift_x - initial_zero_tilt_shift_x
-        
+
         delta_shift_2d = torch.tensor(
             [delta_shift_y, delta_shift_x],
             device=device,
@@ -470,8 +470,8 @@ def _optimize_shifts_inner(
         )
         m_2d = R(tilt_series.tilt_axis_angles, yx=True)
         m_2d = torch.linalg.inv(m_2d[zero_tilt_idx, :2, :2])
-        delta_shift_2d = m_2d @ einops.rearrange(delta_shift_2d, 'x -> x 1')
-        delta_shift_y, delta_shift_x = delta_shift_2d[0], delta_shift_2d[1]        
+        delta_shift_2d = m_2d @ einops.rearrange(delta_shift_2d, "x -> x 1")
+        delta_shift_y, delta_shift_x = delta_shift_2d[0], delta_shift_2d[1]
 
         # Create a 3D shift tensor with z=0 (in ZYX order)
         shift_3d = torch.tensor(
