@@ -3,6 +3,8 @@ import torch
 import mrcfile
 from pathlib import Path
 
+from lxml import etree
+
 from warpylib import TiltSeries
 from warpylib.ops import rescale
 from dataclasses import dataclass, replace
@@ -12,6 +14,7 @@ from dataclasses import dataclass, replace
 class TiltSeriesData:
     # required variables
     xml_metadata_path: Path
+    settings_xml_path: Path
 
     def replace(self, **kwargs):
         return replace(self, **kwargs)
@@ -24,7 +27,8 @@ class TiltSeriesData:
         self, downsample=1
     ) -> tuple[TiltSeries, torch.Tensor, float]:
         metadata, images, pixel_size = _load_metadata_and_stack(
-            self.xml_metadata_path,
+            metadata_path = self.xml_metadata_path,
+            settings_xml_path = self.settings_xml_path,
             downsample=downsample,
         )
         return metadata, images, pixel_size
@@ -57,13 +61,50 @@ def _validate_tilt_series_dimensions(tilt_series: TiltSeries, path: Path) -> Non
             f"'VolumeDimensionsAngstrom': {volume_dims.tolist()}"
         )
 
+def _load_settings_metadata(ts: "TiltSeries", settings_xml_path: Path, metadata_path: Path) -> TiltSeries:
+
+    if not Path(settings_xml_path).exists():
+        return FileNotFoundError
+    try:
+        ts = TiltSeries(metadata_path)
+        tree = etree.parse(settings_xml_path)
+
+        # Helper to find a Param value by Name attribute
+        def get_param(name, parent=".//"):
+            element = tree.find(f"{parent}Param[@Name='{name}']")
+            return element.get("Value") if element is not None else None
+
+        # 1. Load Pixel Size
+        px_str = get_param("PixelSize", parent=".//Import/")
+        px = float(px_str) if px_str else 1.0  # Default to 1.0 to avoid ZeroDivision
+
+        # 2. Load Volume Dimensions (DimensionsX, Y, Z)
+        # We specify the parent ".//Tomo/" to ensure we get the right ones
+        dimX_px = get_param("DimensionsX", parent=".//Tomo/")
+        dimY_px = get_param("DimensionsY", parent=".//Tomo/")
+        dimZ_px = get_param("DimensionsZ", parent=".//Tomo/")
+
+        # 3. Convert to float and calculate Angstroms
+        if all([dimX_px, dimY_px, dimZ_px]):
+            Xang = float(dimX_px) * px
+            Yang = float(dimY_px) * px
+            Zang = float(dimZ_px) * px
+
+            # Assign to TiltSeries object
+            ts.image_dimensions_physical = torch.tensor((Xang, Yang), dtype=torch.float32)
+            ts.volume_dimensions_physical = torch.tensor((Xang, Yang, Zang), dtype=torch.float32)
+
+    except Exception as e:
+        print(f"Error loading metadata from {settings_xml_path}: {e}")
+        return ts
 
 def _load_metadata_and_stack(
+    settings_xml_path: Path,
     metadata_path: Path,
     downsample: int = 1,
 ) -> tuple[TiltSeries, torch.Tensor, float]:
     # load metadata
-    tilt_series = TiltSeries(metadata_path)
+    tilt_series = _load_settings_metadata(settings_xml_path, metadata_path)
     _validate_tilt_series_dimensions(tilt_series, metadata_path)
 
     stack_path = tilt_series.tilt_stack_path

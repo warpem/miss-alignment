@@ -111,6 +111,7 @@ def train_miss_align(
 
     # track the path to the dataset
     training_directory = Path(general_config["training_directory"])
+    settings_xml_path = Path(general_config["settings_file"])
     training_directory.mkdir(exist_ok=True, parents=True)
 
     # Set up training environment

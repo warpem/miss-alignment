@@ -1,6 +1,7 @@
 general:
   # MissAlignment iteratively trains models and realigns the tilt-series
   training_directory: /data/set/  # path to directory for writing iteration output
+  settings_file: ts.settings      # path to tiltseries settings file
   apply_ctf: False                # set to True if CTF estimates are available in .xml
   iteration_settings:             # defines all iterations to run (length determines number of iterations)
     # alignment modes: "global" (single pass), "anchoring" (iterative), "spline" (coarse-to-fine)

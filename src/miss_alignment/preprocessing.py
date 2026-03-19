@@ -12,6 +12,7 @@ from .data.io import TiltSeriesData
 
 def _run_cross_correlation_single(
     xml_file: Path,
+    settings_file:Path,
     device: int | None,
     lowpass_cutoff: float,
     pretilt_search_range: tuple[float, float],
@@ -22,6 +23,8 @@ def _run_cross_correlation_single(
     ----------
     xml_file : Path
         Path to the XML metadata file for the tilt-series.
+    settings_file : Path
+        Path to the settings file for the tilt-series.
     device : int | None
         CUDA device index to use. If None, uses default device.
     lowpass_cutoff : float
@@ -44,7 +47,7 @@ def _run_cross_correlation_single(
         device_str = "cuda"
 
     # Load tilt-series data
-    ts_data = TiltSeriesData(xml_metadata_path=xml_file)
+    ts_data = TiltSeriesData(xml_metadata_path=xml_file, settings_xml_path=settings_file)
     ts, stack, pixel_size = ts_data.load_metadata_and_stack(downsample=1)
 
     # Extract tilt axis angle from metadata (same for all tilts)

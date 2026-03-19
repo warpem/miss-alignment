@@ -33,10 +33,7 @@ def gpu_runner(
     while True:
         try:
             task_parameters = task_queue.get_nowait()
-            tilt_series_path, loss_values = evaluate_tilt_series(
-                **task_parameters,
-                device=device,
-            )
+            tilt_series_path, loss_values = evaluate_tilt_series(device=device, **task_parameters)
             # place the name and final loss of the finished tilt_series
             final_loss = float(loss_values[-1]) if loss_values else None
             result_queue.put_nowait(

@@ -118,6 +118,7 @@ def generate_position_grid(
 def evaluate_tilt_series(
     model_checkpoint_path: Path,
     tilt_series_path: Path,
+    tilt_series_setting_path: Path,
     output_directory: Path,
     setting: str | tuple[int, int] | tuple[int, int, int, int] = "anchoring",
     patch_size: int = 96,
@@ -137,6 +138,8 @@ def evaluate_tilt_series(
         Path to trained model checkpoint.
     tilt_series_path : Path
         Path to tilt series XML file.
+    tilt_series_setting_path: Path
+        Path to tilt series settings XML file.
     output_directory : Path
         Directory to write output files.
     setting : str | tuple
@@ -175,7 +178,8 @@ def evaluate_tilt_series(
     )
 
     # load tilt_series and set its name for output
-    tilt_series_data = TiltSeriesData(xml_metadata_path=tilt_series_path)
+    tilt_series_data = TiltSeriesData(xml_metadata_path=tilt_series_path,
+                                      settings_xml_path=tilt_series_setting_path)
     tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
         downsample=downsample
     )
