@@ -81,6 +81,7 @@ def _run_cross_correlation_single(
 
 
 def run_cross_correlation_alignment_parallel(
+    settings_file: Path,
     training_directory: Path,
     devices: list[int] | None = None,
     n_processes: int = 4,
@@ -96,6 +97,8 @@ def run_cross_correlation_alignment_parallel(
 
     Parameters
     ----------
+    settings_file : Path
+        Path to the settings file for the tilt-series.
     training_directory : Path
         Directory containing XML metadata files for tilt-series.
     devices : list[int] | None, optional
@@ -136,9 +139,10 @@ def run_cross_correlation_alignment_parallel(
             future = executor.submit(
                 _run_cross_correlation_single,
                 xml_file,
-                device,
-                lowpass_cutoff,
-                pretilt_search_range,
+                settings_file=settings_file,
+                lowpass_cutoff=lowpass_cutoff,
+                device=device,
+                pretilt_search_range=pretilt_search_range,
             )
             futures.append(future)
 

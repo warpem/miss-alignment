@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 class TiltSeriesData:
     # required variables
     xml_metadata_path: Path
-    settings_xml_path: Path
+    settings_xml_path: Path | None = None
 
     def replace(self, **kwargs):
         return replace(self, **kwargs)
@@ -61,12 +61,11 @@ def _validate_tilt_series_dimensions(tilt_series: TiltSeries, path: Path) -> Non
             f"'VolumeDimensionsAngstrom': {volume_dims.tolist()}"
         )
 
-def _load_settings_metadata(ts: "TiltSeries", settings_xml_path: Path, metadata_path: Path) -> TiltSeries:
-
-    if not Path(settings_xml_path).exists():
-        return FileNotFoundError
+def _load_settings_metadata(settings_xml_path: Path | None, metadata_path: Path) -> TiltSeries:
+    ts = TiltSeries(metadata_path)
+    if settings_xml_path is None or not Path(settings_xml_path).exists():
+        return ts
     try:
-        ts = TiltSeries(metadata_path)
         tree = etree.parse(settings_xml_path)
 
         # Helper to find a Param value by Name attribute
@@ -96,15 +95,16 @@ def _load_settings_metadata(ts: "TiltSeries", settings_xml_path: Path, metadata_
 
     except Exception as e:
         print(f"Error loading metadata from {settings_xml_path}: {e}")
-        return ts
+
+    return ts
 
 def _load_metadata_and_stack(
-    settings_xml_path: Path,
+    settings_xml_path: Path | None,
     metadata_path: Path,
     downsample: int = 1,
 ) -> tuple[TiltSeries, torch.Tensor, float]:
     # load metadata
-    tilt_series = _load_settings_metadata(settings_xml_path, metadata_path)
+    tilt_series = _load_settings_metadata(settings_xml_path=settings_xml_path, metadata_path=metadata_path)
     _validate_tilt_series_dimensions(tilt_series, metadata_path)
 
     stack_path = tilt_series.tilt_stack_path

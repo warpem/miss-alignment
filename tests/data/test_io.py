@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 from warpylib import TiltSeries
-from miss_alignment.data.io import TiltSeriesData
+from lxml import etree
+from miss_alignment.data.io import TiltSeriesData, _load_settings_metadata
 
 
 class TestTiltSeriesData:
@@ -131,3 +132,59 @@ class TestTiltSeriesData:
         assert loaded_images.shape[0] == n_tilts
         assert loaded_images.shape[1] == 50
         assert loaded_images.shape[2] == 50
+
+    def test_load_settings_metadata(self, tmp_path):
+        """Test _load_settings_metadata with a valid settings XML."""
+        # Create a dummy XML metadata file
+        xml_path = tmp_path / "test.xml"
+        ts = TiltSeries(n_tilts=10)
+        ts.save_meta(xml_path)
+
+        # Create a dummy settings.xml file
+        settings_path = tmp_path / "ts.settings"
+        root = etree.Element("Settings")
+        import_node = etree.SubElement(root, "Import")
+        etree.SubElement(import_node, "Param", Name="PixelSize", Value="2.5")
+
+        tomo_node = etree.SubElement(root, "Tomo")
+        etree.SubElement(tomo_node, "Param", Name="DimensionsX", Value="100")
+        etree.SubElement(tomo_node, "Param", Name="DimensionsY", Value="120")
+        etree.SubElement(tomo_node, "Param", Name="DimensionsZ", Value="80")
+
+        with open(settings_path, "wb") as f:
+            f.write(etree.tostring(root))
+
+        # Test loading
+        loaded_ts = _load_settings_metadata(settings_path, xml_path)
+
+        assert isinstance(loaded_ts, TiltSeries)
+        # 100 * 2.5 = 250, 120 * 2.5 = 300
+        assert torch.allclose(
+            loaded_ts.image_dimensions_physical, torch.tensor([250.0, 300.0])
+        )
+        # 80 * 2.5 = 200
+        assert torch.allclose(
+            loaded_ts.volume_dimensions_physical, torch.tensor([250.0, 300.0, 200.0])
+        )
+
+    def test_load_settings_metadata_missing_file(self, tmp_path):
+        """Test _load_settings_metadata when settings file is missing."""
+        xml_path = tmp_path / "test.xml"
+        ts = TiltSeries(n_tilts=10)
+        ts.save_meta(xml_path)
+
+        settings_path = tmp_path / "non_existent.settings"
+
+        # Should not raise and should return TiltSeries object
+        loaded_ts = _load_settings_metadata(settings_path, xml_path)
+        assert isinstance(loaded_ts, TiltSeries)
+
+    def test_load_settings_metadata_none_path(self, tmp_path):
+        """Test _load_settings_metadata when settings path is None."""
+        xml_path = tmp_path / "test.xml"
+        ts = TiltSeries(n_tilts=10)
+        ts.save_meta(xml_path)
+
+        # Should not raise and should return TiltSeries object
+        loaded_ts = _load_settings_metadata(None, xml_path)
+        assert isinstance(loaded_ts, TiltSeries)

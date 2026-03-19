@@ -150,9 +150,11 @@ def train_miss_align(
 
                 # Run cross-correlation alignment on the training directory
                 run_cross_correlation_alignment_parallel(
+                    settings_file=settings_xml_path,
                     training_directory=training_directory,
                     devices=devices_alignment,
                     n_processes=4,
+                    pretilt_search_range=(-3,3),
                 )
 
     start_iter = start_at_iteration
