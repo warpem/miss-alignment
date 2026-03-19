@@ -246,7 +246,7 @@ def main():
 
     # Configuration
     tilt_axis_angle = -85.6099  # Adjust as needed
-    volume_shape = (342, 480, 100)  # (x, y, z) in pixels
+    volume_shape = (3800, 4000, 1000)  # (x, y, z) in pixels relative to input stack
     output_pixel_size = 10.0  # Target pixel size in Angstroms, or None for no downsampling
     # input pixel size is read directly from the .st -> we assume its correctly annotated
 
