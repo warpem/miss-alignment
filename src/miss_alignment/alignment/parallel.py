@@ -49,6 +49,7 @@ def gpu_runner(
 def run_alignment_parallel(
     model_checkpoint: Path,
     tilt_series_list: list[Path],
+    tilt_series_setting_path: Path | None,
     output_directory: Path,
     setting: str | tuple[int, int] | tuple[int, int, int, int],
     patch_size: int,
@@ -67,6 +68,7 @@ def run_alignment_parallel(
     ----------
     model_checkpoint: Path
     tilt_series_list: list[Path]
+    tilt_series_setting_path: Path | None
     patches_per_dim: tuple[int, int, int]
     patch_size: int
     tomogram_shape: tuple[int, int, int]
@@ -85,6 +87,7 @@ def run_alignment_parallel(
             {
                 "model_checkpoint_path": model_checkpoint,
                 "tilt_series_path": tilt_series,
+                "tilt_series_setting_path": tilt_series_setting_path,
                 "output_directory": output_directory,
                 "setting": setting,
                 "patch_size": patch_size,

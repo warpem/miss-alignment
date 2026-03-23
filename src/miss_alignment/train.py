@@ -111,7 +111,8 @@ def train_miss_align(
 
     # track the path to the dataset
     training_directory = Path(general_config["training_directory"])
-    settings_xml_path = Path(general_config["settings_file"])
+    settings_file = general_config.get("settings_file")
+    settings_xml_path = Path(settings_file) if settings_file is not None else None
     training_directory.mkdir(exist_ok=True, parents=True)
 
     # Set up training environment
@@ -299,8 +300,9 @@ def train_miss_align(
 
             # run alignment in parallel over all available devices
             run_alignment_parallel(
-                model_checkpoint=str(training_model_path),
+                model_checkpoint=training_model_path,
                 tilt_series_list=tilt_series_list,
+                tilt_series_setting_path=settings_xml_path,
                 output_directory=training_directory,
                 setting=iteration_settings["alignment"],
                 patch_size=alignment_config["patch_size"],

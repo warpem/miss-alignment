@@ -12,7 +12,7 @@ from .data.io import TiltSeriesData
 
 def _run_cross_correlation_single(
     xml_file: Path,
-    settings_file:Path,
+    settings_file: Path | None,
     device: int | None,
     lowpass_cutoff: float,
     pretilt_search_range: tuple[float, float],
@@ -23,7 +23,7 @@ def _run_cross_correlation_single(
     ----------
     xml_file : Path
         Path to the XML metadata file for the tilt-series.
-    settings_file : Path
+    settings_file : Path | None
         Path to the settings file for the tilt-series.
     device : int | None
         CUDA device index to use. If None, uses default device.
@@ -81,7 +81,7 @@ def _run_cross_correlation_single(
 
 
 def run_cross_correlation_alignment_parallel(
-    settings_file: Path,
+    settings_file: Path | None,
     training_directory: Path,
     devices: list[int] | None = None,
     n_processes: int = 4,
@@ -97,7 +97,7 @@ def run_cross_correlation_alignment_parallel(
 
     Parameters
     ----------
-    settings_file : Path
+    settings_file : Path | None
         Path to the settings file for the tilt-series.
     training_directory : Path
         Directory containing XML metadata files for tilt-series.
