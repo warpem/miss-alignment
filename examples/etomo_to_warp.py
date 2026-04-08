@@ -14,6 +14,7 @@ import torch
 import numpy as np
 import mrcfile
 import glob
+import argparse
 
 from warpylib import TiltSeries
 from warpylib.ops.rescale import rescale
@@ -225,32 +226,62 @@ def process_tilt_series(
 
 def main():
     """Main processing loop for TS_* folders."""
+    parser = argparse.ArgumentParser(
+        description="Process IMOD tilt-series data to warpylib TiltSeries format."
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=Path("."),
+        help="Directory containing TS_* folders (default: current directory)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("warp_tiltseries/"),
+        help="Directory to write output files (default: warp_tiltseries/)",
+    )
+    parser.add_argument(
+        "--tilt-axis-angle",
+        type=float,
+        default=-85.6099,
+        help="Tilt axis rotation angle in degrees (default: -85.6099)",
+    )
+    parser.add_argument(
+        "--volume-shape",
+        type=int,
+        nargs=3,
+        default=[342, 480, 100],
+        help="Target volume shape (x, y, z) in pixels relative to input (default: 342 480 100)",
+    )
+    parser.add_argument(
+        "--output-pixel-size",
+        type=float,
+        default=10.0,
+        help="Target pixel size in Angstroms, or None for no downsampling (default: 10.0)",
+    )
+
+    args = parser.parse_args()
+
     # Find all TS_* folders
-    ts_folders = glob.glob("TS_*")
+    ts_folders = glob.glob(str(args.input_dir / "TS_*"))
     ts_folders = [Path(f) for f in ts_folders if os.path.isdir(f)]
 
     if not ts_folders:
-        print("No TS_* folders found in current directory")
+        print(f"No TS_* folders found in {args.input_dir}")
         return
 
     print(f"Found {len(ts_folders)} TS_* folders")
-
-    # Configuration
-    output_directory = Path("warp_tiltseries/")
-    tilt_axis_angle = -85.6099  # Adjust as needed
-    volume_shape = (342, 480, 100)  # (x, y, z) in pixels relative to input
-    output_pixel_size = 10.0  # Target pixel size in Angstroms, or None for no downsampling
-    # input pixel size is read directly from the .st -> we assume its correctly annotated
 
     # Process each folder
     for folder in sorted(ts_folders):
         try:
             process_tilt_series(
                 folder_path=folder,
-                output_directory=output_directory,
-                tilt_axis_angle=tilt_axis_angle,
-                volume_shape=volume_shape,
-                output_pixel_size=output_pixel_size,
+                output_directory=args.output_dir,
+                tilt_axis_angle=args.tilt_axis_angle,
+                volume_shape=tuple(args.volume_shape),
+                output_pixel_size=args.output_pixel_size,
             )
         except FileNotFoundError as e:
             print(f"  Skipping: {e}")
