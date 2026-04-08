@@ -13,6 +13,7 @@ from pathlib import Path
 import torch
 import numpy as np
 import mrcfile
+import glob
 
 from warpylib import TiltSeries
 from warpylib.ops.rescale import rescale
@@ -78,10 +79,10 @@ def parse_transform_file(filepath: Path) -> torch.Tensor:
 
 def process_tilt_series(
     folder_path: Path,
+    output_directory: Path,
     tilt_axis_angle: float,
     volume_shape: tuple[int, int, int],
     output_pixel_size: float | None = None,
-    output_directory: Path | None = None,
 ) -> tuple[TiltSeries, Path]:
     """
     Process a single IMOD tilt-series folder to create warpylib TiltSeries.
@@ -122,59 +123,16 @@ def process_tilt_series(
     tilt_angles = read_tilt_angles(rawtlt_path)
     n_tilts = len(tilt_angles)
 
-    # Read sample translations from transform file and convert to Angstroms
-    sample_translations = parse_transform_file(xf_path)  # (n_tilts, 2) in YX order, pixels
-
     # Load tilt images and get pixel size from MRC
     with mrcfile.open(mrc_path) as mrc:
         images = torch.tensor(mrc.data.astype(np.float32))
         pixel_size = float(mrc.voxel_size.x)
 
+    # Read sample translations from transform file and convert to Angstroms
+    sample_translations = parse_transform_file(xf_path)  # (n_tilts, 2) in YX order, pixels
+
     # Convert sample translations to Angstroms
     sample_translations = sample_translations * pixel_size  # now in Angstroms
-
-    print(f"  Tilt series shape: {images.shape}")
-    print(f"  Original pixel size: {pixel_size} Å")
-
-    # Track final pixel size (may be updated by downsampling)
-    final_pixel_size = pixel_size
-
-    # Apply downsampling if requested
-    if output_pixel_size is not None and output_pixel_size > pixel_size:
-        original_height, original_width = images.shape[-2:]
-        downsample_factor = output_pixel_size / pixel_size
-
-        # Calculate scaled dimensions, ensuring they are even
-        scaled_width = int(round(original_width / downsample_factor / 2)) * 2
-        scaled_height = int(round(original_height / downsample_factor / 2)) * 2
-        scaled_shape = (scaled_height, scaled_width)
-
-        # Calculate size rounding factors
-        size_rounding_factors = torch.tensor(
-            [
-                scaled_width / (original_width / downsample_factor),
-                scaled_height / (original_height / downsample_factor),
-                1.0,  # Z dimension (not used for 2D images)
-            ],
-            dtype=torch.float32,
-        )
-
-        # Rescale if needed
-        if scaled_shape != (original_height, original_width):
-            images = rescale(images, size=scaled_shape)
-
-        # Update final pixel size based on actual scaling (accounts for rounding)
-        final_pixel_size = pixel_size * original_width / scaled_width
-        print(f"  Downsampled to pixel size: {final_pixel_size} Å")
-        print(f"  New shape: {images.shape}")
-    elif output_pixel_size is not None and output_pixel_size < pixel_size:
-        raise ValueError('Invalid output_pixel_size: it is smaller than the input')
-
-    print(f"  Final pixel size: {final_pixel_size} Å")
-
-    # Determine output directory
-    if output_directory is None:
-        output_directory = folder_path
 
     # Create tiltstack directory structure expected by warpylib
     # warpylib expects: data_dir/tiltstack/series_name/series_name.st
@@ -216,6 +174,41 @@ def process_tilt_series(
         dtype=torch.float32,
     )
 
+    # Track final pixel size (may be updated by downsampling)
+    final_pixel_size = pixel_size
+
+    # Apply downsampling if requested
+    if output_pixel_size is not None and output_pixel_size > pixel_size:
+        original_height, original_width = images.shape[-2:]
+        downsample_factor = output_pixel_size / pixel_size
+
+        # Calculate scaled dimensions, ensuring they are even
+        scaled_width = int(round(original_width / downsample_factor / 2)) * 2
+        scaled_height = int(round(original_height / downsample_factor / 2)) * 2
+        scaled_shape = (scaled_height, scaled_width)
+
+        # Calculate size rounding factors
+        size_rounding_factors = torch.tensor(
+            [
+                scaled_width / (original_width / downsample_factor),
+                scaled_height / (original_height / downsample_factor),
+                1.0,  # Z dimension (not used for 2D images)
+            ],
+            dtype=torch.float32,
+        )
+
+        # Rescale if needed
+        if scaled_shape != (original_height, original_width):
+            images = rescale(images, size=scaled_shape)
+
+        # Update final pixel size based on actual scaling (accounts for rounding)
+        final_pixel_size = pixel_size * original_width / scaled_width
+
+    elif output_pixel_size is not None and output_pixel_size < pixel_size:
+        raise ValueError('Invalid output_pixel_size: it is smaller than the input')
+
+    print(f"  Final pixel size: {final_pixel_size} Å")
+
     # Write MRC stack
     with mrcfile.new(stack_path, overwrite=True) as mrc:
         mrc.set_data(images.cpu().numpy())
@@ -232,11 +225,10 @@ def process_tilt_series(
 
 def main():
     """Main processing loop for TS_* folders."""
-    import glob
-
     # Find all TS_* folders
     ts_folders = glob.glob("TS_*")
     ts_folders = [Path(f) for f in ts_folders if os.path.isdir(f)]
+    output_directory = Path("warp_tiltseries/")
 
     if not ts_folders:
         print("No TS_* folders found in current directory")
@@ -255,6 +247,7 @@ def main():
         try:
             process_tilt_series(
                 folder_path=folder,
+                output_directory=output_directory,
                 tilt_axis_angle=tilt_axis_angle,
                 volume_shape=volume_shape,
                 output_pixel_size=output_pixel_size,
