@@ -228,7 +228,6 @@ def main():
     # Find all TS_* folders
     ts_folders = glob.glob("TS_*")
     ts_folders = [Path(f) for f in ts_folders if os.path.isdir(f)]
-    output_directory = Path("warp_tiltseries/")
 
     if not ts_folders:
         print("No TS_* folders found in current directory")
@@ -237,8 +236,9 @@ def main():
     print(f"Found {len(ts_folders)} TS_* folders")
 
     # Configuration
+    output_directory = Path("warp_tiltseries/")
     tilt_axis_angle = -85.6099  # Adjust as needed
-    volume_shape = (3800, 4000, 1000)  # (x, y, z) in pixels relative to input stack
+    volume_shape = (342, 480, 100)  # (x, y, z) in pixels relative to input
     output_pixel_size = 10.0  # Target pixel size in Angstroms, or None for no downsampling
     # input pixel size is read directly from the .st -> we assume its correctly annotated
 
