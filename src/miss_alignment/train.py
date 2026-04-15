@@ -155,7 +155,7 @@ def train_miss_align(
                     training_directory=training_directory,
                     devices=devices_alignment,
                     n_processes=4,
-                    pretilt_search_range=(-3,3),
+                    pretilt_search_range=(-30,30),
                 )
 
     start_iter = start_at_iteration
