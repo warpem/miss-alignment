@@ -34,3 +34,7 @@ Check that the CLI shows up with:
 ```
 miss-alignment --help
 ```
+
+## How to run?
+
+See the docs/ folder for some barebones instructions. This will be improved soon.
