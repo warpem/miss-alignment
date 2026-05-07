@@ -166,8 +166,9 @@ def reconstruction_worker(
 
     # Sequential ID counter for this worker (unique per worker)
     sequential_id = 0
-    # Current partition index (cycles through 0 to n_partitions-1)
-    current_partition = 0
+    # Stagger starting partition by worker_id to avoid all workers
+    # competing for the same partitions at startup
+    current_partition = worker_id % n_partitions
 
     # Continuously generate reconstructions
     while not stop_event.is_set():
