@@ -639,9 +639,11 @@ class TestReconstructionWorker:
 
         stop_thread.join()
 
-        # Worker should have been paused (no reconstruction created)
-        # because all partitions were already full
-        assert create_call_count == 0
+        # Worker blocks inside the per-write partition check rather than before
+        # generation, so reconstruction may be called. The key invariant is that
+        # no new files were written to the already-full partitions.
+        for partition_id in range(n_partitions):
+            assert _count_partition_files(temp_dir, partition_id) == partition_size
 
     @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
     def test_worker_does_not_exceed_partition_size(
