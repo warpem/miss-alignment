@@ -59,12 +59,26 @@ class TiltSeriesFetcher:
         self._tilt_series.tilt_axis_offset_y = self._tmp_tilt_axis_offset_y.clone()
 
     def _load_next(self):
-        tilt_series_data = TiltSeriesData(
-            xml_metadata_path=random.choice(self.tilt_series_xmls)
-        )
-        tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
-            downsample=self.downsample
-        )
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                tilt_series_data = TiltSeriesData(
+                    xml_metadata_path=random.choice(self.tilt_series_xmls)
+                )
+                tilt_series, images, pixel_size = (
+                    tilt_series_data.load_metadata_and_stack(downsample=self.downsample)
+                )
+                break
+            except (ValueError, OSError) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(PAUSE_POLL_INTERVAL * (2**attempt))
+                elif self._tilt_series is not None:
+                    # Keep using the previously loaded data rather than crashing
+                    return
+                else:
+                    raise RuntimeError(
+                        f"Failed to load tilt-series after {max_retries} attempts"
+                    ) from e
         # run the preprocessing from warp for consistency
         images = preprocess_tilt_data(
             tilt_data=images,
