@@ -644,6 +644,74 @@ class TestReconstructionWorker:
         assert create_call_count == 0
 
     @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
+    def test_worker_does_not_exceed_partition_size(
+        self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
+    ):
+        """Worker must not write to a partition that is already at partition_size.
+
+        n_partitions=4 divides the 8 writes per loop. The old code checked only
+        the starting partition once before writing all 8 files, so with
+        n_partitions dividing 8 the same partition was always checked and all
+        others could grow beyond partition_size unchecked.
+        """
+        n_partitions = 4
+        partition_size = 10
+        stop_event = mp.Event()
+
+        # Pre-fill partitions 1-3 to their limit; only partition 0 has space
+        for p in [1, 2, 3]:
+            for seq in range(partition_size):
+                (temp_dir / f"partition_{p}_worker_99_seq_{seq}.pickle").touch()
+
+        mock_tilt_series = Mock(spec=TiltSeries)
+        mock_tilt_series.angles = torch.linspace(-60, 60, 10)
+        mock_fetcher_class.return_value.return_value = (
+            mock_tilt_series,
+            torch.randn(10, 128, 128),
+            10.0,
+        )
+
+        call_count = 0
+
+        def mock_create(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:  # let one full outer iteration complete then stop
+                stop_event.set()
+            return [
+                [
+                    (torch.zeros(4, 4, 4), 1),
+                    (torch.zeros(4, 4, 4), -1),
+                    (torch.zeros(4, 4, 4), 1),
+                ]
+            ] * 4
+
+        with patch(
+            "miss_alignment.data._reconstruction_worker._create_pool_reconstruction",
+            side_effect=mock_create,
+        ):
+            reconstruction_worker(
+                worker_id=0,
+                n_partitions=n_partitions,
+                partition_size=partition_size,
+                pool_dir=temp_dir,
+                tilt_series_xmls=[mock_tilt_series_data],
+                patch_size=4,
+                apply_ctf=False,
+                downsample=1,
+                shift_generator=shift_generator,
+                stop_event=stop_event,
+                tilt_series_refresh_rate=10,
+            )
+
+        for p in range(n_partitions):
+            count = _count_partition_files(temp_dir, p)
+            assert count <= partition_size, (
+                f"Partition {p} has {count} files, "
+                f"exceeds partition_size={partition_size}"
+            )
+
+    @patch("miss_alignment.data._reconstruction_worker.TiltSeriesFetcher")
     def test_worker_sequential_ids_increment(
         self, mock_fetcher_class, temp_dir, shift_generator, mock_tilt_series_data
     ):
