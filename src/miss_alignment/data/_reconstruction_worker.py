@@ -166,24 +166,12 @@ def reconstruction_worker(
 
     # Sequential ID counter for this worker (unique per worker)
     sequential_id = 0
-    # Current partition index (cycles through 0 to n_partitions-1)
-    current_partition = 0
+    # Stagger starting partition by worker_id to avoid all workers
+    # competing for the same partitions at startup
+    current_partition = worker_id % n_partitions
 
     # Continuously generate reconstructions
     while not stop_event.is_set():
-        # Check if current partition is full, if so try next partition
-        partitions_checked = 0
-        while _count_partition_files(pool_dir, current_partition) >= partition_size:
-            current_partition = (current_partition + 1) % n_partitions
-            partitions_checked += 1
-            # If all partitions are full, wait
-            if partitions_checked >= n_partitions:
-                if stop_event.is_set():
-                    print(f"Reconstruction worker {worker_id} shutting down")
-                    return
-                time.sleep(PAUSE_POLL_INTERVAL)
-                partitions_checked = 0
-
         # Generate reconstruction and 8 mirrored triplets
         tilt_series, images, pixel_size = tilt_series_fetcher()
 
@@ -200,6 +188,25 @@ def reconstruction_worker(
 
             # Write each triplet to a separate file
             for triplet in triplets:
+                # Check the target partition before each write so every
+                # partition is individually guarded regardless of n_partitions
+                partitions_checked = 0
+                while (
+                    _count_partition_files(pool_dir, current_partition)
+                    >= partition_size
+                ):
+                    current_partition = (current_partition + 1) % n_partitions
+                    partitions_checked += 1
+                    if partitions_checked >= n_partitions:
+                        # All partitions full: sleep and retry. Must check
+                        # stop_event here because the outer loop condition
+                        # is never reached while we're stuck in this loop.
+                        if stop_event.is_set():
+                            print(f"Reconstruction worker {worker_id} shutting down")
+                            return
+                        time.sleep(PAUSE_POLL_INTERVAL)
+                        partitions_checked = 0
+
                 # Convert to fp16 for storage
                 triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
 
