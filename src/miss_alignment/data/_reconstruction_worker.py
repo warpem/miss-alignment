@@ -63,7 +63,8 @@ class TiltSeriesFetcher:
             xml_metadata_path=random.choice(self.tilt_series_xmls)
         )
         tilt_series, images, pixel_size = tilt_series_data.load_metadata_and_stack(
-            downsample=self.downsample
+            downsample=self.downsample,
+            retry_on_read_error=True,
         )
         # run the preprocessing from warp for consistency
         images = preprocess_tilt_data(

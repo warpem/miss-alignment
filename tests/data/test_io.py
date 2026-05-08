@@ -1,8 +1,8 @@
 import pytest
 import torch
 import mrcfile
-import json
 from pathlib import Path
+from unittest.mock import patch
 
 from warpylib import TiltSeries
 from miss_alignment.data.io import TiltSeriesData
@@ -29,7 +29,6 @@ class TestTiltSeriesData:
     def test_initialization(self, tmp_path):
         """Test TiltSeriesData initialization with required parameters."""
         xml_path = tmp_path / "test.xml"
-        stack_path = tmp_path / "test.st"
 
         data = TiltSeriesData(
             xml_metadata_path=xml_path,
@@ -131,3 +130,86 @@ class TestTiltSeriesData:
         assert loaded_images.shape[0] == n_tilts
         assert loaded_images.shape[1] == 50
         assert loaded_images.shape[2] == 50
+
+
+class TestRetryOnReadError:
+    """Tests for the retry_on_read_error flag in load_metadata_and_stack."""
+
+    @pytest.fixture
+    def tilt_series_data(self, tmp_path):
+        xml_path = tmp_path / "test.xml"
+        n_tilts = 5
+        ts = TiltSeries(path=xml_path, n_tilts=n_tilts)
+        ts.angles = torch.linspace(-60, 60, n_tilts)
+        ts.image_dimensions_physical = torch.tensor([1000.0, 1000.0])
+        ts.volume_dimensions_physical = torch.tensor([1000.0, 1000.0, 1000.0])
+        ts.save_meta(xml_path)
+        Path(ts.tilt_stack_path).parent.mkdir(parents=True, exist_ok=True)
+        with mrcfile.new(ts.tilt_stack_path, overwrite=True) as mrc:
+            mrc.set_data(torch.randn(n_tilts, 50, 50).numpy())
+            mrc.voxel_size = 10.0
+        return TiltSeriesData(xml_metadata_path=xml_path)
+
+    def test_transient_error_retried_and_succeeds(self, tilt_series_data):
+        """retry_on_read_error=True retries a short-read ValueError until success."""
+        real_open = mrcfile.open
+        call_count = 0
+
+        def fail_twice_then_succeed(path, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("Couldn't read enough bytes for MRC header")
+            return real_open(path, **kwargs)
+
+        with patch(
+            "miss_alignment.data.io.mrcfile.open", side_effect=fail_twice_then_succeed
+        ):
+            with patch("miss_alignment.data.io.time.sleep"):
+                tilt_series_data.load_metadata_and_stack(retry_on_read_error=True)
+
+        assert call_count == 3
+
+    def test_transient_error_propagates_without_flag(self, tilt_series_data):
+        """retry_on_read_error=False (default) propagates the error immediately."""
+        with patch(
+            "miss_alignment.data.io.mrcfile.open",
+            side_effect=ValueError("Couldn't read enough bytes for MRC header"),
+        ):
+            with pytest.raises(ValueError, match="read enough bytes"):
+                tilt_series_data.load_metadata_and_stack(retry_on_read_error=False)
+
+    def test_permanent_error_not_retried(self, tilt_series_data):
+        """Permanent errors (no 'read' in message) are not retried."""
+        call_count = 0
+
+        def permanent_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError(
+                "Map ID string not found - not an MRC file, or file is corrupt"
+            )
+
+        with patch("miss_alignment.data.io.mrcfile.open", side_effect=permanent_error):
+            with pytest.raises(ValueError, match="Map ID"):
+                tilt_series_data.load_metadata_and_stack(retry_on_read_error=True)
+
+        assert call_count == 1
+
+    def test_all_retries_exhausted_raises(self, tilt_series_data):
+        """After 5 failed attempts the error propagates."""
+        call_count = 0
+
+        def always_fail(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError(
+                "Expected 1024 bytes in data block but could only read 512"
+            )
+
+        with patch("miss_alignment.data.io.mrcfile.open", side_effect=always_fail):
+            with patch("miss_alignment.data.io.time.sleep"):
+                with pytest.raises(ValueError, match="could only read"):
+                    tilt_series_data.load_metadata_and_stack(retry_on_read_error=True)
+
+        assert call_count == 5
