@@ -1,6 +1,6 @@
 # https://peps.python.org/pep-0517/
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 # read more about configuring hatch at:
@@ -9,13 +9,16 @@ build-backend = "hatchling.build"
 only-include = ["src"]
 sources = ["src"]
 
+[tool.hatch.version]
+source = "vcs"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
 # https://peps.python.org/pep-0621/
 [project]
 name = "miss-alignment"
-version = "0.1.0"
+dynamic = ["version"]
 description = "She has a chaotic good alignment for tilt-series."
 readme = "README.md"
 requires-python = ">=3.10"
