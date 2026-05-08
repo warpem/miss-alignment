@@ -1,4 +1,5 @@
 import pickle
+import time
 import torch
 import mrcfile
 from pathlib import Path
@@ -21,11 +22,12 @@ class TiltSeriesData:
         return self.xml_metadata_path.stem
 
     def load_metadata_and_stack(
-        self, downsample=1
+        self, downsample=1, retry_on_read_error=False
     ) -> tuple[TiltSeries, torch.Tensor, float]:
         metadata, images, pixel_size = _load_metadata_and_stack(
             self.xml_metadata_path,
             downsample=downsample,
+            retry_on_read_error=retry_on_read_error,
         )
         return metadata, images, pixel_size
 
@@ -61,6 +63,7 @@ def _validate_tilt_series_dimensions(tilt_series: TiltSeries, path: Path) -> Non
 def _load_metadata_and_stack(
     metadata_path: Path,
     downsample: int = 1,
+    retry_on_read_error: bool = False,
 ) -> tuple[TiltSeries, torch.Tensor, float]:
     # load metadata
     tilt_series = TiltSeries(metadata_path)
@@ -68,10 +71,27 @@ def _load_metadata_and_stack(
 
     stack_path = tilt_series.tilt_stack_path
 
-    # load the data
-    with mrcfile.open(stack_path) as mrc:
-        images = torch.tensor(mrc.data)
-        stack_pixel_size = float(mrc.voxel_size.x)
+    if retry_on_read_error:
+        # Retry on transient short-read errors from the filesystem (e.g. GPFS).
+        # Multiple reconstruction workers may open the same file simultaneously,
+        # causing the filesystem to return fewer bytes than expected.
+        # Only ValueErrors whose message contains "read" indicate a short read;
+        # other ValueErrors (corrupt file, bad mode) are permanent and re-raised.
+        _max_retries = 5
+        for _attempt in range(_max_retries):
+            try:
+                with mrcfile.open(stack_path) as mrc:
+                    images = torch.tensor(mrc.data)
+                    stack_pixel_size = float(mrc.voxel_size.x)
+                break
+            except ValueError as e:
+                if "read" not in str(e) or _attempt == _max_retries - 1:
+                    raise
+                time.sleep(0.05 * (2**_attempt))
+    else:
+        with mrcfile.open(stack_path) as mrc:
+            images = torch.tensor(mrc.data)
+            stack_pixel_size = float(mrc.voxel_size.x)
 
     pixel_size = stack_pixel_size
     if downsample > 1:
