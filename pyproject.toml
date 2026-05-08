@@ -73,7 +73,8 @@ dev = [
     "ipython",
     "pre-commit>=4.1.0",
     "ruff>=0.9.9",
-    "matplotlib"
+    "matplotlib",
+    "hatch-vcs",
 ]
 #all = [
 #    {include-group = "test"},
