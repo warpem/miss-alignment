@@ -25,6 +25,10 @@ jobs:
         python-version: ["3.10", "3.13"]
         platform: [ubuntu-latest]
 
+    permissions:
+      contents: write
+      pull-requests: write
+
     steps:
       - uses: actions/checkout@v6
 
@@ -50,8 +54,11 @@ jobs:
       - name: 🧪 Run Tests
         run: pytest --color=yes --cov --cov-report=xml --cov-report=term-missing
 
-      - name: Coverage
-        uses: codecov/codecov-action@v6
+      - name: 📊 Coverage report
+        if: matrix.python-version == '3.13'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   deploy:
     name: Deploy
