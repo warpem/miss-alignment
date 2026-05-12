@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 miss-alignment is a deep learning package for tilt-series alignment in cryo-electron tomography. It uses a contrastive learning approach with PyTorch and PyTorch Lightning to iteratively train 3D convolutional neural networks that optimize tilt-series alignment by minimizing shift artifacts in reconstructions.
 
-**Key concept**: The system alternates between (1) training a model to score reconstruction quality and (2) using that model to optimize tilt-series alignment parameters through gradient descent.
+**Key concept**: The system alternates between (1) training a model to score reconstruction quality and (2) using that model (with frozen weights) to optimize tilt-series alignment parameters through gradient descent with the reconstruction quality as a target function.
 
 ### Scientific publication
 
-This software is a research project. It will be written up in a manuscript. Therefore, consider for anything you write in the paper/ folder that it should adhere to scientific principles with an emphasis on clarity and simplicity.
+This software is a research project with a preprint publication on biorxiv. People are actively using it and it is supposed to be a software solution, so we need to carefully consider breaking changes.
 
 ## Environment Setup
 
@@ -98,12 +98,11 @@ python -m pip install -e .[dev,test]
    - Each iteration: train model → align tilt-series → use aligned data for next iteration
    - Configured via YAML file (see `config_template.yaml`)
 
-### Dependencies on External Libraries
+### Important Dependencies on External Libraries
 
 - **`warpylib`**: Provides `TiltSeries` and `CubicGrid` for tilt-series geometry and warping
 - **`torch-fourier-*`**: Suite of PyTorch-based Fourier transform utilities (rescale, slice, shift, filter)
 - **`torch-tiltxcorr`**: Cross-correlation utilities for tilt-series
-- **`torch-grid-utils`** and **`torch-cubic-spline-grids`**: Grid manipulation utilities
 
 ### Configuration System
 
@@ -303,20 +302,21 @@ tilt_series.tilt_axis_offset_x += shifts_angstrom[:, 1]
 - **Temporary files**: `MissAlignmentDataModule` creates a temporary pool directory (`RECON_POOL_SIZE` env var controls size, default 1000)
 - **Package manager**: Currently uses conda/pip for environment installation -> would like to move to uv in the future
 
-## Bug Reporting and Fixes
+## Working on GitHub Issues
+
+1. Read the issue at `https://github.com/warpem/miss-alignment/issues/<number>` using `gh issue view <number>`
+2. Create a branch named after the issue: `git checkout -b fix/<short-description>` or `feat/<short-description>`
+3. If possible, write a failing test that reproduces the issue before touching the implementation
+4. Fix the code until the test passes
+
+## Development Practices
 
 When working on this codebase, if you encounter potential bugs or implementation issues:
 
 1. **Report the issue**: Clearly explain what you found and why it appears to be a bug
 2. **Suggest a fix**: Provide a proposed solution with reasoning
 3. **Implement if appropriate**: For clear bugs (e.g., missing conversions, type inconsistencies, logic errors), implement the fix
-4. **Let the maintainer decide**: The maintainer will evaluate whether it's truly a bug or was intentional design
-
-**Examples of bugs to report and fix:**
-- Missing data type conversions (e.g., forgetting to convert a list back to tuple in deserialization)
-- Inconsistent behavior between related functions (e.g., `to_dict()` and `from_dict()` not being symmetric)
-- Logic errors or off-by-one errors
-- Missing error handling
+4. **Let the maintainer decide if unsure**: The maintainer will evaluate whether it's truly a bug or was intentional design
 
 **Don't just write tests to conform to buggy behavior** - if the implementation looks wrong, report it and suggest the fix rather than masking it with adjusted test expectations.
 
