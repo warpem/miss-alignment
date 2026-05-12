@@ -173,6 +173,16 @@ def evaluate_tilt_series(
         model_checkpoint_path,
         map_location="cpu",
     )
+    # load_from_checkpoint calls configure_model(), which compiles self.net via
+    # torch.compile. Unwrap it here so alignment inference runs in eager mode.
+    # torch.compile is fundamentally incompatible with spawned worker processes:
+    # the inductor spawns its own subprocess pool for async compilation and races
+    # on shared cache files when multiple workers compile simultaneously, causing
+    # stochastic FileNotFoundError crashes. See pytorch/pytorch#134384.
+    # The reconstruction step dominates alignment runtime so the eager-mode
+    # overhead on the model forward pass is negligible.
+    if hasattr(model.net, "_orig_mod"):
+        model.net = model.net._orig_mod
 
     # load tilt_series and set its name for output
     tilt_series_data = TiltSeriesData(xml_metadata_path=tilt_series_path)
