@@ -26,7 +26,7 @@ python -m pip install torch-projectors --index-url https://warpem.github.io/torc
 Finally install miss-alignment with this command:
 
 ```
-python -m pip install git+https://github.com/warpem/miss-alignment.git
+python -m pip install miss-alignment
 ```
 
 Check that the CLI shows up with:
@@ -34,6 +34,10 @@ Check that the CLI shows up with:
 ```
 miss-alignment --help
 ```
+
+## Changelog
+
+A full list of changes per release is available on the [GitHub Releases page](https://github.com/McHaillet/miss-alignment/releases).
 
 ## How to run?
 

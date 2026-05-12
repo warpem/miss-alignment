@@ -19,7 +19,7 @@ allow-direct-references = true
 [project]
 name = "miss-alignment"
 dynamic = ["version"]
-description = "She has a chaotic good alignment for tilt-series."
+description = "She knows a good alignment when she sees one"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
