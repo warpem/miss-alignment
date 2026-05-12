@@ -13,7 +13,7 @@ body = """
 {% for commit in commits %}\
 - {{ commit.message | upper_first | trim }}\
 {% if commit.remote.pr_number %} \
-([#{{ commit.remote.pr_number }}]({{ commit.remote.pr_url }}))\
+([#{{ commit.remote.pr_number }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/pull/{{ commit.remote.pr_number }}))\
 {% endif %}
 {% endfor %}
 """
