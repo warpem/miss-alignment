@@ -4,7 +4,6 @@
 [![PyPI](https://img.shields.io/pypi/v/miss-alignment.svg?color=green)](https://pypi.org/project/miss-alignment)
 [![Python Version](https://img.shields.io/pypi/pyversions/miss-alignment.svg?color=green)](https://python.org)
 [![CI](https://github.com/warpem/miss-alignment/actions/workflows/ci.yml/badge.svg)](https://github.com/warpem/miss-alignment/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/warpem/miss-alignment/branch/main/graph/badge.svg)](https://codecov.io/gh/warpem/miss-alignment)
 
 ## Installation
 
