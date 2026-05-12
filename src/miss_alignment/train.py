@@ -157,17 +157,18 @@ def train_miss_align(
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
-    # make copies of the xml files and (model) we're starting from
-    iteration_directory = training_directory / ("iter" + str(start_iter))
-    iteration_directory.mkdir(parents=True, exist_ok=True)
-    for xml_file in training_directory.glob("*.xml"):
-        destination = iteration_directory / xml_file.name
-        copyfile(xml_file, destination)
+    if is_rank_zero():
+        # make copies of the xml files and (model) we're starting from
+        iteration_directory = training_directory / ("iter" + str(start_iter))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+        for xml_file in training_directory.glob("*.xml"):
+            destination = iteration_directory / xml_file.name
+            copyfile(xml_file, destination)
 
-    if model_training_config["model_checkpoint"] is not None:
-        source = model_training_config["model_checkpoint"]
-        destination = iteration_directory / Path(source).name
-        copyfile(source, destination)
+        if model_training_config["model_checkpoint"] is not None:
+            source = model_training_config["model_checkpoint"]
+            destination = iteration_directory / Path(source).name
+            copyfile(source, destination)
 
     for x in range(start_iter, end_iter):
         # ============================================================

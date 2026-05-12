@@ -8,23 +8,18 @@ import torch
 def is_rank_zero() -> bool:
     """Check if we're on the main process (rank 0) in DDP.
 
-    This checks torch.distributed (if initialized), then global rank environment
-    variables (RANK, SLURM_PROCID), and finally LOCAL_RANK as a fallback.
+    Check order:
+    1. torch.distributed (always correct when initialized)
+    2. LOCAL_RANK (set by Lightning's LightningEnvironment for each spawned process)
 
-    Note: LOCAL_RANK is per-node, so on multi-node SLURM jobs each node would
-    have a LOCAL_RANK=0. We prioritize global rank variables to avoid multiple
-    processes thinking they're rank 0.
+    SLURM_PROCID is intentionally not checked: without srun it is 0 for all
+    processes spawned from a single SLURM task, making it actively misleading.
+    With srun, torch.distributed is initialized before this function is called
+    in any meaningful context, so SLURM_PROCID is never needed.
     """
     if torch.distributed.is_initialized():
         return torch.distributed.get_rank() == 0
 
-    # Check global rank env vars (set by various launchers including SLURM)
-    for var in ("RANK", "SLURM_PROCID"):
-        rank = os.environ.get(var)
-        if rank is not None:
-            return int(rank) == 0
-
-    # LOCAL_RANK is per-node, only use as last resort for single-node
     local_rank = os.environ.get("LOCAL_RANK")
     if local_rank is not None:
         return int(local_rank) == 0
