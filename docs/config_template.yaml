@@ -1,7 +1,7 @@
 general:
   # MissAlignment iteratively trains models and realigns the tilt-series
   training_directory: /data/set/  # path to directory for writing iteration output
-  apply_ctf: False                # set to True if CTF estimates are available in .xml
+  apply_ctf: False                # leave False; enabling CTF doubles processing time with no benefit to alignment
   iteration_settings:             # defines all iterations to run (length determines number of iterations)
     # alignment modes: "global" (single pass), "anchoring" (iterative), "spline" (coarse-to-fine)
     - { downsample: 3, alignment: anchoring }
