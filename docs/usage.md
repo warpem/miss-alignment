@@ -64,17 +64,12 @@ on one node.
 #SBATCH --error=miss-alignment_%j.err
 
 # Activate environment (adjust to your cluster's setup)
-module purge
-module load miniforge  # or: ml miss-alignment
 conda activate miss-alignment
 
 # Avoid thread oversubscription from OpenMP/MKL
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-# Point TMPDIR to a local scratch with sufficient space (the reconstruction pool
-# writes up to pool_size pickle files; at default settings ~1000 × ~2 MB ≈ 2 GB).
-# Uncomment and adjust if /tmp is too small on your cluster:
 # export TMPDIR=/scratch/$SLURM_JOB_ID
 
 miss-alignment \
