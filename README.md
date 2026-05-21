@@ -22,6 +22,9 @@ python -m pip install torch==2.8.0 numpy
 python -m pip install torch-projectors --index-url https://warpem.github.io/torch-projectors/cu129/simple/
 ```
 
+> [!IMPORTANT]
+> If your GPU's have the Blackwell-architecture make sure to install at least v0.11 of torch-projectors.
+
 Finally install miss-alignment with this command:
 
 ```
