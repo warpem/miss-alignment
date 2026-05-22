@@ -208,8 +208,17 @@ def train_miss_align(
         # Set up trainer with parameters from config
         # Use DDP strategy for multi-GPU training with extended timeout
         # Default is 30 min, but alignment can take much longer while other ranks wait
+        # find_unused_parameters=False tells DDP to skip the per-step scan for
+        # parameters that didn't receive gradients before all-reduce. The model
+        # variants here (Compact3DConvNet etc.) are straight feed-forward, so
+        # every parameter contributes to the loss on every step; the scan is
+        # pure overhead. Disabling it is the Lightning-recommended default for
+        # such models.
         strategy = (
-            DDPStrategy(timeout=timedelta(hours=ddp_timeout_hours))
+            DDPStrategy(
+                timeout=timedelta(hours=ddp_timeout_hours),
+                find_unused_parameters=False,
+            )
             if len(devices_training) > 1
             else "auto"
         )
@@ -227,6 +236,12 @@ def train_miss_align(
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback, progress_bar],
             precision="16-mixed",  # Enable automatic mixed precision
+            # cudnn.benchmark picks the fastest conv algorithm per input shape
+            # and caches it. Inputs here are always patch_size^3 cubes, so the
+            # shape is constant after the first batch and the cached choice is
+            # reused for the rest of training. Net: a few-batch warmup then
+            # measurably faster conv-heavy steps on Ampere+ hardware.
+            benchmark=True,
         )
 
         # Initialize model with parameters from config
