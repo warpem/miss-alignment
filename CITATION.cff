@@ -1,0 +1,44 @@
+cff-version: 1.2.0
+title: miss-alignment
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+authors:
+  - family-names: Chaillet
+    given-names: Marten L.
+    orcid: https://orcid.org/0000-0001-7231-7742
+  - family-names: van Loenhout
+    given-names: Joyce
+    orcid: https://orcid.org/0009-0001-5263-1299
+  - family-names: Leung
+    given-names: Miguel R.
+    orcid: https://orcid.org/0000-0002-3348-1096
+  - family-names: Burt
+    given-names: Alister
+    orcid: https://orcid.org/0000-0002-9341-2295
+  - family-names: Tegunov
+    given-names: Dimitry
+    orcid: https://orcid.org/0000-0001-7019-3221
+repository-code: https://github.com/warpem/miss-alignment
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Chaillet
+      given-names: Marten L.
+      orcid: https://orcid.org/0000-0001-7231-7742
+    - family-names: van Loenhout
+      given-names: Joyce
+      orcid: https://orcid.org/0009-0001-5263-1299
+    - family-names: Leung
+      given-names: Miguel R.
+      orcid: https://orcid.org/0000-0002-3348-1096
+    - family-names: Burt
+      given-names: Alister
+      orcid: https://orcid.org/0000-0002-9341-2295
+    - family-names: Tegunov
+      given-names: Dimitry
+      orcid: https://orcid.org/0000-0001-7019-3221
+  title: "MissAlignment Teaches Itself Better Cryo-ET Tilt-Series Alignment by Making It Worse"
+  journal: bioRxiv
+  year: 2026
+  doi: 10.64898/2026.04.29.721716
+  url: https://www.biorxiv.org/content/early/2026/05/02/2026.04.29.721716

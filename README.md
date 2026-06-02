@@ -44,3 +44,9 @@ See the docs/ folder for some barebones instructions. This will be improved soon
 ## Changelog
 
 A full list of changes per release is available on the [GitHub Releases page](https://github.com/warpem/miss-alignment/releases).
+
+## Citation
+
+If you use miss-alignment in your research, please cite:
+
+Chaillet, M.L., van Loenhout, J., Leung, M.R., Burt, A., and Tegunov, D. (2026) *MissAlignment Teaches Itself Better Cryo-ET Tilt-Series Alignment by Making It Worse*. bioRxiv. https://doi.org/10.64898/2026.04.29.721716
