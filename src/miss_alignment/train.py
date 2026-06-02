@@ -209,7 +209,10 @@ def train_miss_align(
         # Use DDP strategy for multi-GPU training with extended timeout
         # Default is 30 min, but alignment can take much longer while other ranks wait
         strategy = (
-            DDPStrategy(timeout=timedelta(hours=ddp_timeout_hours))
+            DDPStrategy(
+                timeout=timedelta(hours=ddp_timeout_hours),
+                find_unused_parameters=False,  # feed-forward model, no unused params
+            )
             if len(devices_training) > 1
             else "auto"
         )
@@ -227,6 +230,7 @@ def train_miss_align(
             num_sanity_val_steps=0,
             callbacks=[early_stopping, checkpoint_callback, progress_bar],
             precision="16-mixed",  # Enable automatic mixed precision
+            benchmark=True,  # cuDNN caches fastest conv algo for fixed input shape
         )
 
         # Initialize model with parameters from config
