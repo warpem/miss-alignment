@@ -157,18 +157,45 @@ def train_miss_align(
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
+    # Determine the model checkpoint to use for the first training iteration.
+    # When starting fresh (iter 0), use the checkpoint from the config if provided.
+    # When resuming, always load from the backup written at the end of the previous
+    # iteration; the config's model_checkpoint is irrelevant in that case.
+    if start_iter == 0:
+        config_checkpoint = model_training_config["model_checkpoint"]
+        training_model_path = Path(config_checkpoint) if config_checkpoint else None
+    else:
+        iter_checkpoint = training_directory / f"iter{start_iter}" / "model.ckpt"
+        fallback_checkpoint = training_directory / "model.ckpt"
+        if iter_checkpoint.exists():
+            training_model_path = iter_checkpoint
+            rank_zero_print(
+                f"Resuming at iteration {start_iter}: "
+                f"loading model from {training_model_path}"
+            )
+        elif fallback_checkpoint.exists():
+            training_model_path = fallback_checkpoint
+            rank_zero_print(
+                f"Resuming at iteration {start_iter}: "
+                f"loading model from {training_model_path}"
+            )
+        else:
+            training_model_path = None
+            rank_zero_print(
+                f"Warning: resuming at iteration {start_iter} but no model "
+                "checkpoint found; training will start from random weights."
+            )
+
     if is_rank_zero():
-        # make copies of the xml files and (model) we're starting from
+        # make copies of the xml files and model we're starting from
         iteration_directory = training_directory / ("iter" + str(start_iter))
         iteration_directory.mkdir(parents=True, exist_ok=True)
         for xml_file in training_directory.glob("*.xml"):
             destination = iteration_directory / xml_file.name
             copyfile(xml_file, destination)
 
-        if model_training_config["model_checkpoint"] is not None:
-            source = model_training_config["model_checkpoint"]
-            destination = iteration_directory / Path(source).name
-            copyfile(source, destination)
+        if training_model_path is not None:
+            copyfile(training_model_path, iteration_directory / "model.ckpt")
 
     for x in range(start_iter, end_iter):
         # ============================================================
@@ -247,9 +274,9 @@ def train_miss_align(
             "model_architecture": model_training_config["model_architecture"],
         }
 
-        if model_training_config["model_checkpoint"] is not None:
+        if training_model_path is not None:
             model = MissAlignment.load_from_checkpoint(
-                model_training_config["model_checkpoint"], **model_params
+                str(training_model_path), **model_params
             )
         else:
             model = MissAlignment(**model_params)
@@ -287,10 +314,9 @@ def train_miss_align(
             rank_zero_print(f"Best model after iteration {x}:", best_model_path)
 
             # copy best model to training directory as model.ckpt
-            # This known path is used by all ranks for the next iteration
-            training_model_path = training_directory / "model.ckpt"
-            copyfile(best_model_path, training_model_path)
-            rank_zero_print(f"Copied best model to {training_model_path}")
+            new_training_model_path = training_directory / "model.ckpt"
+            copyfile(best_model_path, new_training_model_path)
+            rank_zero_print(f"Copied best model to {new_training_model_path}")
 
             # ============================================================
             # =============== tilt-series alignment step =================
@@ -301,7 +327,7 @@ def train_miss_align(
 
             # run alignment in parallel over all available devices
             run_alignment_parallel(
-                model_checkpoint=str(training_model_path),
+                model_checkpoint=str(new_training_model_path),
                 tilt_series_list=tilt_series_list,
                 output_directory=training_directory,
                 setting=iteration_settings["alignment"],
@@ -330,11 +356,10 @@ def train_miss_align(
             copyfile(best_model_path, iteration_model_path)
             rank_zero_print(f"Copied best model to {iteration_model_path}")
 
-        # All ranks use the known model.ckpt path for the next iteration
-        # (rank 0 wrote it above, barrier below ensures it exists)
-        model_training_config["model_checkpoint"] = str(
-            training_directory / "model.ckpt"
-        )
+        # All ranks update training_model_path for the next iteration.
+        # Rank 0 wrote training_directory/model.ckpt above; the barrier below
+        # ensures it exists before any rank reads it.
+        training_model_path = training_directory / "model.ckpt"
 
         # Synchronize all ranks before starting the next iteration
         distributed_barrier()
