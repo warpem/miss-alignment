@@ -43,4 +43,4 @@ See the docs/ folder for some barebones instructions. This will be improved soon
 
 ## Changelog
 
-A full list of changes per release is available on the [GitHub Releases page](https://github.com/McHaillet/miss-alignment/releases).
+A full list of changes per release is available on the [GitHub Releases page](https://github.com/warpem/miss-alignment/releases).

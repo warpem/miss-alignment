@@ -83,15 +83,6 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: 📋 Generate release notes
-        uses: orhun/git-cliff-action@v4
-        id: git-cliff
-        with:
-          config: cliff.toml
-          args: --verbose --latest --strip all
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-
       - name: 👷 Build
         run: |
           python -m pip install build
@@ -102,5 +93,5 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          body: ${{ steps.git-cliff.outputs.content }}
+          generate_release_notes: true
           files: './dist/*'
