@@ -40,6 +40,22 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def _set_ddp_env(rank: int, world_size: int, master_port: int) -> None:
+    """Export the rendezvous variables so we act as the DDP process launcher.
+
+    Lightning's ``LightningEnvironment`` keys on ``LOCAL_RANK`` being present to
+    detect an external launcher (torchrun/SLURM-style) and connect to this
+    existing process group instead of spawning a fresh copy of the program.
+    Single-node only, so the master address is always localhost.
+    """
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = str(master_port)
+    os.environ["WORLD_SIZE"] = str(world_size)
+    os.environ["NODE_RANK"] = "0"
+    os.environ["RANK"] = str(rank)
+    os.environ["LOCAL_RANK"] = str(rank)
+
+
 def _training_worker(
     rank: int,
     world_size: int,
@@ -72,14 +88,7 @@ def _training_worker(
     multi_gpu = world_size > 1
 
     if multi_gpu:
-        # Act as the process launcher (torchrun/SLURM-style). Lightning keys on
-        # LOCAL_RANK being present to skip its own subprocess launcher.
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = str(master_port)
-        os.environ["WORLD_SIZE"] = str(world_size)
-        os.environ["NODE_RANK"] = "0"
-        os.environ["RANK"] = str(rank)
-        os.environ["LOCAL_RANK"] = str(rank)
+        _set_ddp_env(rank, world_size, master_port)
 
     torch.set_num_threads(1)
     torch.set_float32_matmul_precision("medium")

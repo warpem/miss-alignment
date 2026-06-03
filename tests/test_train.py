@@ -19,7 +19,7 @@ from lightning.pytorch import LightningModule, Trainer
 from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
-from miss_alignment.train import _find_free_port
+from miss_alignment.train import _find_free_port, _set_ddp_env
 from miss_alignment.utils import is_rank_zero
 
 
@@ -47,7 +47,7 @@ class _TinyModel(LightningModule):
 
 
 def _launch_and_train(rank: int, world_size: int, master_port: int, tmp: Path) -> None:
-    """Stand-in for ``_training_worker`` mirroring its launcher setup on CPU.
+    """Stand-in for ``_training_worker`` reusing its real launcher setup on CPU.
 
     Writes one marker file per rank: ``<pid> <pre_dist_rank0> <global_rank>
     <world_size>``. ``pre_dist_rank0`` is the value of ``is_rank_zero()`` before
@@ -56,12 +56,8 @@ def _launch_and_train(rank: int, world_size: int, master_port: int, tmp: Path) -
     """
     multi = world_size > 1
     if multi:
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = str(master_port)
-        os.environ["WORLD_SIZE"] = str(world_size)
-        os.environ["NODE_RANK"] = "0"
-        os.environ["RANK"] = str(rank)
-        os.environ["LOCAL_RANK"] = str(rank)
+        # exercise the real rendezvous setup from train.py (not a copy)
+        _set_ddp_env(rank, world_size, master_port)
 
         # Simulate a single-task, non-interactive SLURM allocation: every
         # spawned worker inherits the SAME SLURM_PROCID=0 / SLURM_NTASKS=1. If
