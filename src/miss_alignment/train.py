@@ -11,6 +11,7 @@ import torch.multiprocessing as torch_mp
 
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
@@ -177,6 +178,9 @@ def _training_worker(
         devices=devices_training,
         strategy=strategy,
         default_root_dir=training_directory / "models",
+        # Configure the logger explicitly (matches Lightning's default location)
+        # so it does not emit the "install litlogger" tip every macro-iteration.
+        logger=TensorBoardLogger(save_dir=training_directory / "models"),
         max_epochs=max_epochs,
         log_every_n_steps=50,
         enable_checkpointing=True,
