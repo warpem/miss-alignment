@@ -33,7 +33,9 @@ def configure_logging() -> None:
         pkg_logger.addHandler(handler)
         pkg_logger.propagate = False  # avoid double emission via the root logger
 
-    logging.getLogger("lightning.pytorch").setLevel(logging.WARNING)
+    # Mute the whole lightning namespace (both lightning.pytorch and
+    # lightning.fabric, which logs "Initializing distributed: ...").
+    logging.getLogger("lightning").setLevel(logging.WARNING)
 
 
 def is_rank_zero() -> bool:
