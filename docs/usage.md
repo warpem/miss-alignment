@@ -44,10 +44,11 @@ After miss-alignment finishes, update the CTF parameters in WarpTools (`ts_ctf`)
 
 ### Single-node requirement
 
-miss-alignment uses `LOCAL_RANK` (set by Lightning's process launcher) to identify
-the main process. This means **all GPUs must be on a single node**. Multi-node
-distributed training is not supported. Your submission script must request all GPUs
-on one node.
+miss-alignment launches its own per-GPU training processes (via
+`torch.multiprocessing.spawn`) and exports `LOCAL_RANK` so Lightning attaches to that
+process group instead of starting its own. These processes rendezvous over
+`localhost`, so **all GPUs must be on a single node**. Multi-node distributed training
+is not supported. Your submission script must request all GPUs on one node.
 
 ### Example submission script
 
@@ -85,16 +86,19 @@ miss-alignment \
 
 | Setting | Why |
 |---|---|
-| `--ntasks=1` | Required. miss-alignment manages its own subprocesses; SLURM should only start one task. |
+| `--ntasks=1` | Required. miss-alignment is its own launcher — it spawns one training process per `--training-devices` entry. SLURM must start exactly **one** task. Do **not** use `srun --ntasks=N`, or SLURM will start N copies of the program that each spawn their own workers. |
 | `--nodes=1` | Required. All GPUs must be on a single node (see above). |
 | `--cpus-per-task` | Set to `len(--reconstruction-devices) + n_training_devices × dataloaders_per_trainer`. Each reconstruction worker and each DataLoader worker (spawned per DDP rank) needs a CPU. For the example above: 6 + 2×5 = 16. |
 | `--gres=gpu:N` | Request all GPUs you intend to use for training + reconstruction. |
 
 ### Notes
 
-- **Lightning srun warning**: Lightning may warn that `srun` is available but not used.
-  This warning can be safely ignored — do not prepend `srun` to the command, as that
-  would conflict with miss-alignment's own process management.
+- **Do not launch with `srun --ntasks=N`**: miss-alignment spawns its own per-GPU
+  training processes, so the job must run as a single task (`--ntasks=1`). Launching
+  multiple tasks would start independent copies that each spawn their own workers. Run
+  the command directly — no `srun` prefix is needed. The cluster environment is pinned
+  to Lightning's `LightningEnvironment`, so SLURM's `SLURM_PROCID`/`SLURM_NTASKS` are
+  ignored and no "srun available but not used" warning is emitted.
 
 - **Temporary storage**: The reconstruction pool is written to `$TMPDIR` (defaulting to
   `/tmp`). On clusters where `/tmp` is shared or small, set `TMPDIR` to a local scratch
