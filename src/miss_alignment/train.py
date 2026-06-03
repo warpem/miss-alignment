@@ -467,7 +467,6 @@ def train_miss_align(
 
         iteration_model_path = iteration_directory / "model.ckpt"
         copyfile(training_model_path, iteration_model_path)
-        print(f"Copied best model to {iteration_model_path}")
 
         # training_model_path now points at the model just trained
         # (set after the worker above); the next iteration starts from it.
