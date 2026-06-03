@@ -1,3 +1,4 @@
+import logging
 import os
 import socket
 from pathlib import Path
@@ -133,6 +134,12 @@ def _training_worker(
     # verbose=False: the main process already logs the seed once at startup;
     # without this every rank reprints it on every macro-iteration.
     seed_everything(general_config["seed"], workers=True, verbose=False)
+
+    # Quiet Lightning's INFO startup banners (GPU available, Initializing
+    # distributed, LOCAL_RANK..., etc.), which repeat per rank every
+    # macro-iteration. Warnings and errors still surface. This is Lightning's
+    # documented logger knob rather than reaching into internal logger names.
+    logging.getLogger("lightning.pytorch").setLevel(logging.WARNING)
 
     # Define the early stopping callback
     early_stopping = MAEarlyStopping(
