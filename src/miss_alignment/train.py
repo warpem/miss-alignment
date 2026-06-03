@@ -1,3 +1,4 @@
+import logging
 import os
 import socket
 from pathlib import Path
@@ -23,6 +24,8 @@ from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
+
+logger = logging.getLogger(__name__)
 
 
 def parse_device_list(value: str) -> list[int]:
@@ -87,9 +90,9 @@ def _resolve_start_checkpoint(
             f"loading model from {fallback_checkpoint}"
         )
         return fallback_checkpoint
-    print(
-        f"Warning: resuming at iteration {start_iter} but no model checkpoint "
-        "found; training will start from random weights."
+    logger.warning(
+        f"Resuming at iteration {start_iter} but no model checkpoint found; "
+        "training will start from random weights."
     )
     return None
 
