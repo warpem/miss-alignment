@@ -1,3 +1,5 @@
+import os
+import socket
 from pathlib import Path
 from shutil import copyfile
 from typing import Optional
@@ -5,7 +7,7 @@ import yaml
 
 import typer
 import torch
-from datetime import timedelta
+import torch.multiprocessing as torch_mp
 
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -18,12 +20,164 @@ from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
-from .utils import distributed_barrier, is_rank_zero, rank_zero_print
 
 
 def parse_device_list(value: str) -> list[int]:
     """Parse comma-separated device list like '0,1,2' into [0, 1, 2]."""
     return [int(x.strip()) for x in value.split(",")]
+
+
+def _find_free_port() -> int:
+    """Find a free TCP port on localhost for the DDP rendezvous.
+
+    A fresh port is chosen for every training phase so that re-creating the
+    process group each iteration cannot collide with a socket still lingering
+    in TIME_WAIT from the previous iteration.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _training_worker(
+    rank: int,
+    world_size: int,
+    master_port: int,
+    iteration: int,
+    training_directory: Path,
+    devices_training: list[int],
+    devices_reconstruction: list[int],
+    general_config: dict,
+    model_training_config: dict,
+    data_module_config: dict,
+    shift_generation_config: dict,
+    iteration_settings: dict,
+    dataloaders_per_trainer: int,
+    pool_size: int,
+) -> None:
+    """Run a single model-training phase to completion.
+
+    This is the unit of work that is parallelised across the training GPUs. For
+    multi-GPU training it is launched once per GPU via ``mp.spawn`` and acts as
+    its own process launcher: by exporting ``LOCAL_RANK`` (and the other
+    rendezvous variables) Lightning's ``LightningEnvironment`` detects an
+    external launcher and connects to the existing process group instead of
+    spawning a fresh copy of the whole program. For single-GPU training it is
+    called directly in the main process with ``world_size == 1`` and no DDP.
+
+    Rank 0 publishes the best checkpoint to ``training_directory / model.ckpt``
+    before returning; the main process picks it up from there for alignment.
+    """
+    multi_gpu = world_size > 1
+
+    if multi_gpu:
+        # Act as the process launcher (torchrun/SLURM-style). Lightning keys on
+        # LOCAL_RANK being present to skip its own subprocess launcher.
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = str(master_port)
+        os.environ["WORLD_SIZE"] = str(world_size)
+        os.environ["NODE_RANK"] = "0"
+        os.environ["RANK"] = str(rank)
+        os.environ["LOCAL_RANK"] = str(rank)
+
+    torch.set_num_threads(1)
+    torch.set_float32_matmul_precision("medium")
+    seed_everything(general_config["seed"], workers=True)
+
+    # Define the early stopping callback
+    early_stopping = MAEarlyStopping(
+        patience=5,  # cycles with no improvement
+        min_delta=0.001,  # minimum change to qualify as an improvement
+        wait_for_scheduler=True,
+    )
+
+    # save checkpoints based on training loss performance
+    checkpoint_callback = ModelCheckpoint(
+        monitor="train_loss",
+        mode="min",  # 'min' for loss, 'max' for accuracy
+        save_top_k=3,  # Keep 5 best checkpoints
+        filename=str(iteration) + "_{epoch}--{step}--{train_loss:.3f}",
+        save_on_train_epoch_end=True,
+    )
+
+    # Progress bar showing total progress across all epochs
+    max_epochs = model_training_config["max_epochs_per_iteration"]
+    progress_bar = MAProgressBar(
+        max_epochs=max_epochs,
+        steps_per_epoch=data_module_config["steps_per_epoch"],
+        refresh_rate=10,
+    )
+
+    # Use DDP only for multi-GPU; the workers live only for this fit() call, so
+    # the default DDP timeout is fine (no rank sits idle during alignment).
+    strategy = (
+        DDPStrategy(find_unused_parameters=False)  # feed-forward model
+        if multi_gpu
+        else "auto"
+    )
+    trainer = Trainer(
+        accelerator="gpu",
+        devices=devices_training,
+        strategy=strategy,
+        default_root_dir=training_directory / "models",
+        max_epochs=max_epochs,
+        log_every_n_steps=50,
+        enable_checkpointing=True,
+        enable_progress_bar=False,  # disable default progress bar
+        deterministic=False,  # setting to True breaks on max_pool_3d
+        limit_val_batches=0,  # turn on validation steps
+        num_sanity_val_steps=0,
+        callbacks=[early_stopping, checkpoint_callback, progress_bar],
+        precision="16-mixed",  # Enable automatic mixed precision
+        benchmark=True,  # cuDNN caches fastest conv algo for fixed input shape
+    )
+
+    # Initialize model with parameters from config
+    # Scale learning rate by number of GPUs (linear scaling rule)
+    scaled_learning_rate = model_training_config["learning_rate"] * len(
+        devices_training
+    )
+    model_params = {
+        "learning_rate": scaled_learning_rate,
+        "margin": model_training_config["loss_margin"],
+        "weight_decay": float(model_training_config["weight_decay"]),
+        "warmup_steps": model_training_config["warmup_steps"],
+        "multistep_lr_scheduler": model_training_config["multistep_lr_scheduler"],
+        "model_architecture": model_training_config["model_architecture"],
+    }
+
+    if model_training_config["model_checkpoint"] is not None:
+        model = MissAlignment.load_from_checkpoint(
+            model_training_config["model_checkpoint"], **model_params
+        )
+    else:
+        model = MissAlignment(**model_params)
+
+    # Each GPU uses the full batch size (effective batch size scales with GPUs)
+    with MissAlignmentDataModule(
+        training_directory,
+        create_default_generator(**shift_generation_config),
+        reconstruction_accelerators=devices_reconstruction,
+        n_training_devices=len(devices_training),
+        batch_size=data_module_config["batch_size"],
+        patch_size=data_module_config["patch_size"],
+        apply_ctf=general_config["apply_ctf"],
+        downsample=iteration_settings["downsample"],
+        steps_per_epoch=data_module_config["steps_per_epoch"],
+        pool_size=pool_size,
+        dataloader_workers=dataloaders_per_trainer,
+    ) as dm:
+        # enter datamodule context to start the reconstruction worker pool
+        # passing datamodule lets Lightning apply DistributedSampler
+        trainer.fit(model, datamodule=dm)
+
+    # Rank 0 publishes the best checkpoint at a known path for the main process.
+    if trainer.is_global_zero:
+        best_model_path = Path(trainer.checkpoint_callback.best_model_path)
+        training_model_path = training_directory / "model.ckpt"
+        copyfile(best_model_path, training_model_path)
+        print(f"Best model after iteration {iteration}: {best_model_path}")
+        print(f"Copied best model to {training_model_path}")
 
 
 @cli.command(name="train", no_args_is_help=True)
@@ -69,11 +223,6 @@ def train_miss_align(
         help="Run cross-correlation based alignment before training iterations. "
         "This performs coarse alignment with pretilt estimation.",
     ),
-    ddp_timeout_hours: float = typer.Option(
-        6.0,
-        help="Timeout in hours for DDP communication during multi-GPU training. "
-        "Increase this if alignment takes longer than expected.",
-    ),
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
 
@@ -94,9 +243,9 @@ def train_miss_align(
     n_visible_gpus = torch.cuda.device_count()
     devices_alignment = list(range(n_visible_gpus))
 
-    rank_zero_print(f"Using devices {devices_training} for training")
-    rank_zero_print(f"Using devices {devices_reconstruction} for reconstruction")
-    rank_zero_print(f"Using devices {devices_alignment} for alignment")
+    print(f"Using devices {devices_training} for training")
+    print(f"Using devices {devices_reconstruction} for reconstruction")
+    print(f"Using devices {devices_alignment} for alignment")
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
@@ -118,57 +267,55 @@ def train_miss_align(
     seed = general_config["seed"]
     seed_everything(seed, workers=True)
 
-    if is_rank_zero():
-        # Prepare tilt stacks if requested
-        if prepare_stacks is not None:
-            if prepare_stacks <= 0:
-                raise ValueError("--prepare-stacks must be a positive non-zero number")
-            prepare_stacks_parallel(
-                training_directory=training_directory,
-                desired_pixel_size=prepare_stacks,
-                n_processes=4,
-                devices=devices_alignment,
+    # Prepare tilt stacks if requested
+    if prepare_stacks is not None:
+        if prepare_stacks <= 0:
+            raise ValueError("--prepare-stacks must be a positive non-zero number")
+        prepare_stacks_parallel(
+            training_directory=training_directory,
+            desired_pixel_size=prepare_stacks,
+            n_processes=4,
+            devices=devices_alignment,
+        )
+
+    # Run preprocessing if requested
+    if preprocess:
+        if start_at_iteration != 0:
+            raise ValueError(
+                "Running preprocessing at while "
+                "not starting at iteration 0. This "
+                "is likely not desirable behaviour."
             )
+        else:
+            # Back up original data to pre-iter directory
+            preiter_directory = training_directory / "pre-iter"
+            preiter_directory.mkdir(parents=True, exist_ok=True)
+            for xml_file in training_directory.glob("*.xml"):
+                destination = preiter_directory / xml_file.name
+                copyfile(xml_file, destination)
+            print(f"Backed up original metadata to {preiter_directory}")
 
-        # Run preprocessing if requested
-        if preprocess:
-            if start_at_iteration != 0:
-                raise ValueError(
-                    "Running preprocessing at while "
-                    "not starting at iteration 0. This "
-                    "is likely not desirable behaviour."
-                )
-            else:
-                # Back up original data to pre-iter directory
-                preiter_directory = training_directory / "pre-iter"
-                preiter_directory.mkdir(parents=True, exist_ok=True)
-                for xml_file in training_directory.glob("*.xml"):
-                    destination = preiter_directory / xml_file.name
-                    copyfile(xml_file, destination)
-                rank_zero_print(f"Backed up original metadata to {preiter_directory}")
-
-                # Run cross-correlation alignment on the training directory
-                run_cross_correlation_alignment_parallel(
-                    training_directory=training_directory,
-                    devices=devices_alignment,
-                    n_processes=4,
-                )
+            # Run cross-correlation alignment on the training directory
+            run_cross_correlation_alignment_parallel(
+                training_directory=training_directory,
+                devices=devices_alignment,
+                n_processes=4,
+            )
 
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
-    if is_rank_zero():
-        # make copies of the xml files and (model) we're starting from
-        iteration_directory = training_directory / ("iter" + str(start_iter))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
-        for xml_file in training_directory.glob("*.xml"):
-            destination = iteration_directory / xml_file.name
-            copyfile(xml_file, destination)
+    # make copies of the xml files and (model) we're starting from
+    iteration_directory = training_directory / ("iter" + str(start_iter))
+    iteration_directory.mkdir(parents=True, exist_ok=True)
+    for xml_file in training_directory.glob("*.xml"):
+        destination = iteration_directory / xml_file.name
+        copyfile(xml_file, destination)
 
-        if model_training_config["model_checkpoint"] is not None:
-            source = model_training_config["model_checkpoint"]
-            destination = iteration_directory / Path(source).name
-            copyfile(source, destination)
+    if model_training_config["model_checkpoint"] is not None:
+        source = model_training_config["model_checkpoint"]
+        destination = iteration_directory / Path(source).name
+        copyfile(source, destination)
 
     for x in range(start_iter, end_iter):
         # ============================================================
@@ -176,167 +323,80 @@ def train_miss_align(
         # ============================================================
         iteration_settings = general_config["iteration_settings"][x]
         alignment_mode = iteration_settings["alignment"]
-        rank_zero_print(f"\n{'=' * 60}")
-        rank_zero_print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
-        rank_zero_print(f"{'=' * 60}\n")
+        print(f"\n{'=' * 60}")
+        print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
+        print(f"{'=' * 60}\n")
 
-        # Define the early stopping callback
-        early_stopping = MAEarlyStopping(
-            patience=5,  # cycles with no improvement
-            min_delta=0.001,  # minimum change to qualify as an improvement
-            wait_for_scheduler=True,
+        # Run the training phase. Multi-GPU spawns one DDP worker per training
+        # device and joins; single-GPU runs in-process. Either way the main
+        # process is single-process again once this returns, with the best
+        # checkpoint published at training_directory / model.ckpt.
+        world_size = len(devices_training)
+        worker_args = (
+            world_size,
+            _find_free_port(),
+            x,
+            training_directory,
+            devices_training,
+            devices_reconstruction,
+            general_config,
+            model_training_config,
+            data_module_config,
+            shift_generation_config,
+            iteration_settings,
+            dataloaders_per_trainer,
+            pool_size,
         )
-
-        # save checkpoints based on training loss performance
-        checkpoint_callback = ModelCheckpoint(
-            monitor="train_loss",
-            mode="min",  # 'min' for loss, 'max' for accuracy
-            save_top_k=3,  # Keep 5 best checkpoints
-            filename=str(x) + "_{epoch}--{step}--{train_loss:.3f}",
-            save_on_train_epoch_end=True,
-        )
-
-        # Progress bar showing total progress across all epochs
-        max_epochs = model_training_config["max_epochs_per_iteration"]
-        steps_per_epoch = data_module_config["steps_per_epoch"]
-        progress_bar = MAProgressBar(
-            max_epochs=max_epochs,
-            steps_per_epoch=steps_per_epoch,
-            refresh_rate=10,
-        )
-
-        # Set up trainer with parameters from config
-        # Use DDP strategy for multi-GPU training with extended timeout
-        # Default is 30 min, but alignment can take much longer while other ranks wait
-        strategy = (
-            DDPStrategy(
-                timeout=timedelta(hours=ddp_timeout_hours),
-                find_unused_parameters=False,  # feed-forward model, no unused params
-            )
-            if len(devices_training) > 1
-            else "auto"
-        )
-        trainer = Trainer(
-            accelerator="gpu",
-            devices=devices_training,
-            strategy=strategy,
-            default_root_dir=training_directory / "models",
-            max_epochs=max_epochs,
-            log_every_n_steps=50,
-            enable_checkpointing=True,
-            enable_progress_bar=False,  # disable default progress bar
-            deterministic=False,  # setting to True breaks on max_pool_3d
-            limit_val_batches=0,  # turn on validation steps
-            num_sanity_val_steps=0,
-            callbacks=[early_stopping, checkpoint_callback, progress_bar],
-            precision="16-mixed",  # Enable automatic mixed precision
-            benchmark=True,  # cuDNN caches fastest conv algo for fixed input shape
-        )
-
-        # Initialize model with parameters from config
-        # Scale learning rate by number of GPUs (linear scaling rule)
-        scaled_learning_rate = model_training_config["learning_rate"] * len(
-            devices_training
-        )
-        model_params = {
-            "learning_rate": scaled_learning_rate,
-            "margin": model_training_config["loss_margin"],
-            "weight_decay": float(model_training_config["weight_decay"]),
-            "warmup_steps": model_training_config["warmup_steps"],
-            "multistep_lr_scheduler": model_training_config["multistep_lr_scheduler"],
-            "model_architecture": model_training_config["model_architecture"],
-        }
-
-        if model_training_config["model_checkpoint"] is not None:
-            model = MissAlignment.load_from_checkpoint(
-                model_training_config["model_checkpoint"], **model_params
+        if world_size > 1:
+            torch_mp.spawn(
+                _training_worker, args=worker_args, nprocs=world_size, join=True
             )
         else:
-            model = MissAlignment(**model_params)
+            _training_worker(0, *worker_args)
 
-        # Initialize data module with parameters from config
-        # Each GPU uses the full batch size (effective batch size scales with GPUs)
-        batch_size_per_device = data_module_config["batch_size"]
+        # This known path was written by rank 0 and is used for alignment and
+        # as the starting checkpoint for the next iteration.
+        training_model_path = training_directory / "model.ckpt"
 
-        with MissAlignmentDataModule(
-            training_directory,
-            create_default_generator(**shift_generation_config),
-            reconstruction_accelerators=devices_reconstruction,
-            n_training_devices=len(devices_training),
-            batch_size=batch_size_per_device,
-            patch_size=data_module_config["patch_size"],
+        # ============================================================
+        # =============== tilt-series alignment step =================
+        # ============================================================
+
+        # get list of all files to process for alignment
+        tilt_series_list = list(training_directory.glob("*.xml"))
+
+        # run alignment in parallel over all available devices
+        run_alignment_parallel(
+            model_checkpoint=str(training_model_path),
+            tilt_series_list=tilt_series_list,
+            output_directory=training_directory,
+            setting=iteration_settings["alignment"],
+            patch_size=alignment_config["patch_size"],
+            patch_overlap=alignment_config["patch_overlap"],
+            batch_size=alignment_config["batch_size"],
             apply_ctf=general_config["apply_ctf"],
             downsample=iteration_settings["downsample"],
-            steps_per_epoch=data_module_config["steps_per_epoch"],
-            pool_size=pool_size,
-            dataloader_workers=dataloaders_per_trainer,
-        ) as dm:
-            # enter datamodule context to start the reconstruction worker pool
-            # passing datamodule lets Lightning apply DistributedSampler
-            trainer.fit(model, datamodule=dm)
-
-            # Synchronize all ranks after training, while DDP is still active
-            # This must be BEFORE the context manager exits, as Lightning's DDP
-            # process group may become invalid during/after teardown
-            distributed_barrier()
-
-        # Only rank 0 performs alignment and file operations
-        # Other ranks wait at the barrier at the end of the iteration
-        if is_rank_zero():
-            best_model_path = Path(trainer.checkpoint_callback.best_model_path)
-            rank_zero_print(f"Best model after iteration {x}:", best_model_path)
-
-            # copy best model to training directory as model.ckpt
-            # This known path is used by all ranks for the next iteration
-            training_model_path = training_directory / "model.ckpt"
-            copyfile(best_model_path, training_model_path)
-            rank_zero_print(f"Copied best model to {training_model_path}")
-
-            # ============================================================
-            # =============== tilt-series alignment step =================
-            # ============================================================
-
-            # get list of all files to process for alignment
-            tilt_series_list = list(training_directory.glob("*.xml"))
-
-            # run alignment in parallel over all available devices
-            run_alignment_parallel(
-                model_checkpoint=str(training_model_path),
-                tilt_series_list=tilt_series_list,
-                output_directory=training_directory,
-                setting=iteration_settings["alignment"],
-                patch_size=alignment_config["patch_size"],
-                patch_overlap=alignment_config["patch_overlap"],
-                batch_size=alignment_config["batch_size"],
-                apply_ctf=general_config["apply_ctf"],
-                downsample=iteration_settings["downsample"],
-                devices_list=devices_alignment,
-            )
-
-            # make copies of the xml files and model after alignment
-            iteration_directory = training_directory / ("iter" + str(x + 1))
-            iteration_directory.mkdir(parents=True, exist_ok=True)
-
-            for xml_file in training_directory.glob("*.xml"):
-                destination_xml = iteration_directory / xml_file.name
-                copyfile(xml_file, destination_xml)
-
-                # copy the file with the alignment loss
-                loss_json = xml_file.stem + "_alignment_loss.json"
-                destination_json = iteration_directory / loss_json
-                copyfile(training_directory / loss_json, destination_json)
-
-            iteration_model_path = iteration_directory / "model.ckpt"
-            copyfile(best_model_path, iteration_model_path)
-            rank_zero_print(f"Copied best model to {iteration_model_path}")
-
-        # All ranks use the known model.ckpt path for the next iteration
-        # (rank 0 wrote it above, barrier below ensures it exists)
-        model_training_config["model_checkpoint"] = str(
-            training_directory / "model.ckpt"
+            devices_list=devices_alignment,
         )
 
-        # Synchronize all ranks before starting the next iteration
-        distributed_barrier()
+        # make copies of the xml files and model after alignment
+        iteration_directory = training_directory / ("iter" + str(x + 1))
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+
+        for xml_file in training_directory.glob("*.xml"):
+            destination_xml = iteration_directory / xml_file.name
+            copyfile(xml_file, destination_xml)
+
+            # copy the file with the alignment loss
+            loss_json = xml_file.stem + "_alignment_loss.json"
+            destination_json = iteration_directory / loss_json
+            copyfile(training_directory / loss_json, destination_json)
+
+        iteration_model_path = iteration_directory / "model.ckpt"
+        copyfile(training_model_path, iteration_model_path)
+        print(f"Copied best model to {iteration_model_path}")
+
+        # The next iteration starts from the model we just trained.
+        model_training_config["model_checkpoint"] = str(training_model_path)
 
     return None
