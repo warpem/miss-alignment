@@ -129,7 +129,9 @@ def _training_worker(
 
     torch.set_num_threads(1)
     torch.set_float32_matmul_precision("medium")
-    seed_everything(general_config["seed"], workers=True)
+    # verbose=False: the main process already logs the seed once at startup;
+    # without this every rank reprints it on every macro-iteration.
+    seed_everything(general_config["seed"], workers=True, verbose=False)
 
     # Define the early stopping callback
     early_stopping = MAEarlyStopping(
