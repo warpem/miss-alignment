@@ -4,15 +4,14 @@ This module provides functionality to load raw tilt images and create
 preprocessed tilt stacks ready for training.
 """
 
-import multiprocessing as mp
-import sys
-from concurrent.futures import ProcessPoolExecutor
+import queue
 from pathlib import Path
 
 import mrcfile
-from tqdm import tqdm
 from warpylib import TiltSeries
 from warpylib.movie import Movie
+
+from ._parallel import run_device_pool
 
 
 def _get_original_pixel_size(tilt_series: TiltSeries) -> float:
@@ -107,10 +106,28 @@ def _prepare_single_tilt_series(
     )
 
 
+def _prepare_stacks_runner(
+    device: int | None,
+    task_queue,
+    result_queue,
+    desired_pixel_size: float,
+) -> None:
+    """Pull tilt-series off the queue and prepare them on a single device."""
+    import torch
+
+    torch.set_num_threads(1)
+    while True:
+        try:
+            xml_path = task_queue.get_nowait()
+        except queue.Empty:
+            break
+        _prepare_single_tilt_series(xml_path, desired_pixel_size, device)
+        result_queue.put_nowait(xml_path.stem)
+
+
 def prepare_stacks_parallel(
     training_directory: Path,
     desired_pixel_size: float,
-    n_processes: int = 4,
     devices: list[int] | None = None,
 ) -> None:
     """Prepare tilt stacks for all tilt series in the training directory.
@@ -124,10 +141,9 @@ def prepare_stacks_parallel(
         Directory containing tilt series XML files.
     desired_pixel_size : float
         Desired pixel size in Angstroms for the output stacks.
-    n_processes : int
-        Number of parallel processes to use. Default is 4.
     devices : list[int] | None
-        List of CUDA device indices to distribute work across. If None, uses CPU.
+        CUDA device indices to distribute work across (one worker process per
+        unique device). If None, a single default-device worker is used.
 
     Raises
     ------
@@ -146,22 +162,12 @@ def prepare_stacks_parallel(
         f"Preparing stacks for {len(xml_files)} tilt series at {desired_pixel_size} Å"
     )
 
-    # Use explicit spawn context to avoid CUDA issues with fork
-    ctx = mp.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=n_processes, mp_context=ctx) as executor:
-        # Submit all tasks with round-robin device assignment
-        futures = []
-        for i, xml_path in enumerate(xml_files):
-            device = devices[i % len(devices)] if devices else None
-            future = executor.submit(
-                _prepare_single_tilt_series, xml_path, desired_pixel_size, device
-            )
-            futures.append(future)
-
-        for future in tqdm(
-            futures, desc="Preparing stacks", unit="tilt series", file=sys.stdout
-        ):
-            # This will raise any exception that occurred in the worker
-            future.result()
+    run_device_pool(
+        jobs=xml_files,
+        runner=_prepare_stacks_runner,
+        runner_args=(desired_pixel_size,),
+        devices=devices,
+        desc="Preparing stacks",
+    )
 
     print(f"Successfully prepared stacks for {len(xml_files)} tilt series")

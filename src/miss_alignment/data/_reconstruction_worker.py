@@ -1,3 +1,4 @@
+import logging
 import multiprocessing as mp
 import random
 import tempfile
@@ -16,7 +17,10 @@ from dataclasses import dataclass
 
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
+from miss_alignment.utils import configure_logging
 from ._augmentation import MIRROR_COMBINATIONS, apply_mirror
+
+logger = logging.getLogger(__name__)
 
 # augmentation parameter
 MAX_ANGLE_DEGREES = 10.0
@@ -151,7 +155,12 @@ def reconstruction_worker(
     """
     torch.set_num_threads(1)
 
-    print(
+    # Spawned process: re-apply logging config from MISS_ALIGNMENT_LOG_LEVEL so
+    # these debug lines are reachable (runtime logging config does not survive
+    # the spawn boundary; the env var does).
+    configure_logging()
+
+    logger.debug(
         f"Reconstruction worker {worker_id} starting "
         f"(cycling through {n_partitions} partitions, {partition_size} files each)"
     )
@@ -203,7 +212,9 @@ def reconstruction_worker(
                         # stop_event here because the outer loop condition
                         # is never reached while we're stuck in this loop.
                         if stop_event.is_set():
-                            print(f"Reconstruction worker {worker_id} shutting down")
+                            logger.debug(
+                                f"Reconstruction worker {worker_id} shutting down"
+                            )
                             return
                         time.sleep(PAUSE_POLL_INTERVAL)
                         partitions_checked = 0
@@ -236,7 +247,7 @@ def reconstruction_worker(
                 # Move to next partition (round-robin)
                 current_partition = (current_partition + 1) % n_partitions
 
-    print(f"Reconstruction worker {worker_id} shutting down")
+    logger.debug(f"Reconstruction worker {worker_id} shutting down")
 
 
 def sample_positions(

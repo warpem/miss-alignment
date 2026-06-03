@@ -1,5 +1,6 @@
 # standard libraries
 import hashlib
+import logging
 import multiprocessing as mp
 import shutil
 import tempfile
@@ -15,6 +16,8 @@ from torch.utils.data import DataLoader
 from ._reconstruction_worker import reconstruction_worker
 from .training_dataset import ReconstructionPoolDataset
 from ..utils import is_rank_zero
+
+logger = logging.getLogger(__name__)
 
 
 # Default pool size
@@ -239,6 +242,9 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                         "tilt_series_refresh_rate": 10,
                         "device": self.reconstruction_devices[worker_id],
                     },
+                    # daemon so a hard crash of the parent (before teardown runs)
+                    # takes the reconstruction workers down with it
+                    daemon=True,
                 )
                 p.start()
                 self.pool_processes.append(p)
@@ -279,20 +285,23 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         # Only perform full teardown on rank 0 (where workers were spawned)
         if is_rank_zero():
             if self.stop_event:
-                print("Stopping reconstruction workers...")
+                logger.debug("Stopping reconstruction workers...")
                 self.stop_event.set()
 
                 for p in self.pool_processes:
                     p.join(timeout=5.0)
                     if p.is_alive():
-                        p.terminate()
+                        p.terminate()  # SIGTERM
+                        p.join(timeout=5.0)
+                    if p.is_alive():
+                        p.kill()  # SIGKILL if it ignored SIGTERM
                         p.join()
 
             if self.pool_dir and self.pool_dir.exists():
                 shutil.rmtree(self.pool_dir)
-                print(f"Cleaned up pool directory: {self.pool_dir}")
+                logger.debug(f"Cleaned up pool directory: {self.pool_dir}")
 
-            print("Cleanup complete")
+            logger.debug("Cleanup complete")
 
         # Reset state for potential reuse (all ranks)
         self._workers_spawned = False

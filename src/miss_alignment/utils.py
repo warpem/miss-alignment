@@ -1,8 +1,44 @@
 """Utility functions for miss-alignment."""
 
+import logging
 import os
 
 import torch
+
+# Env var controlling miss-alignment's own log verbosity (DEBUG/INFO/WARNING/...).
+LOG_LEVEL_ENV_VAR = "MISS_ALIGNMENT_LOG_LEVEL"
+
+
+def configure_logging() -> None:
+    """Configure miss-alignment logging from ``MISS_ALIGNMENT_LOG_LEVEL``.
+
+    Applies the env var's level (default ``WARNING``) to the ``miss_alignment``
+    package logger and attaches a stream handler once. Must be called at the
+    start of every process — including spawned training and reconstruction
+    workers — because env vars cross the spawn boundary while runtime logging
+    configuration does not.
+
+    Lightning's INFO startup banners are always silenced (they repeat per rank
+    every macro-iteration and are not controlled by this env var).
+    """
+    level = os.environ.get(LOG_LEVEL_ENV_VAR, "WARNING").upper()
+
+    pkg_logger = logging.getLogger("miss_alignment")
+    pkg_logger.setLevel(level)
+    if not pkg_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(levelname)s | %(name)s | %(message)s")
+        )
+        pkg_logger.addHandler(handler)
+        pkg_logger.propagate = False  # avoid double emission via the root logger
+
+    # Mute Lightning's INFO startup banners. Both lightning.pytorch and
+    # lightning.fabric give their own logger an explicit INFO level (with a
+    # handler and propagate=False) at import, so the level must be set on each
+    # directly -- setting the parent "lightning" logger has no effect.
+    for name in ("lightning.pytorch", "lightning.fabric"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def is_rank_zero() -> bool:
@@ -10,12 +46,12 @@ def is_rank_zero() -> bool:
 
     Check order:
     1. torch.distributed (always correct when initialized)
-    2. LOCAL_RANK (set by Lightning's LightningEnvironment for each spawned process)
+    2. LOCAL_RANK env var, set by the training worker before the process group
+       exists (e.g. at datamodule __enter__) and read by Lightning's
+       LightningEnvironment to detect the external launcher
 
-    SLURM_PROCID is intentionally not checked: without srun it is 0 for all
-    processes spawned from a single SLURM task, making it actively misleading.
-    With srun, torch.distributed is initialized before this function is called
-    in any meaningful context, so SLURM_PROCID is never needed.
+    Single-GPU training sets neither, so the final ``return True`` covers the
+    in-process (rank 0) case.
     """
     if torch.distributed.is_initialized():
         return torch.distributed.get_rank() == 0
@@ -25,22 +61,3 @@ def is_rank_zero() -> bool:
         return int(local_rank) == 0
 
     return True
-
-
-def rank_zero_print(*args, **kwargs) -> None:
-    """Print only on rank 0 in DDP training.
-
-    All arguments are passed directly to the built-in print function.
-    """
-    if is_rank_zero():
-        print(*args, **kwargs)
-
-
-def distributed_barrier() -> None:
-    """Synchronize all processes in distributed training.
-
-    This is a no-op if distributed training is not initialized (single GPU).
-    Use this to ensure all ranks wait before/after non-distributed operations.
-    """
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()

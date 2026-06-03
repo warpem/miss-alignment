@@ -10,7 +10,7 @@ miss-alignment is a deep learning package for tilt-series alignment in cryo-elec
 
 ### Scientific publication
 
-This software is a research project with a preprint publication on biorxiv. People are actively using it and it is supposed to be a software solution, so we need to carefully consider breaking changes.
+This software is published (preprint on biorxiv) and deployed in multiple labs. Treat it as a stable, production tool: avoid unnecessary breaking changes and consider backward compatibility carefully.
 
 ## Environment Setup
 
@@ -93,9 +93,16 @@ python -m pip install -e .[dev,test]
      - `(3, 3, 41)`: 2D warping field per image
      - `(3, 3, 2, 10)`: 3D volume warp grid
 
-4. **`train.py`** - Iterative training loop
-   - Alternates between model training and tilt-series alignment
-   - Each iteration: train model → align tilt-series → use aligned data for next iteration
+4. **`train.py`** - Iterative training loop ("macro-iterations")
+   - Runs a sequence of **macro-iterations**, each containing two phases: (1) a model
+     training phase and (2) a tilt-series alignment phase. The aligned output of one
+     macro-iteration is the input to the next.
+   - **`trainer.fit()` is therefore called once per macro-iteration** (i.e. multiple
+     times per run), each time with a long *single-process* alignment phase afterwards.
+     This is the central structural constraint of the codebase and a frequent source of
+     confusion: it breaks Lightning's "the script == one training run" assumption, which
+     is why plain DDP cannot be used naively (see **Multi-GPU support** under Important
+     Patterns for how this is handled).
    - Configured via YAML file (see `config_template.yaml`)
 
 ### Important Dependencies on External Libraries
@@ -304,21 +311,15 @@ tilt_series.tilt_axis_offset_x += shifts_angstrom[:, 1]
 
 ## Working on GitHub Issues
 
-1. Read the issue at `https://github.com/warpem/miss-alignment/issues/<number>` using `gh issue view <number>`
-2. Create a branch named after the issue: `git checkout -b fix/<short-description>` or `feat/<short-description>`
-3. If possible, write a failing test that reproduces the issue before touching the implementation
-4. Fix the code until the test passes
+- Read the issue with `gh issue view <number>` (repo: `warpem/miss-alignment`)
+- Branch named after the issue: `fix/<short-description>` or `feat/<short-description>`
+- Where possible, reproduce the issue with a failing test before touching the implementation
 
 ## Development Practices
 
-When working on this codebase, if you encounter potential bugs or implementation issues:
-
-1. **Report the issue**: Clearly explain what you found and why it appears to be a bug
-2. **Suggest a fix**: Provide a proposed solution with reasoning
-3. **Implement if appropriate**: For clear bugs (e.g., missing conversions, type inconsistencies, logic errors), implement the fix
-4. **Let the maintainer decide if unsure**: The maintainer will evaluate whether it's truly a bug or was intentional design
-
-**Don't just write tests to conform to buggy behavior** - if the implementation looks wrong, report it and suggest the fix rather than masking it with adjusted test expectations.
+This software is deployed across multiple labs, so treat it as stable and be conservative
+with breaking changes. When you spot a likely bug, report it with a proposed fix and let
+the maintainer decide — don't silently conform tests to buggy behavior.
 
 ## File Organization
 
@@ -341,6 +342,18 @@ miss-alignment/
 
 1. **Configuration-driven**: All training parameters are specified in YAML files
 2. **Iterative refinement**: Training alternates between model training and alignment steps
-3. **Multi-GPU support**: Both training and alignment can use multiple GPUs
+3. **Multi-GPU support**: Both training and alignment can use multiple GPUs. Because
+   `trainer.fit()` is called once per macro-iteration with a long single-process
+   alignment phase between calls (see `train.py` above), DDP cannot wrap the whole
+   program: the default DDP launcher re-runs the entire script per GPU, which would leave
+   every non-rank-0 rank idle through each alignment phase. Instead, **each
+   macro-iteration's training phase is scoped to its own DDP process group**: `train.py`
+   launches one `_training_worker` per training device via `torch.multiprocessing.spawn`,
+   acting as its own launcher (exports `LOCAL_RANK` etc.) so Lightning attaches instead
+   of re-spawning. After the spawn joins, the main process is single-process again and
+   runs alignment directly — no idle ranks, no barriers. Single-GPU runs the worker
+   in-process with no DDP. The `DDPStrategy` pins
+   `cluster_environment=LightningEnvironment()` so SLURM auto-detection cannot hijack the
+   spawned ranks; do not remove this (see `docs/usage.md` SLURM notes). Single-node only.
 4. **Synthetic data augmentation**: Training uses procedurally generated alignment errors
 5. **Pool-based data loading**: Pre-computed reconstructions in a pool improve training throughput
