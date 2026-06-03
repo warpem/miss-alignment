@@ -242,6 +242,9 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                         "tilt_series_refresh_rate": 10,
                         "device": self.reconstruction_devices[worker_id],
                     },
+                    # daemon so a hard crash of the parent (before teardown runs)
+                    # takes the reconstruction workers down with it
+                    daemon=True,
                 )
                 p.start()
                 self.pool_processes.append(p)
@@ -288,7 +291,10 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 for p in self.pool_processes:
                     p.join(timeout=5.0)
                     if p.is_alive():
-                        p.terminate()
+                        p.terminate()  # SIGTERM
+                        p.join(timeout=5.0)
+                    if p.is_alive():
+                        p.kill()  # SIGKILL if it ignored SIGTERM
                         p.join()
 
             if self.pool_dir and self.pool_dir.exists():

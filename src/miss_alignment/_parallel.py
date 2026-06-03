@@ -66,7 +66,10 @@ def run_device_pool(
                 # a worker that died with a non-zero exit code means a job failed;
                 # tear everything down rather than hang waiting for its result
                 if not p.is_alive() and p.exitcode != 0:
-                    [x.terminate() for x in procs]
+                    for x in procs:
+                        x.terminate()
+                    for x in procs:
+                        x.join(timeout=5.0)
                     pbar.close()
                     raise RuntimeError(
                         f"A worker process for '{desc}' stopped unexpectedly."
