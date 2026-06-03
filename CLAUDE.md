@@ -311,21 +311,15 @@ tilt_series.tilt_axis_offset_x += shifts_angstrom[:, 1]
 
 ## Working on GitHub Issues
 
-1. Read the issue at `https://github.com/warpem/miss-alignment/issues/<number>` using `gh issue view <number>`
-2. Create a branch named after the issue: `git checkout -b fix/<short-description>` or `feat/<short-description>`
-3. If possible, write a failing test that reproduces the issue before touching the implementation
-4. Fix the code until the test passes
+- Read the issue with `gh issue view <number>` (repo: `warpem/miss-alignment`)
+- Branch named after the issue: `fix/<short-description>` or `feat/<short-description>`
+- Where possible, reproduce the issue with a failing test before touching the implementation
 
 ## Development Practices
 
-When working on this codebase, if you encounter potential bugs or implementation issues:
-
-1. **Report the issue**: Clearly explain what you found and why it appears to be a bug
-2. **Suggest a fix**: Provide a proposed solution with reasoning
-3. **Implement if appropriate**: For clear bugs (e.g., missing conversions, type inconsistencies, logic errors), implement the fix
-4. **Let the maintainer decide if unsure**: The maintainer will evaluate whether it's truly a bug or was intentional design
-
-**Don't just write tests to conform to buggy behavior** - if the implementation looks wrong, report it and suggest the fix rather than masking it with adjusted test expectations.
+This is actively-used research software (preprint published, real users), so be
+conservative with breaking changes. When you spot a likely bug, report it with a proposed
+fix and let the maintainer decide — don't silently conform tests to buggy behavior.
 
 ## File Organization
 
