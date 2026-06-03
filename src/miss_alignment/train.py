@@ -33,6 +33,18 @@ def parse_device_list(value: str) -> list[int]:
     return [int(x.strip()) for x in value.split(",")]
 
 
+def _available_cpus() -> int:
+    """Number of CPUs actually available to this process.
+
+    Uses ``os.sched_getaffinity`` so cgroup/cpuset limits (e.g. SLURM's
+    ``--cpus-per-task``) are respected -- ``os.cpu_count()`` reports the whole
+    node instead. Falls back to ``os.cpu_count()`` where affinity is unavailable.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
 def _find_free_port() -> int:
     """Find a free TCP port on localhost for the DDP rendezvous.
 
@@ -336,6 +348,17 @@ def train_miss_align(
         raise ValueError("MissAlignment needs at least 1 training device")
     if len(devices_reconstruction) < 1:
         raise ValueError("MissAlignment needs at least 1 reconstruction worker")
+
+    # torch.compile's Inductor spawns a compile pool of size min(32, n_cpus)
+    # *per process*. With one training rank per GPU on a single node, that is one
+    # pool per rank all competing for the same CPUs (e.g. 4 ranks x 32 = ~128
+    # idle compile workers). Divide the CPU budget across the ranks so the total
+    # stays sane. Set in the main process before spawning so workers inherit it;
+    # setdefault keeps it overridable via the environment.
+    os.environ.setdefault(
+        "TORCHINDUCTOR_COMPILE_THREADS",
+        str(max(1, _available_cpus() // len(devices_training))),
+    )
 
     # For alignment stage, use all visible GPUs
     n_visible_gpus = torch.cuda.device_count()

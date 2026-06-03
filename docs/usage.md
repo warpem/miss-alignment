@@ -112,3 +112,10 @@ miss-alignment \
   including from the spawned reconstruction workers. PyTorch Lightning's INFO startup
   banners stay suppressed regardless of this setting. This controls text logging only;
   the tqdm progress bars are always shown (they write to stdout independently).
+
+- **`torch.compile` workers**: each training rank runs its own TorchInductor compile
+  pool (default `min(32, n_cpus)` processes *per rank*), so multi-GPU runs can spawn a
+  lot of idle compile workers. miss-alignment defaults `TORCHINDUCTOR_COMPILE_THREADS`
+  to `available_cpus // n_training_devices` (respecting the SLURM `--cpus-per-task`
+  cpuset via `sched_getaffinity`). Override it by exporting `TORCHINDUCTOR_COMPILE_THREADS`
+  yourself.
