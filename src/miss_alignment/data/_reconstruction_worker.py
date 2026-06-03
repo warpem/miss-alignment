@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
+from miss_alignment.utils import configure_logging
 from ._augmentation import MIRROR_COMBINATIONS, apply_mirror
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,11 @@ def reconstruction_worker(
         Device to use
     """
     torch.set_num_threads(1)
+
+    # Spawned process: re-apply logging config from MISS_ALIGNMENT_LOG_LEVEL so
+    # these debug lines are reachable (runtime logging config does not survive
+    # the spawn boundary; the env var does).
+    configure_logging()
 
     logger.debug(
         f"Reconstruction worker {worker_id} starting "

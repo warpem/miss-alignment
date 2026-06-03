@@ -1,4 +1,3 @@
-import logging
 import os
 import socket
 from pathlib import Path
@@ -17,6 +16,7 @@ from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
+from .utils import configure_logging
 from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
@@ -129,17 +129,15 @@ def _training_worker(
     if multi_gpu:
         _set_ddp_env(rank, world_size, master_port)
 
+    # Spawned worker: re-apply logging config (env vars survive the spawn,
+    # runtime logging config does not) and quiet Lightning's INFO banners.
+    configure_logging()
+
     torch.set_num_threads(1)
     torch.set_float32_matmul_precision("medium")
     # verbose=False: the main process already logs the seed once at startup;
     # without this every rank reprints it on every macro-iteration.
     seed_everything(general_config["seed"], workers=True, verbose=False)
-
-    # Quiet Lightning's INFO startup banners (GPU available, Initializing
-    # distributed, LOCAL_RANK..., etc.), which repeat per rank every
-    # macro-iteration. Warnings and errors still surface. This is Lightning's
-    # documented logger knob rather than reaching into internal logger names.
-    logging.getLogger("lightning.pytorch").setLevel(logging.WARNING)
 
     # Define the early stopping callback
     early_stopping = MAEarlyStopping(
@@ -292,6 +290,9 @@ def train_miss_align(
     ),
 ) -> None:
     """Train MissAlignment on a dataset using configuration from a YAML file."""
+
+    # honor MISS_ALIGNMENT_LOG_LEVEL and quiet Lightning's banners
+    configure_logging()
 
     # check hardware settings, we assume gpu's are available and limit
     # cpu multithreading

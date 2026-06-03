@@ -127,7 +127,12 @@ def run_alignment_parallel(
         ]
         [p.start() for p in procs]
 
-        pbar = tqdm.tqdm(total=len(jobs), desc="tilt-series alignment", file=sys.stdout)
+        pbar = tqdm.tqdm(
+            total=len(jobs),
+            desc="tilt-series alignment",
+            file=sys.stdout,
+            disable=None,  # auto-disable when stdout is not a TTY (e.g. log file)
+        )
         while True:
             while not result_queue.empty():
                 results.append(result_queue.get_nowait())

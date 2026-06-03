@@ -1,8 +1,39 @@
 """Utility functions for miss-alignment."""
 
+import logging
 import os
 
 import torch
+
+# Env var controlling miss-alignment's own log verbosity (DEBUG/INFO/WARNING/...).
+LOG_LEVEL_ENV_VAR = "MISS_ALIGNMENT_LOG_LEVEL"
+
+
+def configure_logging() -> None:
+    """Configure miss-alignment logging from ``MISS_ALIGNMENT_LOG_LEVEL``.
+
+    Applies the env var's level (default ``WARNING``) to the ``miss_alignment``
+    package logger and attaches a stream handler once. Must be called at the
+    start of every process — including spawned training and reconstruction
+    workers — because env vars cross the spawn boundary while runtime logging
+    configuration does not.
+
+    Lightning's INFO startup banners are always silenced (they repeat per rank
+    every macro-iteration and are not controlled by this env var).
+    """
+    level = os.environ.get(LOG_LEVEL_ENV_VAR, "WARNING").upper()
+
+    pkg_logger = logging.getLogger("miss_alignment")
+    pkg_logger.setLevel(level)
+    if not pkg_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(levelname)s | %(name)s | %(message)s")
+        )
+        pkg_logger.addHandler(handler)
+        pkg_logger.propagate = False  # avoid double emission via the root logger
+
+    logging.getLogger("lightning.pytorch").setLevel(logging.WARNING)
 
 
 def is_rank_zero() -> bool:

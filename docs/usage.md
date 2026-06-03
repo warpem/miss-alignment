@@ -106,3 +106,12 @@ miss-alignment \
 
 - **Resuming**: If a job times out mid-run, restart with `--start-at-iteration N` where
   `N` is the last completed iteration (counting from 0).
+
+- **Log verbosity**: miss-alignment logs at `WARNING` by default. Set
+  `MISS_ALIGNMENT_LOG_LEVEL=DEBUG` (or `INFO`) to see its own diagnostic output,
+  including from the spawned reconstruction workers. PyTorch Lightning's INFO startup
+  banners stay suppressed regardless of this setting.
+
+- **Progress bars**: The training and alignment progress bars show when stdout is an
+  interactive terminal and switch off automatically when output is redirected to a file
+  or pipe (e.g. a SLURM `--output` log), so captured logs stay clean.
