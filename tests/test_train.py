@@ -19,7 +19,11 @@ from lightning.pytorch import LightningModule, Trainer
 from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
-from miss_alignment.train import _find_free_port, _set_ddp_env
+from miss_alignment.train import (
+    _find_free_port,
+    _resolve_start_checkpoint,
+    _set_ddp_env,
+)
 from miss_alignment.utils import is_rank_zero
 
 
@@ -134,3 +138,36 @@ def test_external_launcher_overrides_slurm_detection(tmp_path):
     assert sum(r[1] == "True" for r in rows) == 1  # exactly one recon-pool gate
     assert {r[2] for r in rows} == {"0", "1"}  # our ranks won over SLURM_PROCID=0
     assert {r[3] for r in rows} == {"2"}  # world_size 2, not SLURM_NTASKS=1
+
+
+def test_resolve_start_checkpoint_iter0_uses_config(tmp_path):
+    """iter 0 starts from the config's checkpoint when one is given."""
+    ckpt = tmp_path / "pretrained.ckpt"
+    ckpt.touch()
+    assert _resolve_start_checkpoint(0, tmp_path, str(ckpt)) == ckpt
+
+
+def test_resolve_start_checkpoint_iter0_none(tmp_path):
+    """iter 0 with no config checkpoint trains from scratch."""
+    assert _resolve_start_checkpoint(0, tmp_path, None) is None
+
+
+def test_resolve_start_checkpoint_resume_prefers_iter_dir(tmp_path):
+    """Resuming loads iter{N}/model.ckpt, ignoring the config and the fallback."""
+    (tmp_path / "iter2").mkdir()
+    iter_ckpt = tmp_path / "iter2" / "model.ckpt"
+    iter_ckpt.touch()
+    (tmp_path / "model.ckpt").touch()  # fallback also present
+    assert _resolve_start_checkpoint(2, tmp_path, "ignored.ckpt") == iter_ckpt
+
+
+def test_resolve_start_checkpoint_resume_falls_back(tmp_path):
+    """Resuming uses training_directory/model.ckpt when iter{N}/ is absent."""
+    fallback = tmp_path / "model.ckpt"
+    fallback.touch()
+    assert _resolve_start_checkpoint(3, tmp_path, None) == fallback
+
+
+def test_resolve_start_checkpoint_resume_missing_returns_none(tmp_path):
+    """Resuming with no checkpoint anywhere returns None (regression for #111)."""
+    assert _resolve_start_checkpoint(3, tmp_path, None) is None

@@ -56,6 +56,42 @@ def _set_ddp_env(rank: int, world_size: int, master_port: int) -> None:
     os.environ["LOCAL_RANK"] = str(rank)
 
 
+def _resolve_start_checkpoint(
+    start_iter: int,
+    training_directory: Path,
+    config_checkpoint: Optional[str],
+) -> Optional[Path]:
+    """Pick the checkpoint to start the first training iteration from.
+
+    iter 0 uses the config's ``model_checkpoint`` (or None for random weights).
+    When resuming (``start_iter > 0``), load the model saved at the end of the
+    previous iteration (``iter{start_iter}/model.ckpt``), falling back to
+    ``training_directory/model.ckpt``; the config's checkpoint is irrelevant in
+    that case. Returns None (train from scratch) if no checkpoint is found.
+    """
+    if start_iter == 0:
+        return Path(config_checkpoint) if config_checkpoint else None
+
+    iter_checkpoint = training_directory / f"iter{start_iter}" / "model.ckpt"
+    fallback_checkpoint = training_directory / "model.ckpt"
+    if iter_checkpoint.exists():
+        print(
+            f"Resuming at iteration {start_iter}: loading model from {iter_checkpoint}"
+        )
+        return iter_checkpoint
+    if fallback_checkpoint.exists():
+        print(
+            f"Resuming at iteration {start_iter}: "
+            f"loading model from {fallback_checkpoint}"
+        )
+        return fallback_checkpoint
+    print(
+        f"Warning: resuming at iteration {start_iter} but no model checkpoint "
+        "found; training will start from random weights."
+    )
+    return None
+
+
 def _training_worker(
     rank: int,
     world_size: int,
@@ -322,34 +358,10 @@ def train_miss_align(
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
-    # Determine the model checkpoint to use for the first training iteration.
-    # When starting fresh (iter 0), use the checkpoint from the config if provided.
-    # When resuming, always load from the backup written at the end of the previous
-    # iteration; the config's model_checkpoint is irrelevant in that case.
-    if start_iter == 0:
-        config_checkpoint = model_training_config["model_checkpoint"]
-        training_model_path = Path(config_checkpoint) if config_checkpoint else None
-    else:
-        iter_checkpoint = training_directory / f"iter{start_iter}" / "model.ckpt"
-        fallback_checkpoint = training_directory / "model.ckpt"
-        if iter_checkpoint.exists():
-            training_model_path = iter_checkpoint
-            print(
-                f"Resuming at iteration {start_iter}: "
-                f"loading model from {training_model_path}"
-            )
-        elif fallback_checkpoint.exists():
-            training_model_path = fallback_checkpoint
-            print(
-                f"Resuming at iteration {start_iter}: "
-                f"loading model from {training_model_path}"
-            )
-        else:
-            training_model_path = None
-            print(
-                f"Warning: resuming at iteration {start_iter} but no model "
-                "checkpoint found; training will start from random weights."
-            )
+    # Determine the model checkpoint to start the first training iteration from.
+    training_model_path = _resolve_start_checkpoint(
+        start_iter, training_directory, model_training_config["model_checkpoint"]
+    )
 
     # make copies of the xml files and model we're starting from
     iteration_directory = training_directory / ("iter" + str(start_iter))
