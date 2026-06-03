@@ -296,9 +296,12 @@ def train_miss_align(
     n_visible_gpus = torch.cuda.device_count()
     devices_alignment = list(range(n_visible_gpus))
 
-    print(f"Using devices {devices_training} for training")
-    print(f"Using devices {devices_reconstruction} for reconstruction")
-    print(f"Using devices {devices_alignment} for alignment")
+    # Each macro-iteration runs two phases; report which devices each one uses.
+    print("Macro-iteration phase 1 (model training):")
+    print(f"  training devices:       {devices_training}")
+    print(f"  reconstruction devices: {devices_reconstruction}")
+    print("Macro-iteration phase 2 (tilt-series alignment):")
+    print(f"  alignment devices:      {devices_alignment}")
 
     # Load configuration from YAML file
     with open(config_file, "r") as f:
