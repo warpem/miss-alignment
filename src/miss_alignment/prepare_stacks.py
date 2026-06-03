@@ -159,7 +159,11 @@ def prepare_stacks_parallel(
             futures.append(future)
 
         for future in tqdm(
-            futures, desc="Preparing stacks", unit="tilt series", file=sys.stdout
+            futures,
+            desc="Preparing stacks",
+            unit="tilt series",
+            file=sys.stdout,
+            disable=None,  # auto-disable when stdout is not a TTY (e.g. log file)
         ):
             # This will raise any exception that occurred in the worker
             future.result()

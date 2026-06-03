@@ -144,6 +144,7 @@ def run_cross_correlation_alignment_parallel(
             desc="Cross-correlation alignment",
             unit="tilt series",
             file=sys.stdout,
+            disable=None,  # auto-disable when stdout is not a TTY (e.g. log file)
         ):
             # This will raise any exception that occurred in the worker
             future.result()
