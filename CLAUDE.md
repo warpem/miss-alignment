@@ -93,9 +93,16 @@ python -m pip install -e .[dev,test]
      - `(3, 3, 41)`: 2D warping field per image
      - `(3, 3, 2, 10)`: 3D volume warp grid
 
-4. **`train.py`** - Iterative training loop
-   - Alternates between model training and tilt-series alignment
-   - Each iteration: train model → align tilt-series → use aligned data for next iteration
+4. **`train.py`** - Iterative training loop ("macro-iterations")
+   - Runs a sequence of **macro-iterations**, each containing two phases: (1) a model
+     training phase and (2) a tilt-series alignment phase. The aligned output of one
+     macro-iteration is the input to the next.
+   - **`trainer.fit()` is therefore called once per macro-iteration** (i.e. multiple
+     times per run), each time with a long *single-process* alignment phase afterwards.
+     This is the central structural constraint of the codebase and a frequent source of
+     confusion: it breaks Lightning's "the script == one training run" assumption, which
+     is why plain DDP cannot be used naively (see **Multi-GPU support** under Important
+     Patterns for how this is handled).
    - Configured via YAML file (see `config_template.yaml`)
 
 ### Important Dependencies on External Libraries
@@ -341,6 +348,18 @@ miss-alignment/
 
 1. **Configuration-driven**: All training parameters are specified in YAML files
 2. **Iterative refinement**: Training alternates between model training and alignment steps
-3. **Multi-GPU support**: Both training and alignment can use multiple GPUs
+3. **Multi-GPU support**: Both training and alignment can use multiple GPUs. Because
+   `trainer.fit()` is called once per macro-iteration with a long single-process
+   alignment phase between calls (see `train.py` above), DDP cannot wrap the whole
+   program: the default DDP launcher re-runs the entire script per GPU, which would leave
+   every non-rank-0 rank idle through each alignment phase. Instead, **each
+   macro-iteration's training phase is scoped to its own DDP process group**: `train.py`
+   launches one `_training_worker` per training device via `torch.multiprocessing.spawn`,
+   acting as its own launcher (exports `LOCAL_RANK` etc.) so Lightning attaches instead
+   of re-spawning. After the spawn joins, the main process is single-process again and
+   runs alignment directly — no idle ranks, no barriers. Single-GPU runs the worker
+   in-process with no DDP. The `DDPStrategy` pins
+   `cluster_environment=LightningEnvironment()` so SLURM auto-detection cannot hijack the
+   spawned ranks; do not remove this (see `docs/usage.md` SLURM notes). Single-node only.
 4. **Synthetic data augmentation**: Training uses procedurally generated alignment errors
 5. **Pool-based data loading**: Pre-computed reconstructions in a pool improve training throughput
