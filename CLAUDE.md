@@ -10,7 +10,7 @@ miss-alignment is a deep learning package for tilt-series alignment in cryo-elec
 
 ### Scientific publication
 
-This software is a research project with a preprint publication on biorxiv. People are actively using it and it is supposed to be a software solution, so we need to carefully consider breaking changes.
+This software is published (preprint on biorxiv) and deployed in multiple labs. Treat it as a stable, production tool: avoid unnecessary breaking changes and consider backward compatibility carefully.
 
 ## Environment Setup
 
@@ -317,9 +317,9 @@ tilt_series.tilt_axis_offset_x += shifts_angstrom[:, 1]
 
 ## Development Practices
 
-This is actively-used research software (preprint published, real users), so be
-conservative with breaking changes. When you spot a likely bug, report it with a proposed
-fix and let the maintainer decide — don't silently conform tests to buggy behavior.
+This software is deployed across multiple labs, so treat it as stable and be conservative
+with breaking changes. When you spot a likely bug, report it with a proposed fix and let
+the maintainer decide — don't silently conform tests to buggy behavior.
 
 ## File Organization
 
