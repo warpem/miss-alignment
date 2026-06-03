@@ -33,9 +33,12 @@ def configure_logging() -> None:
         pkg_logger.addHandler(handler)
         pkg_logger.propagate = False  # avoid double emission via the root logger
 
-    # Mute the whole lightning namespace (both lightning.pytorch and
-    # lightning.fabric, which logs "Initializing distributed: ...").
-    logging.getLogger("lightning").setLevel(logging.WARNING)
+    # Mute Lightning's INFO startup banners. Both lightning.pytorch and
+    # lightning.fabric give their own logger an explicit INFO level (with a
+    # handler and propagate=False) at import, so the level must be set on each
+    # directly -- setting the parent "lightning" logger has no effect.
+    for name in ("lightning.pytorch", "lightning.fabric"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def is_rank_zero() -> bool:
