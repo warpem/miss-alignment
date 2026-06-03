@@ -181,6 +181,7 @@ def _training_worker(
         log_every_n_steps=50,
         enable_checkpointing=True,
         enable_progress_bar=False,  # disable default progress bar
+        enable_model_summary=False,  # skip the per-iteration params table
         deterministic=False,  # setting to True breaks on max_pool_3d
         limit_val_batches=0,  # turn on validation steps
         num_sanity_val_steps=0,
