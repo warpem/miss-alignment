@@ -11,6 +11,7 @@ import torch.multiprocessing as torch_mp
 
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
@@ -110,8 +111,16 @@ def _training_worker(
 
     # Use DDP only for multi-GPU; the workers live only for this fit() call, so
     # the default DDP timeout is fine (no rank sits idle during alignment).
+    # Pin the cluster environment so that we (the mp.spawn launcher) stay in
+    # control of the ranks. Without this, Lightning auto-detects SLURMEnvironment
+    # inside any SLURM allocation and reads SLURM_PROCID/SLURM_NTASKS instead of
+    # the RANK/WORLD_SIZE/LOCAL_RANK we export, which would collapse the spawned
+    # workers into world_size=1. LightningEnvironment keys off LOCAL_RANK.
     strategy = (
-        DDPStrategy(find_unused_parameters=False)  # feed-forward model
+        DDPStrategy(
+            cluster_environment=LightningEnvironment(),
+            find_unused_parameters=False,  # feed-forward model
+        )
         if multi_gpu
         else "auto"
     )

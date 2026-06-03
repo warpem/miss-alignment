@@ -16,6 +16,7 @@ import torch
 import torch.multiprocessing as torch_mp
 from torch.utils.data import DataLoader, Dataset
 from lightning.pytorch import LightningModule, Trainer
+from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
 from miss_alignment.train import _find_free_port
@@ -62,10 +63,25 @@ def _launch_and_train(rank: int, world_size: int, master_port: int, tmp: Path) -
         os.environ["RANK"] = str(rank)
         os.environ["LOCAL_RANK"] = str(rank)
 
+        # Simulate a single-task, non-interactive SLURM allocation: every
+        # spawned worker inherits the SAME SLURM_PROCID=0 / SLURM_NTASKS=1. If
+        # the strategy let Lightning auto-detect SLURMEnvironment, all workers
+        # would collapse to rank 0 of a world of size 1. Pinning
+        # LightningEnvironment (below) must keep our exported ranks authoritative.
+        os.environ["SLURM_NTASKS"] = "1"
+        os.environ["SLURM_PROCID"] = "0"
+        os.environ["SLURM_LOCALID"] = "0"
+        os.environ["SLURM_JOB_NAME"] = "ddp-regression"  # not bash/interactive
+        os.environ["SLURM_JOB_ID"] = "123456"
+
     pre_dist_rank_zero = is_rank_zero()
 
     strategy = (
-        DDPStrategy(process_group_backend="gloo", find_unused_parameters=False)
+        DDPStrategy(
+            cluster_environment=LightningEnvironment(),
+            process_group_backend="gloo",
+            find_unused_parameters=False,
+        )
         if multi
         else "auto"
     )
@@ -99,8 +115,13 @@ def test_single_device_runs_in_process(tmp_path):
 
 
 @pytest.mark.filterwarnings("ignore")
-def test_external_launcher_forms_process_group(tmp_path):
-    """``mp.spawn`` + ``LOCAL_RANK``: Lightning attaches, does not re-spawn."""
+def test_external_launcher_overrides_slurm_detection(tmp_path):
+    """``mp.spawn`` + pinned ``LightningEnvironment`` keeps our ranks.
+
+    The workers run with single-task SLURM env vars set, so this also guards the
+    regression where Lightning would auto-detect ``SLURMEnvironment`` and collapse
+    every spawned worker to rank 0 of a world of size 1.
+    """
     world_size = 2
     torch_mp.spawn(
         _launch_and_train,
@@ -115,5 +136,5 @@ def test_external_launcher_forms_process_group(tmp_path):
     assert len(rows) == world_size  # one worker per rank
     assert str(os.getpid()) not in {r[0] for r in rows}  # no re-exec of program
     assert sum(r[1] == "True" for r in rows) == 1  # exactly one recon-pool gate
-    assert {r[2] for r in rows} == {"0", "1"}  # distinct global ranks
-    assert {r[3] for r in rows} == {"2"}  # both saw world_size 2
+    assert {r[2] for r in rows} == {"0", "1"}  # our ranks won over SLURM_PROCID=0
+    assert {r[3] for r in rows} == {"2"}  # world_size 2, not SLURM_NTASKS=1
