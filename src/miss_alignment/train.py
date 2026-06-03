@@ -61,6 +61,7 @@ def _training_worker(
     world_size: int,
     master_port: int,
     iteration: int,
+    model_checkpoint: Optional[Path],
     training_directory: Path,
     devices_training: list[int],
     devices_reconstruction: list[int],
@@ -164,10 +165,8 @@ def _training_worker(
         "model_architecture": model_training_config["model_architecture"],
     }
 
-    if model_training_config["model_checkpoint"] is not None:
-        model = MissAlignment.load_from_checkpoint(
-            model_training_config["model_checkpoint"], **model_params
-        )
+    if model_checkpoint is not None:
+        model = MissAlignment.load_from_checkpoint(model_checkpoint, **model_params)
     else:
         model = MissAlignment(**model_params)
 
@@ -323,17 +322,44 @@ def train_miss_align(
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
 
-    # make copies of the xml files and (model) we're starting from
+    # Determine the model checkpoint to use for the first training iteration.
+    # When starting fresh (iter 0), use the checkpoint from the config if provided.
+    # When resuming, always load from the backup written at the end of the previous
+    # iteration; the config's model_checkpoint is irrelevant in that case.
+    if start_iter == 0:
+        config_checkpoint = model_training_config["model_checkpoint"]
+        training_model_path = Path(config_checkpoint) if config_checkpoint else None
+    else:
+        iter_checkpoint = training_directory / f"iter{start_iter}" / "model.ckpt"
+        fallback_checkpoint = training_directory / "model.ckpt"
+        if iter_checkpoint.exists():
+            training_model_path = iter_checkpoint
+            print(
+                f"Resuming at iteration {start_iter}: "
+                f"loading model from {training_model_path}"
+            )
+        elif fallback_checkpoint.exists():
+            training_model_path = fallback_checkpoint
+            print(
+                f"Resuming at iteration {start_iter}: "
+                f"loading model from {training_model_path}"
+            )
+        else:
+            training_model_path = None
+            print(
+                f"Warning: resuming at iteration {start_iter} but no model "
+                "checkpoint found; training will start from random weights."
+            )
+
+    # make copies of the xml files and model we're starting from
     iteration_directory = training_directory / ("iter" + str(start_iter))
     iteration_directory.mkdir(parents=True, exist_ok=True)
     for xml_file in training_directory.glob("*.xml"):
         destination = iteration_directory / xml_file.name
         copyfile(xml_file, destination)
 
-    if model_training_config["model_checkpoint"] is not None:
-        source = model_training_config["model_checkpoint"]
-        destination = iteration_directory / Path(source).name
-        copyfile(source, destination)
+    if training_model_path is not None:
+        copyfile(training_model_path, iteration_directory / "model.ckpt")
 
     for x in range(start_iter, end_iter):
         # ============================================================
@@ -354,6 +380,7 @@ def train_miss_align(
             world_size,
             _find_free_port(),
             x,
+            training_model_path,
             training_directory,
             devices_training,
             devices_reconstruction,
@@ -414,7 +441,7 @@ def train_miss_align(
         copyfile(training_model_path, iteration_model_path)
         print(f"Copied best model to {iteration_model_path}")
 
-        # The next iteration starts from the model we just trained.
-        model_training_config["model_checkpoint"] = str(training_model_path)
+        # training_model_path now points at the model just trained
+        # (set after the worker above); the next iteration starts from it.
 
     return None
