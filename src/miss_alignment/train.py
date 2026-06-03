@@ -97,6 +97,33 @@ def _resolve_start_checkpoint(
     return None
 
 
+def _sync_start_iteration_xmls(start_iter: int, training_directory: Path) -> None:
+    """Align the working XMLs with the ``iter{start_iter}/`` snapshot.
+
+    iter 0 (fresh run): back up the original alignments from the training
+    directory into ``iter0/`` as the baseline.
+
+    Resuming (``start_iter > 0``): restore the working alignments *from*
+    ``iter{start_iter}/`` (written at the end of the previous iteration) back
+    into the training directory, so the run continues from the correct state
+    even if a previous attempt crashed partway through this iteration.
+    """
+    iteration_directory = training_directory / f"iter{start_iter}"
+
+    if start_iter == 0:
+        iteration_directory.mkdir(parents=True, exist_ok=True)
+        for xml_file in training_directory.glob("*.xml"):
+            copyfile(xml_file, iteration_directory / xml_file.name)
+    else:
+        if not iteration_directory.is_dir():
+            raise FileNotFoundError(
+                f"Cannot resume at iteration {start_iter}: "
+                f"{iteration_directory} does not exist."
+            )
+        for xml_file in iteration_directory.glob("*.xml"):
+            copyfile(xml_file, training_directory / xml_file.name)
+
+
 def _training_worker(
     rank: int,
     world_size: int,
@@ -382,12 +409,9 @@ def train_miss_align(
         start_iter, training_directory, model_training_config["model_checkpoint"]
     )
 
-    # make copies of the xml files we're starting from
-    iteration_directory = training_directory / ("iter" + str(start_iter))
-    iteration_directory.mkdir(parents=True, exist_ok=True)
-    for xml_file in training_directory.glob("*.xml"):
-        destination = iteration_directory / xml_file.name
-        copyfile(xml_file, destination)
+    # iter 0 snapshots the input alignments as a baseline; resuming restores the
+    # working alignments from that iteration's snapshot.
+    _sync_start_iteration_xmls(start_iter, training_directory)
 
     for x in range(start_iter, end_iter):
         # ============================================================

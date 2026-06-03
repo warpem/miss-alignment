@@ -23,6 +23,7 @@ from miss_alignment.train import (
     _find_free_port,
     _resolve_start_checkpoint,
     _set_ddp_env,
+    _sync_start_iteration_xmls,
 )
 from miss_alignment.utils import is_rank_zero
 
@@ -171,3 +172,37 @@ def test_resolve_start_checkpoint_resume_falls_back(tmp_path):
 def test_resolve_start_checkpoint_resume_missing_returns_none(tmp_path):
     """Resuming with no checkpoint anywhere returns None (regression for #111)."""
     assert _resolve_start_checkpoint(3, tmp_path, None) is None
+
+
+def test_sync_start_iteration_xmls_iter0_backs_up(tmp_path):
+    """iter 0 snapshots the training-directory XMLs into iter0/ (originals kept)."""
+    (tmp_path / "a.xml").write_text("orig-a")
+    (tmp_path / "b.xml").write_text("orig-b")
+
+    _sync_start_iteration_xmls(0, tmp_path)
+
+    assert (tmp_path / "iter0" / "a.xml").read_text() == "orig-a"
+    assert (tmp_path / "iter0" / "b.xml").read_text() == "orig-b"
+    # the working copies are untouched
+    assert (tmp_path / "a.xml").read_text() == "orig-a"
+
+
+def test_sync_start_iteration_xmls_resume_restores(tmp_path):
+    """Resuming overwrites the working XMLs with the iter{N}/ snapshot."""
+    iter_dir = tmp_path / "iter2"
+    iter_dir.mkdir()
+    (iter_dir / "a.xml").write_text("iter2-a")
+    # the training directory holds stale/partial state from a crashed attempt
+    (tmp_path / "a.xml").write_text("stale-a")
+
+    _sync_start_iteration_xmls(2, tmp_path)
+
+    assert (tmp_path / "a.xml").read_text() == "iter2-a"
+    # the snapshot itself is not modified
+    assert (iter_dir / "a.xml").read_text() == "iter2-a"
+
+
+def test_sync_start_iteration_xmls_resume_missing_raises(tmp_path):
+    """Resuming at an iteration with no snapshot directory is an error."""
+    with pytest.raises(FileNotFoundError, match="Cannot resume at iteration 3"):
+        _sync_start_iteration_xmls(3, tmp_path)
