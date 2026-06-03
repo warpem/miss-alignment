@@ -56,7 +56,6 @@ def run_device_pool(
             total=len(jobs),
             desc=desc,
             file=sys.stdout,
-            disable=None,  # auto-disable when stdout is not a TTY (e.g. log file)
         )
         while len(results) < len(jobs):
             while not result_queue.empty():

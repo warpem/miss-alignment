@@ -402,7 +402,6 @@ class MAProgressBar(Callback):
             dynamic_ncols=True,
             leave=True,
             file=sys.stdout,
-            disable=None,  # auto-disable when stdout is not a TTY (e.g. log file)
         )
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
