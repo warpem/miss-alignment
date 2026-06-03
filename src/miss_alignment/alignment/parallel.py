@@ -1,17 +1,14 @@
 import queue
-import multiprocessing as mp
-import sys
-import time
 import torch
-import tqdm
 from multiprocessing.managers import BaseProxy
 from pathlib import Path
 
+from .._parallel import run_device_pool
 from .tilt_series import evaluate_tilt_series
 
 
 def gpu_runner(
-    device: str,
+    device: int,
     task_queue: BaseProxy,
     result_queue: BaseProxy,
 ) -> None:
@@ -22,7 +19,7 @@ def gpu_runner(
 
     Parameters
     ----------
-    device: str
+    device: int
         a GPU index to assign to the runner
     task_queue: mp.managers.BaseProxy
         shared queue from multiprocessing with jobs to run
@@ -30,12 +27,13 @@ def gpu_runner(
         shared queue from multiprocessing for finished jobs
     """
     torch.set_num_threads(1)
+    cuda_device = f"cuda:{device}"
     while True:
         try:
             task_parameters = task_queue.get_nowait()
             tilt_series_path, loss_values = evaluate_tilt_series(
                 **task_parameters,
-                device=device,
+                device=cuda_device,
             )
             # place the name and final loss of the finished tilt_series
             final_loss = float(loss_values[-1]) if loss_values else None
@@ -82,76 +80,29 @@ def run_alignment_parallel(
     dict[str, float]
         Dictionary mapping tilt-series names to their final loss values.
     """
-    jobs = []
-    for i, tilt_series in enumerate(tilt_series_list):
-        jobs.append(
-            {
-                "model_checkpoint_path": model_checkpoint,
-                "tilt_series_path": tilt_series,
-                "output_directory": output_directory,
-                "setting": setting,
-                "patch_size": patch_size,
-                "patch_overlap": patch_overlap,
-                "batch_size": batch_size,
-                "apply_ctf": apply_ctf,
-                "downsample": downsample,
-            }
-        )
+    jobs = [
+        {
+            "model_checkpoint_path": model_checkpoint,
+            "tilt_series_path": tilt_series,
+            "output_directory": output_directory,
+            "setting": setting,
+            "patch_size": patch_size,
+            "patch_overlap": patch_overlap,
+            "batch_size": batch_size,
+            "apply_ctf": apply_ctf,
+            "downsample": downsample,
+        }
+        for tilt_series in tilt_series_list
+    ]
 
-    results = []
-    # Use explicit spawn context to avoid CUDA issues with fork
-    ctx = mp.get_context("spawn")
-    with ctx.Manager() as manager:
-        task_queue = (
-            manager.Queue()
-        )  # the list of tasks where processes can get there next task from
-        result_queue = (
-            manager.Queue()
-        )  # this will accumulate results from the processes
-
-        [task_queue.put_nowait(j) for j in jobs]  # put all tasks
-
-        # set the processes and start them!
-        # if a device occurs multiple times in devices_list,
-        # use it only once to keep memory footprint deterministic per GPU
-        procs = [
-            ctx.Process(
-                target=gpu_runner,
-                args=(
-                    "cuda:" + str(g),
-                    task_queue,
-                    result_queue,
-                ),
-            )
-            for g in set(devices_list)
-        ]
-        [p.start() for p in procs]
-
-        pbar = tqdm.tqdm(total=len(jobs), desc="tilt-series alignment", file=sys.stdout)
-        while True:
-            while not result_queue.empty():
-                results.append(result_queue.get_nowait())
-                pbar.update(1)
-
-            if len(results) == len(jobs):
-                # its done if all the results from the spawn were send back
-                break
-
-            for p in procs:
-                # if one of the processes is no longer alive and has a failed exit
-                # we should error
-                if not p.is_alive() and p.exitcode != 0:  # to prevent a deadlock
-                    [
-                        x.terminate() for x in procs
-                    ]  # kill all spawned processes if something broke
-                    raise RuntimeError(
-                        "One or more of the processes stopped unexpectedly."
-                    )
-
-            time.sleep(0.1)
-        pbar.close()
-
-        [p.join() for p in procs]
+    # one worker process per unique GPU, each pulling jobs from a shared queue
+    results = run_device_pool(
+        jobs=jobs,
+        runner=gpu_runner,
+        runner_args=(),
+        devices=devices_list,
+        desc="tilt-series alignment",
+    )
 
     # Convert results to dictionary of losses
     losses = {result["name"]: result["final_loss"] for result in results}
