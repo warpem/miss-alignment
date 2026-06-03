@@ -382,15 +382,12 @@ def train_miss_align(
         start_iter, training_directory, model_training_config["model_checkpoint"]
     )
 
-    # make copies of the xml files and model we're starting from
+    # make copies of the xml files we're starting from
     iteration_directory = training_directory / ("iter" + str(start_iter))
     iteration_directory.mkdir(parents=True, exist_ok=True)
     for xml_file in training_directory.glob("*.xml"):
         destination = iteration_directory / xml_file.name
         copyfile(xml_file, destination)
-
-    if training_model_path is not None:
-        copyfile(training_model_path, iteration_directory / "model.ckpt")
 
     for x in range(start_iter, end_iter):
         # ============================================================
