@@ -101,7 +101,7 @@ def run_alignment_parallel(
         runner=gpu_runner,
         runner_args=(),
         devices=devices_list,
-        desc="tilt-series alignment",
+        desc="Tilt series alignment",
     )
 
     # Convert results to dictionary of losses
