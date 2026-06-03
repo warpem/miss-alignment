@@ -1,12 +1,9 @@
 """Preprocessing utilities for tilt-series alignment."""
 
-import multiprocessing as mp
-import sys
-from concurrent.futures import ProcessPoolExecutor
+import queue
 from pathlib import Path
 
-from tqdm import tqdm
-
+from ._parallel import run_device_pool
 from .data.io import TiltSeriesData
 
 
@@ -77,10 +74,31 @@ def _run_cross_correlation_single(
     return float(pretilt)
 
 
+def _cross_correlation_runner(
+    device: int | None,
+    task_queue,
+    result_queue,
+    lowpass_cutoff: float,
+    pretilt_search_range: tuple[float, float],
+) -> None:
+    """Pull tilt-series off the queue and align them on a single device."""
+    import torch
+
+    torch.set_num_threads(1)
+    while True:
+        try:
+            xml_file = task_queue.get_nowait()
+        except queue.Empty:
+            break
+        _run_cross_correlation_single(
+            xml_file, device, lowpass_cutoff, pretilt_search_range
+        )
+        result_queue.put_nowait(xml_file.stem)
+
+
 def run_cross_correlation_alignment_parallel(
     training_directory: Path,
     devices: list[int] | None = None,
-    n_processes: int = 4,
     lowpass_cutoff: float = 0.25,
     pretilt_search_range: tuple[float, float] = (-30.0, 30.0),
 ) -> None:
@@ -96,10 +114,8 @@ def run_cross_correlation_alignment_parallel(
     training_directory : Path
         Directory containing XML metadata files for tilt-series.
     devices : list[int] | None, optional
-        List of CUDA device indices to distribute work across. If None, uses
-        default device assignment.
-    n_processes : int, optional
-        Number of parallel processes to use (default: 4).
+        CUDA device indices to distribute work across (one worker process per
+        unique device). If None, a single default-device worker is used.
     lowpass_cutoff : float, optional
         Low-pass filter cutoff frequency (default: 0.25).
     pretilt_search_range : tuple[float, float], optional
@@ -117,36 +133,17 @@ def run_cross_correlation_alignment_parallel(
         f"{pretilt_search_range[0]}° to {pretilt_search_range[1]}°"
     )
     print(f"  Low-pass cutoff: {lowpass_cutoff}")
-    print(f"  Using {n_processes} parallel processes")
     if devices:
         print(f"  Distributing across devices: {devices}\n")
     else:
         print("  Using default device assignment\n")
 
-    # Use explicit spawn context to avoid CUDA issues with fork
-    ctx = mp.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=n_processes, mp_context=ctx) as executor:
-        # Submit all tasks with round-robin device assignment
-        futures = []
-        for i, xml_file in enumerate(xml_files):
-            device = devices[i % len(devices)] if devices else None
-            future = executor.submit(
-                _run_cross_correlation_single,
-                xml_file,
-                device,
-                lowpass_cutoff,
-                pretilt_search_range,
-            )
-            futures.append(future)
-
-        for future in tqdm(
-            futures,
-            desc="Cross-correlation alignment",
-            unit="tilt series",
-            file=sys.stdout,
-            disable=None,  # auto-disable when stdout is not a TTY (e.g. log file)
-        ):
-            # This will raise any exception that occurred in the worker
-            future.result()
+    run_device_pool(
+        jobs=xml_files,
+        runner=_cross_correlation_runner,
+        runner_args=(lowpass_cutoff, pretilt_search_range),
+        devices=devices,
+        desc="Cross-correlation alignment",
+    )
 
     print("\nCross-correlation alignment complete!\n")

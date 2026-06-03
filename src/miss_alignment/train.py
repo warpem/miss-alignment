@@ -348,7 +348,6 @@ def train_miss_align(
         prepare_stacks_parallel(
             training_directory=training_directory,
             desired_pixel_size=prepare_stacks,
-            n_processes=4,
             devices=devices_alignment,
         )
 
@@ -373,7 +372,6 @@ def train_miss_align(
             run_cross_correlation_alignment_parallel(
                 training_directory=training_directory,
                 devices=devices_alignment,
-                n_processes=4,
             )
 
     start_iter = start_at_iteration
