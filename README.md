@@ -5,6 +5,10 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/miss-alignment.svg?color=green)](https://python.org)
 [![CI](https://github.com/warpem/miss-alignment/actions/workflows/ci.yml/badge.svg)](https://github.com/warpem/miss-alignment/actions/workflows/ci.yml)
 
+![260_etomo_vs_3x3](docs/images/260_etomo_vs_3x3.gif)
+
+Better alignment = cleaner tomograms. GIF shows a denoised reconstruction after patch tracking alignment and miss-alignment.
+
 ## Installation
 
 Installation is limited at the moment to a specific python, CUDA, and torch version. This might be fixed at some point in the future. For now, its easiest to set everything up in a conda environment.
