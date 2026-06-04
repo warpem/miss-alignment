@@ -176,6 +176,12 @@ class TestReconstructionPoolDataset:
         result = dataset._normalize(volume)
         assert torch.all(result == 0.0)
 
+    def test_normalize_near_zero_std(self, dataset):
+        """Test normalization with near-zero std produces finite values."""
+        volume = torch.ones(10) + torch.randn(10) * 1e-9
+        result = dataset._normalize(volume)
+        assert torch.all(torch.isfinite(result))
+
     @patch("miss_alignment.data.training_dataset.random_contrast")
     @patch("miss_alignment.data.training_dataset.random_edge_mask")
     @patch("miss_alignment.data.training_dataset.random_cube_mask")
