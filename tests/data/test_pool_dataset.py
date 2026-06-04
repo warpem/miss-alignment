@@ -171,11 +171,16 @@ class TestReconstructionPoolDataset:
         assert torch.abs(torch.std(normalized) - 1.0) < 1e-6
 
     def test_normalize_constant_volume(self, dataset):
-        """Test normalization with constant volume (std=0)."""
+        """Test normalization with constant volume (std=0) returns zeros."""
         volume = torch.ones(10)
+        result = dataset._normalize(volume)
+        assert torch.all(result == 0.0)
 
-        with pytest.raises(ValueError):
-            dataset._normalize(volume)
+    def test_normalize_near_zero_std(self, dataset):
+        """Test normalization with near-zero std produces finite values."""
+        volume = torch.ones(10) + torch.randn(10) * 1e-9
+        result = dataset._normalize(volume)
+        assert torch.all(torch.isfinite(result))
 
     @patch("miss_alignment.data.training_dataset.random_contrast")
     @patch("miss_alignment.data.training_dataset.random_edge_mask")

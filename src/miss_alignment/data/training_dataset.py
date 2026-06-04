@@ -143,8 +143,4 @@ class ReconstructionPoolDataset(Dataset):
 
     def _normalize(self, volume: torch.Tensor) -> torch.Tensor:
         mean, std = torch.mean(volume), torch.std(volume)
-        if std == 0.0:
-            raise ValueError(
-                "Cannot normalize patch because the standard deviation is 0."
-            )
-        return (volume - mean) / std
+        return (volume - mean) / std.clamp(min=1e-6)
