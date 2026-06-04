@@ -31,9 +31,9 @@
 | src/miss\_alignment/models/models.py                 |      184 |      149 |     19% |50-53, 76-122, 140-155, 159-160, 164-190, 205-294, 299-305, 320-345, 350-351, 371-377, 381, 385-398, 409-419, 423-440, 444-445, 462-467, 471-491, 501-523 |
 | src/miss\_alignment/prepare\_stacks.py               |       46 |       36 |     22% |37-61, 85-102, 116-125, 155-173 |
 | src/miss\_alignment/preprocessing.py                 |        4 |        0 |    100% |           |
-| src/miss\_alignment/train.py                         |      164 |      107 |     35% |33, 43-45, 68-73, 169-287, 337-521 |
+| src/miss\_alignment/train.py                         |      166 |      108 |     35% |34, 44-46, 69-74, 170-299, 349-533 |
 | src/miss\_alignment/utils.py                         |       22 |        2 |     91% |    57, 61 |
-| **TOTAL**                                            | **1852** |  **863** | **53%** |           |
+| **TOTAL**                                            | **1854** |  **864** | **53%** |           |
 
 
 ## Setup coverage badge
