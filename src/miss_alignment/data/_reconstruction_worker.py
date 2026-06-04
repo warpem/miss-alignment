@@ -381,11 +381,11 @@ def _create_pool_reconstruction(
         anchor_base = misaligned.clone()
         anchor_label = -1
 
-    # Generate 2 triplets with all mirror combinations
+    # Generate 2 triplets with randomly sampled mirror combinations code samples two mirror combinations rather than all eight
     triplets = []
     for i_batch in range(n_particles):
         combinations_subset = random.sample(MIRROR_COMBINATIONS, 2)
-        for i, mirror_combo in enumerate(combinations_subset):
+        for mirror_combo in combinations_subset:
             # Apply same mirror to positive and negative
             mirrored_aligned = apply_mirror(
                 aligned[i_batch].clone(), mirror_combo
@@ -395,7 +395,7 @@ def _create_pool_reconstruction(
             ).cpu()
 
             # Pick a different mirror for anchor
-            other_combos = [c for j, c in enumerate(MIRROR_COMBINATIONS) if j != i]
+            other_combos = [c for c in MIRROR_COMBINATIONS if c != mirror_combo]
             anchor_mirror = random.choice(other_combos)
             mirrored_anchor = apply_mirror(
                 anchor_base[i_batch].clone(), anchor_mirror
