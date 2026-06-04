@@ -1,6 +1,7 @@
 import logging
 import os
 import socket
+import warnings
 from pathlib import Path
 from shutil import copyfile
 from typing import Optional
@@ -174,6 +175,17 @@ def _training_worker(
     # Spawned worker: re-apply logging config (env vars survive the spawn,
     # runtime logging config does not) and quiet Lightning's INFO banners.
     configure_logging()
+
+    # Suppress Lightning's "srun is available but not used" warning.
+    # LightningEnvironment prevents SLURM from controlling rank assignment,
+    # but SLURMEnvironment.detect() still fires during Trainer init and warns
+    # whenever srun is in PATH regardless of the configured cluster environment.
+    warnings.filterwarnings(
+        "ignore",
+        message=".*srun.*",
+        category=UserWarning,
+        module=r"lightning\..*",
+    )
 
     torch.set_num_threads(1)
     torch.set_float32_matmul_precision("medium")

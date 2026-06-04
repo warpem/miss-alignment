@@ -82,7 +82,7 @@ python -m pip install -e .[dev,test]
    - `ReconstructionPoolDataset`: Consumes from a pool of pre-computed 3D patches
    - `shift_generation.py`: Creates synthetic alignment errors (trajectories, jitter, outliers, fractures) for training data
    - `_reconstruction_worker.py`: Multiprocessing workers that generate 3D reconstruction patches in parallel
-   - **Architecture note**: Uses a producer-consumer pattern where reconstruction workers populate a temporary pool directory that the dataloader consumes from
+   - **Architecture note**: Uses a producer-consumer pattern where reconstruction workers populate a temporary pool directory that the dataloader consumes from. In DDP training, only rank 0 spawns reconstruction workers; all ranks share the same pool directory (deterministic hash of the training directory path). Non-zero ranks skip worker spawning but read from the shared pool.
 
 3. **`alignment/`** - Tilt-series alignment optimization
    - `tilt_series.py`: Core optimization logic using gradient descent on shift parameters
