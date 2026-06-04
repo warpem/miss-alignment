@@ -6,7 +6,7 @@ miss-alignment works best when started from an initial patch-tracking alignment 
 
 ### 2. Update Warp XML attributes
 
-Before running miss-alignment, two attributes of the Warp XML files need to be updated (this step may become unnecessary in future Warp releases). A helper script is available as a [gist](https://gist.github.com/McHaillet/117b321f504ac54d2f082bbe9bb01f16). Copy it into your `warp_tiltseries/` folder and update the tomogram shape, image shape, and pixel size at the top to match your dataset. The tomogram shape should tightly fit your sample to avoid training on empty regions — when samples vary in thickness, use the thickest one as the reference (similar to AreTomo).
+Before running miss-alignment, two attributes of the Warp XML files need to be updated (this step may become unnecessary in future Warp releases). A helper script is available as a [gist](https://gist.github.com/McHaillet/117b321f504ac54d2f082bbe9bb01f16). Copy it into your `warp_tiltseries/` folder and update the tomogram shape, image shape, and pixel size at the top to match your dataset. The tomogram shape should tightly fit your sample in all three dimensions (X, Y, Z) to avoid training on empty regions — when samples vary in thickness, use the thickest one as the reference (similar to AreTomo).
 
 Then run:
 ```
