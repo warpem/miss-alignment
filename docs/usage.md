@@ -98,7 +98,7 @@ miss-alignment \
   multiple tasks would start independent copies that each spawn their own workers. Run
   the command directly — no `srun` prefix is needed. The cluster environment is pinned
   to Lightning's `LightningEnvironment`, so SLURM's `SLURM_PROCID`/`SLURM_NTASKS` are
-  ignored and no "srun available but not used" warning is emitted.
+  ignored and the "srun available but not used" warning is suppressed.
 
 - **Temporary storage**: The reconstruction pool is written to `$TMPDIR` (defaulting to
   `/tmp`). On clusters where `/tmp` is shared or small, set `TMPDIR` to a local scratch
@@ -119,3 +119,48 @@ miss-alignment \
   to `available_cpus // n_training_devices` (respecting the SLURM `--cpus-per-task`
   cpuset via `sched_getaffinity`). Override it by exporting `TORCHINDUCTOR_COMPILE_THREADS`
   yourself.
+
+## Troubleshooting
+
+### NCCL hang with multiple GPUs on HPC servers
+
+**Symptom**: training hangs and eventually crashes with a message like:
+
+```
+ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress
+in monitoring enqueued collectives.
+...
+ProcessExitedException: process 1 terminated with signal SIGABRT
+```
+
+**Cause**: On servers with datacenter GPUs (L40S, A100, H100, etc.), multiple GPUs are
+often split across two PCIe switches connected to different NUMA nodes. When two training
+GPUs sit on different switches, data between them has to cross the CPU's PCIe root
+complex — a path NCCL tries to use for peer-to-peer transfers, but which can stall
+depending on the driver and NCCL version. Consumer workstations (RTX 3080/3090/4090)
+typically put all GPUs on the same switch, so this problem rarely appears there.
+
+**Diagnose**: run the following on the node where you run miss-alignment:
+
+```bash
+nvidia-smi topo -m
+```
+
+Look at the cell for your two training GPUs (e.g. GPU0 × GPU1). A value of `SYS` or
+`NODE` (rather than `PIX` — same switch) means P2P transfers cross a PCIe bridge and
+may trigger the hang.
+
+**Fix**: add `NCCL_P2P_DISABLE=1` to your command to force NCCL to use the
+shared-memory transport instead:
+
+```bash
+NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    miss-alignment --config-file config.yaml \
+    --training-devices 0,1 \
+    --reconstruction-devices 2,2,2,3,3,3 \
+    --dataloaders-per-trainer 5 \
+    --start-at-iteration 0
+```
+
+The shared-memory path is slightly lower bandwidth than direct P2P, but is stable across
+all PCIe topologies and typically has negligible impact on overall training time.
