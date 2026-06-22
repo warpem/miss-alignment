@@ -30,7 +30,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: 🐍 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -74,7 +74,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
