@@ -22,7 +22,7 @@ conda activate miss-alignment
 
 We need to fix some GPU dependencies for accelerated reconstruction:
 ```
-python -m pip install torch==2.8.0 numpy
+python -m pip install torch==2.8.0
 python -m pip install torch-projectors --index-url https://warpem.github.io/torch-projectors/cu129/simple/
 ```
 
@@ -41,9 +41,13 @@ Check that the CLI shows up with:
 miss-alignment --help
 ```
 
+This lists the available commands (`train` and `infer`); run
+`miss-alignment train --help` or `miss-alignment infer --help` for details on
+each.
+
 ## How to run?
 
-See the docs/ folder for some barebones instructions. This will be improved soon.
+See [docs/usage.md](docs/usage.md) for instructions.
 
 ## Changelog
 

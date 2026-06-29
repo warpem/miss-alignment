@@ -18,7 +18,7 @@ from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
-from .utils import configure_logging
+from .utils import configure_logging, parse_device_list, sync_start_iteration_xmls
 from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
@@ -27,11 +27,6 @@ from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
 
 logger = logging.getLogger(__name__)
-
-
-def parse_device_list(value: str) -> list[int]:
-    """Parse comma-separated device list like '0,1,2' into [0, 1, 2]."""
-    return [int(x.strip()) for x in value.split(",")]
 
 
 def _available_cpus() -> int:
@@ -108,33 +103,6 @@ def _resolve_start_checkpoint(
         "training will start from random weights."
     )
     return None
-
-
-def _sync_start_iteration_xmls(start_iter: int, training_directory: Path) -> None:
-    """Align the working XMLs with the ``iter{start_iter}/`` snapshot.
-
-    iter 0 (fresh run): back up the original alignments from the training
-    directory into ``iter0/`` as the baseline.
-
-    Resuming (``start_iter > 0``): restore the working alignments *from*
-    ``iter{start_iter}/`` (written at the end of the previous iteration) back
-    into the training directory, so the run continues from the correct state
-    even if a previous attempt crashed partway through this iteration.
-    """
-    iteration_directory = training_directory / f"iter{start_iter}"
-
-    if start_iter == 0:
-        iteration_directory.mkdir(parents=True, exist_ok=True)
-        for xml_file in training_directory.glob("*.xml"):
-            copyfile(xml_file, iteration_directory / xml_file.name)
-    else:
-        if not iteration_directory.is_dir():
-            raise FileNotFoundError(
-                f"Cannot resume at iteration {start_iter}: "
-                f"{iteration_directory} does not exist."
-            )
-        for xml_file in iteration_directory.glob("*.xml"):
-            copyfile(xml_file, training_directory / xml_file.name)
 
 
 def _training_worker(
@@ -343,7 +311,15 @@ def train_miss_align(
         "This performs coarse alignment with pretilt estimation.",
     ),
 ) -> None:
-    """Train MissAlignment on a dataset using configuration from a YAML file."""
+    """Iteratively train and realign a dataset over a series of coarse-to-fine
+    macro-iterations.
+
+    Each macro-iteration runs two phases: first a model is trained to score
+    reconstruction quality, then that model (with frozen weights) optimizes the
+    tilt-series alignment by gradient descent. The aligned output of one
+    macro-iteration becomes the input to the next, and the `iteration_settings`
+    schedule in the config moves from coarse (downsampled) to fine alignment.
+    """
 
     # honor MISS_ALIGNMENT_LOG_LEVEL and quiet Lightning's banners
     configure_logging()
@@ -446,7 +422,7 @@ def train_miss_align(
 
     # iter 0 snapshots the input alignments as a baseline; resuming restores the
     # working alignments from that iteration's snapshot.
-    _sync_start_iteration_xmls(start_iter, training_directory)
+    sync_start_iteration_xmls(start_iter, training_directory)
 
     for x in range(start_iter, end_iter):
         # ============================================================
