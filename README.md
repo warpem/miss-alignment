@@ -41,6 +41,10 @@ Check that the CLI shows up with:
 miss-alignment --help
 ```
 
+This lists the available commands (`train` and `infer`); run
+`miss-alignment train --help` or `miss-alignment infer --help` for details on
+each.
+
 ## How to run?
 
 See the docs/ folder for some barebones instructions. This will be improved soon.
