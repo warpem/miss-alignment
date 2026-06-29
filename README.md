@@ -22,7 +22,7 @@ conda activate miss-alignment
 
 We need to fix some GPU dependencies for accelerated reconstruction:
 ```
-python -m pip install torch==2.8.0 numpy
+python -m pip install torch==2.8.0
 python -m pip install torch-projectors --index-url https://warpem.github.io/torch-projectors/cu129/simple/
 ```
 
