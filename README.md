@@ -47,7 +47,7 @@ each.
 
 ## How to run?
 
-See the docs/ folder for some barebones instructions. This will be improved soon.
+See [docs/usage.md](docs/usage.md) for instructions.
 
 ## Changelog
 
