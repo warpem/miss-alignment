@@ -2,7 +2,7 @@
 
 ### 1. Initial alignment
 
-miss-alignment works best when started from an initial patch-tracking alignment produced by eTomo. The WarpTools commands for this are available as a [gist](https://gist.github.com/McHaillet/74596b3bea760001fd253de933baafe6). Patch tracking followed by the `autolevel` command gives solid starting alignments. You may need to adjust the patch size depending on your pixel size — a value of 1000 works well at 1.7 Å/px, while the default of 500 suits 1.0 Å/px data.
+miss-alignment starts from an initially coarse aligned dataset. WarpTools provides some wrappers that simultaneously run coarse alignment and average the tilt axis angle over the whole dataset. Some WarpTools commands for this are available as a [gist](https://gist.github.com/McHaillet/74596b3bea760001fd253de933baafe6) using patch tracking in etomo (you can also use AreTomo). You may need to adjust the patch size depending on your pixel size — a value of 1000 works well at 1.7 Å/px, while the default of 500 suits 1.0 Å/px data. Usually, patch tracking followed by the `autolevel` command give solid starting alignments for MissAlignment to refine further. 
 
 ### 2. Update Warp XML attributes
 
