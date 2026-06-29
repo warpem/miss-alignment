@@ -46,6 +46,10 @@ def infer_miss_align(
     iteration it loads the model that a previous ``train`` run saved at
     ``<model_run_directory>/iter{N}/model.ckpt`` and runs only the alignment
     phase, following the ``iteration_settings`` schedule from the config.
+
+    Alignment is automatically spread over all visible GPUs; to limit this,
+    set ``CUDA_VISIBLE_DEVICES`` to the subset of devices that should be used
+    (not needed under a SLURM submission, which already scopes visible GPUs).
     """
 
     # honor MISS_ALIGNMENT_LOG_LEVEL and quiet Lightning's banners

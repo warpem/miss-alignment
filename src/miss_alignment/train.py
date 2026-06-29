@@ -311,7 +311,15 @@ def train_miss_align(
         "This performs coarse alignment with pretilt estimation.",
     ),
 ) -> None:
-    """Train MissAlignment on a dataset using configuration from a YAML file."""
+    """Iteratively train and realign a dataset over a series of coarse-to-fine
+    macro-iterations.
+
+    Each macro-iteration runs two phases: first a model is trained to score
+    reconstruction quality, then that model (with frozen weights) optimizes the
+    tilt-series alignment by gradient descent. The aligned output of one
+    macro-iteration becomes the input to the next, and the ``iteration_settings``
+    schedule in the config moves from coarse (downsampled) to fine alignment.
+    """
 
     # honor MISS_ALIGNMENT_LOG_LEVEL and quiet Lightning's banners
     configure_logging()
