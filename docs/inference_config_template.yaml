@@ -1,0 +1,23 @@
+general:
+  # MissAlignment inference: reuse a previous run's models to align a new dataset.
+  # No model is trained; for iteration N the model at
+  # <model_run_directory>/iterN/model.ckpt is loaded and applied.
+  data_directory: /data/newset/          # tilt-series to align; aligned output written here
+  model_run_directory: /data/prevrun/    # finished run holding iter1/.. iterN/model.ckpt
+  apply_ctf: False                        # leave False; enabling CTF doubles processing time
+  iteration_settings:                    # length must not exceed the models available in the run
+    # alignment modes: "global" (single pass), "anchoring" (iterative), "spline" (coarse-to-fine)
+    - { downsample: 3, alignment: anchoring }
+    - { downsample: 2, alignment: anchoring }
+    - { downsample: 1, alignment: global }
+    - { downsample: 1, alignment: global }
+    - { downsample: 1, alignment: [3, 3] }  # local refinement with a 3x3 image warping grid
+    - { downsample: 1, alignment: [3, 3] }
+    - { downsample: 1, alignment: [3, 3] }
+    - { downsample: 1, alignment: [3, 3] }
+  seed: 45132
+
+tilt_series_alignment:
+  patch_size: 96      # same as training patch size
+  patch_overlap: 0.1  # tolerated overlap between patches used for optimizing the alignment
+  batch_size: 32      # amount of patches simultaneously reconstructed in memory

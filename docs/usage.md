@@ -26,11 +26,11 @@ Place a miss-alignment config file in the `warp_tiltseries/` directory — use [
 
 With 4 GPUs (12–24 GB VRAM each, e.g. RTX 3080/3090/4090):
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment --config-file /path/to/config.yaml --training-devices 0,1 --reconstruction-devices 2,2,2,3,3,3 --dataloaders-per-trainer 5 --start-at-iteration 0 --prepare-stacks 10.0
+CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment train --config-file /path/to/config.yaml --training-devices 0,1 --reconstruction-devices 2,2,2,3,3,3 --dataloaders-per-trainer 5 --start-at-iteration 0 --prepare-stacks 10.0
 ```
 With a single large GPU (≥40 GB VRAM, e.g. A100 40 GB), since training and reconstruction workers share the same device:
 ```
-OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment --config-file /path/to/config.yaml --training-devices 0 --reconstruction-devices 0,0,0 --dataloaders-per-trainer 5 --start-at-iteration 0 --prepare-stacks 10.0
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment train --config-file /path/to/config.yaml --training-devices 0 --reconstruction-devices 0,0,0 --dataloaders-per-trainer 5 --start-at-iteration 0 --prepare-stacks 10.0
 ```
 These are just two examples — `--training-devices` and `--reconstruction-devices` can be freely mixed and matched to make the best use of whatever GPUs are available on your system.
 
@@ -39,6 +39,18 @@ If the run is interrupted, it can be resumed at any iteration with `--start-at-i
 ### 5. Post-processing
 
 After miss-alignment finishes, update the CTF parameters in WarpTools (`ts_ctf`) and then reconstruct the tomograms (`ts_reconstruct`) to evaluate the results.
+
+## Inference mode
+
+Once you have a finished run, its per-iteration models (`iter1/model.ckpt … iterN/model.ckpt`) can be reused to align a *new* dataset without retraining. The `infer` command runs only the alignment phase: for each iteration it loads the model from the previous run and applies it, following the `iteration_settings` schedule in the config.
+
+Use [inference_config_template.yaml](inference_config_template.yaml) as a starting point. It is a slimmed-down config (no `model_training`, `data_loading`, or `shift_generation` sections). Set `data_directory` to the new dataset, `model_run_directory` to the finished run, and make sure `iteration_settings` does not list more iterations than the run has models for.
+
+```
+CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment infer --config-file /path/to/inference_config.yaml --prepare-stacks 10.0
+```
+
+Alignment uses all visible GPUs. Each iteration writes its result snapshot to `data_directory/iterN/`, including a `model_source.txt` recording which checkpoint was applied. Like `train`, an interrupted run can be resumed with `--start-at-iteration N`.
 
 ## Running on SLURM
 
@@ -73,7 +85,7 @@ export MKL_NUM_THREADS=1
 
 # export TMPDIR=/scratch/$SLURM_JOB_ID
 
-miss-alignment \
+miss-alignment train \
     --config-file config.yaml \
     --training-devices 0,1 \
     --reconstruction-devices 2,2,2,3,3,3 \
@@ -155,7 +167,7 @@ shared-memory transport instead:
 
 ```bash
 NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-    miss-alignment --config-file config.yaml \
+    miss-alignment train --config-file config.yaml \
     --training-devices 0,1 \
     --reconstruction-devices 2,2,2,3,3,3 \
     --dataloaders-per-trainer 5 \

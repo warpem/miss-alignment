@@ -23,9 +23,8 @@ from miss_alignment.train import (
     _find_free_port,
     _resolve_start_checkpoint,
     _set_ddp_env,
-    _sync_start_iteration_xmls,
 )
-from miss_alignment.utils import is_rank_zero
+from miss_alignment.utils import is_rank_zero, sync_start_iteration_xmls
 
 
 class _TinyDataset(Dataset):
@@ -179,7 +178,7 @@ def test_sync_start_iteration_xmls_iter0_backs_up(tmp_path):
     (tmp_path / "a.xml").write_text("orig-a")
     (tmp_path / "b.xml").write_text("orig-b")
 
-    _sync_start_iteration_xmls(0, tmp_path)
+    sync_start_iteration_xmls(0, tmp_path)
 
     assert (tmp_path / "iter0" / "a.xml").read_text() == "orig-a"
     assert (tmp_path / "iter0" / "b.xml").read_text() == "orig-b"
@@ -195,7 +194,7 @@ def test_sync_start_iteration_xmls_resume_restores(tmp_path):
     # the training directory holds stale/partial state from a crashed attempt
     (tmp_path / "a.xml").write_text("stale-a")
 
-    _sync_start_iteration_xmls(2, tmp_path)
+    sync_start_iteration_xmls(2, tmp_path)
 
     assert (tmp_path / "a.xml").read_text() == "iter2-a"
     # the snapshot itself is not modified
@@ -205,4 +204,4 @@ def test_sync_start_iteration_xmls_resume_restores(tmp_path):
 def test_sync_start_iteration_xmls_resume_missing_raises(tmp_path):
     """Resuming at an iteration with no snapshot directory is an error."""
     with pytest.raises(FileNotFoundError, match="Cannot resume at iteration 3"):
-        _sync_start_iteration_xmls(3, tmp_path)
+        sync_start_iteration_xmls(3, tmp_path)

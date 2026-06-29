@@ -13,7 +13,9 @@ __all__ = [
     "__version__",
     "cli",
     "train_miss_align",
+    "infer_miss_align",
 ]
 
 from ._cli import cli
 from .train import train_miss_align
+from .infer import infer_miss_align
