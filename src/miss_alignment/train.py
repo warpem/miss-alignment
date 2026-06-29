@@ -317,7 +317,7 @@ def train_miss_align(
     Each macro-iteration runs two phases: first a model is trained to score
     reconstruction quality, then that model (with frozen weights) optimizes the
     tilt-series alignment by gradient descent. The aligned output of one
-    macro-iteration becomes the input to the next, and the ``iteration_settings``
+    macro-iteration becomes the input to the next, and the `iteration_settings`
     schedule in the config moves from coarse (downsampled) to fine alignment.
     """
 
