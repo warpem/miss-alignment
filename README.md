@@ -16,7 +16,7 @@ Installation is limited at the moment to a specific python, CUDA, and torch vers
 First create an environment called `miss-alignment` with cuda-toolkit 12.9 and activate it:
 
 ```
-conda create -n miss-alignment -c conda-forge python=3.11 cuda-toolkit=12.9 -y
+conda create -n miss-alignment -c conda-forge python=3.12 cuda-toolkit=12.9 -y
 conda activate miss-alignment
 ```
 
