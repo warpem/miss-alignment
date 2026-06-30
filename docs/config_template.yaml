@@ -44,6 +44,7 @@ shift_generation:
   outlier_max_shift: 20.0         # outlier can maximally go to this value
   fracture_probability: .5
   fracture_max_shift: 20.0       # specific strong shifts for high tilt images up to this value
+  tilt_axis_angle_max: 5.0       # tilt-axis angle error sampled from +/- this value (degrees), optimized in global/anchoring/spline modes
 
 tilt_series_alignment:
   patch_size: 96      # same as training patch size

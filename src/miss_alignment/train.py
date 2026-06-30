@@ -20,7 +20,7 @@ from lightning.pytorch.strategies import DDPStrategy
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .utils import configure_logging, parse_device_list, sync_start_iteration_xmls
 from .data import MissAlignmentDataModule
-from .data.shift_generation import create_default_generator
+from .data.shift_generation import create_misalignment_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
@@ -243,7 +243,7 @@ def _training_worker(
     # Each GPU uses the full batch size (effective batch size scales with GPUs)
     with MissAlignmentDataModule(
         training_directory,
-        create_default_generator(**shift_generation_config),
+        create_misalignment_generator(**shift_generation_config),
         reconstruction_accelerators=devices_reconstruction,
         n_training_devices=len(devices_training),
         batch_size=data_module_config["batch_size"],

@@ -74,6 +74,9 @@ def optimize_shifts(
     # Store original tilt series state in case all retries fail
     original_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
     original_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
+    # The tilt-axis angle is only optimized in "global" mode; cloning it here is
+    # a no-op for the warp settings (the inner function leaves it untouched).
+    original_tilt_axis_angles = tilt_series.tilt_axis_angles.clone()
 
     # Store original grid states if applicable
     # We need to store complete grid state (dimensions, values, margins)
@@ -159,6 +162,7 @@ def optimize_shifts(
                 # Reset tilt series to original state before retry
                 tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y.clone()
                 tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x.clone()
+                tilt_series.tilt_axis_angles = original_tilt_axis_angles.clone()
 
                 if setting != "global" and len(setting) == 2:
                     if original_grid_x is not None:
@@ -197,6 +201,7 @@ def optimize_shifts(
     # All retries failed, restore original state and return failure
     tilt_series.tilt_axis_offset_y = original_tilt_axis_offset_y
     tilt_series.tilt_axis_offset_x = original_tilt_axis_offset_x
+    tilt_series.tilt_axis_angles = original_tilt_axis_angles
 
     if setting != "global" and len(setting) == 2:
         if original_grid_x is not None:
@@ -271,6 +276,9 @@ def _optimize_shifts_inner(
         # store the initial tilt_series alignment
         initial_tilt_axis_offset_y = tilt_series.tilt_axis_offset_y.clone()
         initial_tilt_axis_offset_x = tilt_series.tilt_axis_offset_x.clone()
+        # the tilt-axis angle is a single value per tilt series; optimize one
+        # scalar delta added uniformly to all tilts
+        initial_tilt_axis_angles = tilt_series.tilt_axis_angles.clone()
 
         # Find the index of the tilt closest to zero degrees for recentering
         zero_tilt_idx = tilt_series.angles.abs().argmin()
@@ -288,7 +296,13 @@ def _optimize_shifts_inner(
             requires_grad=True,
             device=device,
         )
-        parameters = [shifts_y, shifts_x]
+        # single scalar tilt-axis angle delta (degrees), jointly optimized
+        tilt_axis_angle_delta = torch.zeros(
+            1,
+            requires_grad=True,
+            device=device,
+        )
+        parameters = [shifts_y, shifts_x, tilt_axis_angle_delta]
     elif len(setting) == 2:  # TODO add case of starting from existent grid
         # movement grids - these should receive gradients
         grid_dims = [setting[0], setting[1], tilt_series.n_tilts]
@@ -351,7 +365,11 @@ def _optimize_shifts_inner(
         # If found, return large penalty to make line search reject this step
         nan_in_params = False
         if setting == "global":
-            if torch.isnan(shifts_x).any() or torch.isnan(shifts_y).any():
+            if (
+                torch.isnan(shifts_x).any()
+                or torch.isnan(shifts_y).any()
+                or torch.isnan(tilt_axis_angle_delta).any()
+            ):
                 nan_in_params = True
         elif len(setting) == 2:
             if torch.isnan(leaf_variable_x).any() or torch.isnan(leaf_variable_y).any():
@@ -371,6 +389,9 @@ def _optimize_shifts_inner(
         if setting == "global":
             tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y
             tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x
+            tilt_series.tilt_axis_angles = (
+                initial_tilt_axis_angles + tilt_axis_angle_delta
+            )
 
         batches = int(math.ceil(positions.shape[0] / batch_size))
         total_samples = positions.shape[0]
@@ -451,6 +472,11 @@ def _optimize_shifts_inner(
         # remove gradients and finalize global shifts
         tilt_series.tilt_axis_offset_y = initial_tilt_axis_offset_y + shifts_y.detach()
         tilt_series.tilt_axis_offset_x = initial_tilt_axis_offset_x + shifts_x.detach()
+        # finalize the single tilt-axis angle delta before recentering (the
+        # recentering below reads tilt_axis_angles to build projection matrices)
+        tilt_series.tilt_axis_angles = (
+            initial_tilt_axis_angles + tilt_axis_angle_delta.detach()
+        )
 
         # Recenter alignment: set the shift at zero tilt to match initial zero tilt
         # Get the current shift at the zero tilt

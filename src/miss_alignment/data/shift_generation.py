@@ -339,6 +339,68 @@ def create_default_generator(
     return ShiftGenerator(shift_configs, ensure_at_least_one=True)
 
 
+# Probabilities for the three misalignment modes. Internal (not configurable):
+# half the examples perturb both shifts and the tilt-axis angle, with the
+# remaining quarter each kept shift-only or angle-only. This guarantees a steady
+# supply of angle-only examples without starving the shift-only case.
+_MODE_BOTH = 0.5
+_MODE_SHIFT_ONLY = 0.25
+_MODE_ANGLE_ONLY = 0.25
+
+
+class MisalignmentGenerator:
+    """Combine per-tilt shift generation with a per-series tilt-axis-angle error.
+
+    Each call randomly produces one of three misalignment types:
+    - "both": perturb the offsets and the tilt-axis angle
+    - "shift_only": perturb only the offsets (angle delta is 0)
+    - "angle_only": perturb only the tilt-axis angle (offsets are zeroed)
+
+    The tilt-axis angle is treated as a single value per tilt series, so the
+    returned angle delta is a scalar (degrees) added uniformly to all tilts.
+    """
+
+    def __init__(self, shift_generator: ShiftGenerator, tilt_axis_angle_max: float):
+        self.shift_generator = shift_generator
+        self.tilt_axis_angle_max = tilt_axis_angle_max
+
+    def __call__(
+        self, num_points: int, device: str = "cpu"
+    ) -> tuple[torch.Tensor, float]:
+        """Return (shifts_3d, angle_delta_degrees) for a single example."""
+        mode = random.choices(
+            ["both", "shift_only", "angle_only"],
+            weights=[_MODE_BOTH, _MODE_SHIFT_ONLY, _MODE_ANGLE_ONLY],
+        )[0]
+
+        if mode == "angle_only":
+            shifts = torch.zeros((num_points, 3), device=device)
+        else:
+            shifts = self.shift_generator(num_points, device)
+
+        if mode == "shift_only":
+            angle_delta = 0.0
+        else:
+            angle_delta = (random.random() * 2 - 1) * self.tilt_axis_angle_max
+
+        return shifts, angle_delta
+
+
+def create_misalignment_generator(
+    tilt_axis_angle_max: float = 5.0,
+    **shift_kwargs,
+) -> MisalignmentGenerator:
+    """Create a picklable misalignment generator (shifts + tilt-axis angle).
+
+    Wraps the default shift generator with a per-series tilt-axis-angle
+    perturbation sampled from Uniform(-tilt_axis_angle_max, tilt_axis_angle_max)
+    in degrees. Remaining keyword arguments configure the shift generator
+    (see ``create_default_generator``).
+    """
+    shift_generator = create_default_generator(**shift_kwargs)
+    return MisalignmentGenerator(shift_generator, tilt_axis_angle_max)
+
+
 def project_shifts_3d_to_2d(
     shifts_3d: torch.Tensor,  # contains (n, zyx) shifts
     projection_matrices: torch.Tensor,  # contains (n, 2, 3)

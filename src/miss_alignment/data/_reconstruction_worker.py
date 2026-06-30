@@ -343,7 +343,7 @@ def _create_pool_reconstruction(
     r1 = Rz(tilt_series.tilt_axis_angles, zyx=True)
     rotation_matrices = r1 @ r0
     projection_matrices = rotation_matrices[..., 1:3, :3]
-    translations = _generate_translations(
+    translations, tilt_axis_angle_delta = _generate_translations(
         shift_generator, projection_matrices, device=device
     )
     # express translations in angstrom
@@ -359,9 +359,11 @@ def _create_pool_reconstruction(
         angles=rotation_angles,
         oversampling=2.0,
     ).squeeze()
-    # add the extra translations for the misaligned example
+    # add the extra translations and tilt-axis angle error for the misaligned
+    # example (the angle is a single per-series value applied to all tilts)
     tilt_series.tilt_axis_offset_y += translations_angstrom[:, 0]
     tilt_series.tilt_axis_offset_x += translations_angstrom[:, 1]
+    tilt_series.tilt_axis_angles += tilt_axis_angle_delta
     # reconstruct misaligned example with the same rotation
     misaligned = tilt_series.reconstruct_subvolumes_single(
         tilt_data=images,
@@ -394,7 +396,7 @@ def _create_pool_reconstruction(
             mirrored_misaligned = apply_mirror(
                 misaligned[i_batch].clone(), mirror_combo
             ).cpu()
-            
+
             other_combos = [c for c in MIRROR_COMBINATIONS if c != mirror_combo]
             anchor_mirror = random.choice(other_combos)
             mirrored_anchor = apply_mirror(
@@ -412,15 +414,15 @@ def _create_pool_reconstruction(
 
 
 def _generate_translations(
-    generate_shifts: Callable,
+    generate_misalignment: Callable,
     projection_matrices,
     device: str = "cpu",
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, float]:
     n_tilts, y, x = projection_matrices.shape
     if (y, x) != (2, 3):
         raise ValueError("Projection matrices must have shape (2, 3)")
-    # generate two sets of shifts, 3d shifts zyx
-    shifts = generate_shifts(n_tilts, device=device)
+    # generate 3d shifts (zyx) and a scalar tilt-axis angle error (degrees)
+    shifts, tilt_axis_angle_delta = generate_misalignment(n_tilts, device=device)
     shifts = project_shifts_3d_to_2d(shifts, projection_matrices)
 
     # randomly remove x or y shifts
@@ -430,4 +432,4 @@ def _generate_translations(
     elif 0.25 <= die_roll < 0.5:  # set x to 0
         shifts[:, 1] = 0.0
 
-    return shifts
+    return shifts, tilt_axis_angle_delta

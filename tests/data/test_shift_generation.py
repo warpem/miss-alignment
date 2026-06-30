@@ -15,6 +15,8 @@ from miss_alignment.data.shift_generation import (
     JitterGenerator,
     OutlierGenerator,
     create_default_generator,
+    create_misalignment_generator,
+    MisalignmentGenerator,
     project_shifts_3d_to_2d,
 )
 
@@ -393,6 +395,59 @@ class TestDefaultGenerator:
         # Should return zeros since no shifts can be applied
         assert shifts.shape == (num_points, 3)
         assert torch.allclose(shifts, torch.zeros((num_points, 3)))
+
+
+class TestMisalignmentGenerator:
+    """Test the combined shift + tilt-axis-angle misalignment generator."""
+
+    def test_returns_shifts_and_angle(self):
+        """Generator returns a (shifts, angle_delta) tuple."""
+        generator = create_misalignment_generator(tilt_axis_angle_max=5.0)
+        assert isinstance(generator, MisalignmentGenerator)
+
+        num_points = 20
+        shifts, angle_delta = generator(num_points)
+
+        assert shifts.shape == (num_points, 3)
+        assert isinstance(shifts, torch.Tensor)
+        assert isinstance(angle_delta, float)
+
+    def test_angle_only_mode_zeros_shifts(self):
+        """angle_only mode zeroes the shifts and perturbs the angle."""
+        generator = create_misalignment_generator(tilt_axis_angle_max=5.0)
+        with patch("random.choices", return_value=["angle_only"]):
+            shifts, angle_delta = generator(15)
+
+        assert torch.allclose(shifts, torch.zeros_like(shifts))
+        assert abs(angle_delta) <= 5.0
+
+    def test_shift_only_mode_zeros_angle(self):
+        """shift_only mode leaves the angle unchanged and perturbs the shifts."""
+        generator = create_misalignment_generator(tilt_axis_angle_max=5.0)
+        with patch("random.choices", return_value=["shift_only"]):
+            shifts, angle_delta = generator(15)
+
+        assert angle_delta == 0.0
+        # ensure_at_least_one guarantees a non-zero shift
+        assert torch.any(shifts != 0)
+
+    def test_both_mode_perturbs_shifts_and_angle(self):
+        """both mode perturbs the shifts and the angle."""
+        generator = create_misalignment_generator(tilt_axis_angle_max=5.0)
+        with patch("random.choices", return_value=["both"]):
+            shifts, angle_delta = generator(15)
+
+        assert torch.any(shifts != 0)
+        assert abs(angle_delta) <= 5.0
+
+    def test_angle_within_configured_range(self):
+        """Sampled angle deltas always fall within +/- tilt_axis_angle_max."""
+        max_angle = 3.0
+        generator = create_misalignment_generator(tilt_axis_angle_max=max_angle)
+        with patch("random.choices", return_value=["angle_only"]):
+            for _ in range(200):
+                _, angle_delta = generator(10)
+                assert -max_angle <= angle_delta <= max_angle
 
 
 class TestProjectShifts3DTo2D:

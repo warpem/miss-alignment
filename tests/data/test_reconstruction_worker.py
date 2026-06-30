@@ -87,10 +87,10 @@ def mock_tilt_series_data(temp_dir):
 
 @pytest.fixture
 def shift_generator():
-    """Create simple shift generator function."""
+    """Create a simple misalignment generator returning (shifts, angle_delta)."""
 
     def generator(n_tilts, device: str = "cpu"):
-        return torch.randn(n_tilts, 3, device=device)
+        return torch.randn(n_tilts, 3, device=device), 0.0
 
     return generator
 
@@ -371,10 +371,13 @@ class TestGenerateTranslations:
         projection_matrices = rotation_matrices[..., 1:3, :3]
 
         with patch("random.random", return_value=0.6):
-            translations = _generate_translations(shift_generator, projection_matrices)
+            translations, angle_delta = _generate_translations(
+                shift_generator, projection_matrices
+            )
 
         assert translations.shape == (n_tilts, 2)
         assert translations.dtype == torch.float32
+        assert angle_delta == 0.0
 
     def test_translation_masking_y_axis(self, shift_generator):
         """Test that y-axis translations are zeroed when die_roll < 0.25."""
@@ -383,7 +386,9 @@ class TestGenerateTranslations:
         projection_matrices = rotation_matrices[..., 1:3, :3]
 
         with patch("random.random", return_value=0.1):
-            translations = _generate_translations(shift_generator, projection_matrices)
+            translations, _ = _generate_translations(
+                shift_generator, projection_matrices
+            )
 
         assert torch.all(translations[:, 0] == 0.0)
         assert not torch.all(translations[:, 1] == 0.0)
@@ -395,7 +400,9 @@ class TestGenerateTranslations:
         projection_matrices = rotation_matrices[..., 1:3, :3]
 
         with patch("random.random", return_value=0.3):
-            translations = _generate_translations(shift_generator, projection_matrices)
+            translations, _ = _generate_translations(
+                shift_generator, projection_matrices
+            )
 
         assert not torch.all(translations[:, 0] == 0.0)
         assert torch.all(translations[:, 1] == 0.0)

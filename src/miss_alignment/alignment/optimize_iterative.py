@@ -61,6 +61,9 @@ def run_iterative_anchoring(
     best_loss = float("inf")
     best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
     best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
+    # the optimizer also adjusts the single tilt-axis angle, so it must be
+    # reverted alongside the offsets when an iteration does not improve
+    best_tilt_axis_angles = tilt_series.tilt_axis_angles.clone()
 
     while n_unreliable_per_side > 0:
         if _DEBUG:
@@ -120,11 +123,13 @@ def run_iterative_anchoring(
             # Restore best solution
             tilt_series.tilt_axis_offset_x = best_offsets_x.clone()
             tilt_series.tilt_axis_offset_y = best_offsets_y.clone()
+            tilt_series.tilt_axis_angles = best_tilt_axis_angles.clone()
         else:
             # New best - update best loss and offsets (before anchoring)
             best_loss = current_loss
             best_offsets_x = tilt_series.tilt_axis_offset_x.clone()
             best_offsets_y = tilt_series.tilt_axis_offset_y.clone()
+            best_tilt_axis_angles = tilt_series.tilt_axis_angles.clone()
             all_loss_values.extend(loss_values)
             if _DEBUG:
                 print(f"  -> New best loss: {best_loss:.4f}")
@@ -173,6 +178,7 @@ def run_iterative_anchoring(
             print(f"Final worse ({final_loss:.4f} >= {best_loss:.4f}), restoring best")
         tilt_series.tilt_axis_offset_x = best_offsets_x
         tilt_series.tilt_axis_offset_y = best_offsets_y
+        tilt_series.tilt_axis_angles = best_tilt_axis_angles
     else:
         all_loss_values.extend(loss_values)
         if _DEBUG:
