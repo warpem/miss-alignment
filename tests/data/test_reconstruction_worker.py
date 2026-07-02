@@ -740,7 +740,7 @@ class TestReconstructionWorker:
         def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count > 2:  # Create 2 batches (4 calls × 4 triplets = 16 files)
+            if call_count > 2:  # 3 calls x 4 triplets = 12 files
                 stop_event.set()
             return [
                 [(torch.zeros(1), 1), (torch.zeros(1), -1), (torch.zeros(1), 1)]
@@ -766,7 +766,7 @@ class TestReconstructionWorker:
 
         # Check sequential IDs (files are distributed across partitions)
         files = sorted(temp_dir.glob(f"partition_*_worker_{worker_id}_seq_*.pickle"))
-        assert len(files) == 16  # 4 calls × 4 triplets
+        assert len(files) == 12  # 3 calls × 4 triplets
 
         # Extract IDs and verify they're sequential
         ids = []
@@ -776,4 +776,4 @@ class TestReconstructionWorker:
             ids.append(int(id_str))
 
         ids.sort()
-        assert ids == list(range(16))
+        assert ids == list(range(12))
