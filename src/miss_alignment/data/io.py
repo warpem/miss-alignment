@@ -65,6 +65,9 @@ def _load_metadata_and_stack(
     downsample: int = 1,
     retry_on_read_error: bool = False,
 ) -> tuple[TiltSeries, torch.Tensor, float]:
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"XML metadata file not found: {metadata_path}")
+
     # load metadata
     tilt_series = TiltSeries(metadata_path)
     _validate_tilt_series_dimensions(tilt_series, metadata_path)
