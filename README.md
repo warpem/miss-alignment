@@ -19,7 +19,7 @@
 | src/miss\_alignment/data/\_\_init\_\_.py             |        2 |        0 |    100% |           |
 | src/miss\_alignment/data/\_augmentation.py           |       39 |        0 |    100% |           |
 | src/miss\_alignment/data/\_reconstruction\_worker.py |      147 |        0 |    100% |           |
-| src/miss\_alignment/data/io.py                       |       82 |       29 |     65% |44, 48, 52, 57, 151-210 |
+| src/miss\_alignment/data/io.py                       |       84 |       29 |     65% |44, 48, 52, 57, 154-213 |
 | src/miss\_alignment/data/shift\_generation.py        |      124 |        6 |     95% |148, 291-294, 297 |
 | src/miss\_alignment/data/training\_datamodule.py     |      102 |       77 |     25% |41-55, 126-168, 172-173, 177-178, 193-258, 267, 286-310 |
 | src/miss\_alignment/data/training\_dataset.py        |       32 |        0 |    100% |           |
@@ -34,7 +34,7 @@
 | src/miss\_alignment/preprocessing.py                 |        4 |        0 |    100% |           |
 | src/miss\_alignment/train.py                         |      154 |      107 |     31% |39-41, 64-69, 138-267, 325-509 |
 | src/miss\_alignment/utils.py                         |       36 |        3 |     92% |48, 91, 95 |
-| **TOTAL**                                            | **1927** |  **873** | **55%** |           |
+| **TOTAL**                                            | **1929** |  **873** | **55%** |           |
 
 
 ## Setup coverage badge
