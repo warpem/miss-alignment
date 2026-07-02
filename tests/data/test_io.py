@@ -131,6 +131,17 @@ class TestTiltSeriesData:
         assert loaded_images.shape[1] == 50
         assert loaded_images.shape[2] == 50
 
+    def test_load_metadata_and_stack_missing_xml_raises(self, tmp_path):
+        """Loading a non-existent XML file raises FileNotFoundError."""
+        xml_path = tmp_path / "does_not_exist.xml"
+
+        data = TiltSeriesData(
+            xml_metadata_path=xml_path,
+        )
+
+        with pytest.raises(FileNotFoundError, match="does_not_exist.xml"):
+            data.load_metadata_and_stack()
+
 
 class TestRetryOnReadError:
     """Tests for the retry_on_read_error flag in load_metadata_and_stack."""
