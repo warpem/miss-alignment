@@ -185,67 +185,61 @@ def reconstruction_worker(
         # Generate reconstruction and 8 mirrored triplets
         tilt_series, images, pixel_size = tilt_series_fetcher()
 
-        for i in range(2):
-            triplets = _create_pool_reconstruction(
-                tilt_series=tilt_series,
-                images=images,
-                pixel_size=pixel_size,
-                patch_size=patch_size,
-                shift_generator=shift_generator,
-                apply_ctf=apply_ctf,
-                device=device,
-            )
+        triplets = _create_pool_reconstruction(
+            tilt_series=tilt_series,
+            images=images,
+            pixel_size=pixel_size,
+            patch_size=patch_size,
+            shift_generator=shift_generator,
+            apply_ctf=apply_ctf,
+            device=device,
+        )
 
-            # Write each triplet to a separate file
-            for triplet in triplets:
-                # Check the target partition before each write so every
-                # partition is individually guarded regardless of n_partitions
-                partitions_checked = 0
-                while (
-                    _count_partition_files(pool_dir, current_partition)
-                    >= partition_size
-                ):
-                    current_partition = (current_partition + 1) % n_partitions
-                    partitions_checked += 1
-                    if partitions_checked >= n_partitions:
-                        # All partitions full: sleep and retry. Must check
-                        # stop_event here because the outer loop condition
-                        # is never reached while we're stuck in this loop.
-                        if stop_event.is_set():
-                            logger.debug(
-                                f"Reconstruction worker {worker_id} shutting down"
-                            )
-                            return
-                        time.sleep(PAUSE_POLL_INTERVAL)
-                        partitions_checked = 0
-
-                # Convert to fp16 for storage
-                triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
-
-                # Write with atomic rename
-                # File name includes worker_id for uniqueness across workers
-                filename = (
-                    f"partition_{current_partition}_worker_{worker_id}"
-                    f"_seq_{sequential_id}.pickle"
-                )
-                file_path = pool_dir / filename
-                with tempfile.NamedTemporaryFile(
-                    dir=pool_dir,
-                    prefix=f"tmp_partition_{current_partition}_worker_{worker_id}_",
-                    suffix=".pickle",
-                    delete=False,
-                ) as tmp_file:
-                    tmp_path = Path(tmp_file.name)
-                    pickle.dump(triplet_fp16, tmp_file)
-
-                os.chmod(tmp_path, 0o644)
-                tmp_path.rename(file_path)
-
-                # Increment and wrap sequential ID
-                sequential_id = (sequential_id + 1) % MAX_SEQUENTIAL_ID
-
-                # Move to next partition (round-robin)
+        # Write each triplet to a separate file
+        for triplet in triplets:
+            # Check the target partition before each write so every
+            # partition is individually guarded regardless of n_partitions
+            partitions_checked = 0
+            while _count_partition_files(pool_dir, current_partition) >= partition_size:
                 current_partition = (current_partition + 1) % n_partitions
+                partitions_checked += 1
+                if partitions_checked >= n_partitions:
+                    # All partitions full: sleep and retry. Must check
+                    # stop_event here because the outer loop condition
+                    # is never reached while we're stuck in this loop.
+                    if stop_event.is_set():
+                        logger.debug(f"Reconstruction worker {worker_id} shutting down")
+                        return
+                    time.sleep(PAUSE_POLL_INTERVAL)
+                    partitions_checked = 0
+
+            # Convert to fp16 for storage
+            triplet_fp16 = [(vol.half(), label) for vol, label in triplet]
+
+            # Write with atomic rename
+            # File name includes worker_id for uniqueness across workers
+            filename = (
+                f"partition_{current_partition}_worker_{worker_id}"
+                f"_seq_{sequential_id}.pickle"
+            )
+            file_path = pool_dir / filename
+            with tempfile.NamedTemporaryFile(
+                dir=pool_dir,
+                prefix=f"tmp_partition_{current_partition}_worker_{worker_id}_",
+                suffix=".pickle",
+                delete=False,
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                pickle.dump(triplet_fp16, tmp_file)
+
+            os.chmod(tmp_path, 0o644)
+            tmp_path.rename(file_path)
+
+            # Increment and wrap sequential ID
+            sequential_id = (sequential_id + 1) % MAX_SEQUENTIAL_ID
+
+            # Move to next partition (round-robin)
+            current_partition = (current_partition + 1) % n_partitions
 
     logger.debug(f"Reconstruction worker {worker_id} shutting down")
 
@@ -394,7 +388,7 @@ def _create_pool_reconstruction(
             mirrored_misaligned = apply_mirror(
                 misaligned[i_batch].clone(), mirror_combo
             ).cpu()
-            
+
             other_combos = [c for c in MIRROR_COMBINATIONS if c != mirror_combo]
             anchor_mirror = random.choice(other_combos)
             mirrored_anchor = apply_mirror(
