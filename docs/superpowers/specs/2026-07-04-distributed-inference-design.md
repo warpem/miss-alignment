@@ -182,6 +182,7 @@ conda activate miss-alignment
 - All cluster-specific settings (partition, memory, time limit, environment setup) are the user's responsibility in the template
 - Additional `{{custom_var}}` placeholders filled via `MISS_CLUSTER_VAR_<name>=<value>` env vars
 - Rendered scripts are written to `tasks/cluster/worker-<i>.sh`
+- The `{{command}}` is `miss-alignment worker --queue-dir <tasks_dir> --device 0 --worker-id "$(hostname)-$$-<i>"` — the `$(hostname)` and `$$` are expanded by the compute node's shell at runtime, guaranteeing unique, stable worker IDs even across resubmissions
 - One job submitted per tilt-series; job IDs stored for cancellation
 - `shutdown()`: runs configured `cancel` command for each stored job ID; registers SIGINT/SIGTERM handlers so Ctrl-C on the head node cancels the cluster pool
 
@@ -223,7 +224,7 @@ All configuration via environment variables — no new CLI flags on `train` or `
 
 **Modified files:**
 - `src/miss_alignment/alignment/parallel.py` — replace `run_device_pool` delegation with distributed manager call
-- `src/miss_alignment/_parallel.py` — kept for reference, internals superseded by `LocalProvisioner`
 - `src/miss_alignment/_cli.py` — register `worker` subcommand
 
-**Deleted files:** none (old `_parallel.py` left in place until the new path is validated)
+**Deleted files:**
+- `src/miss_alignment/_parallel.py` — superseded by `LocalProvisioner`; deleted once the new path is validated in tests
