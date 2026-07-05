@@ -128,6 +128,7 @@ def evaluate_tilt_series(
     device: str = "cpu",
     initial_reliable_fraction: float = 1 / 2,
     n_control_points: int = 7,
+    model: MissAlignment | None = None,
 ) -> tuple[Path, list[float]]:
     """Evaluate and optimize tilt series alignment using trained model.
 
@@ -168,21 +169,23 @@ def evaluate_tilt_series(
     tuple[Path, list[float]]
         Path to output JSON and list of loss values.
     """
-    # load the best model and run alignment optimization
-    model = MissAlignment.load_from_checkpoint(
-        model_checkpoint_path,
-        map_location="cpu",
-    )
-    # load_from_checkpoint calls configure_model(), which compiles self.net via
-    # torch.compile. Unwrap it here so alignment inference runs in eager mode.
-    # torch.compile is fundamentally incompatible with spawned worker processes:
-    # the inductor spawns its own subprocess pool for async compilation and races
-    # on shared cache files when multiple workers compile simultaneously, causing
-    # stochastic FileNotFoundError crashes. See pytorch/pytorch#134384.
-    # The reconstruction step dominates alignment runtime so the eager-mode
-    # overhead on the model forward pass is negligible.
-    if hasattr(model.net, "_orig_mod"):
-        model.net = model.net._orig_mod
+    # Load model from checkpoint when not provided by the caller. Workers pass a
+    # pre-loaded model to amortize checkpoint loading across many series per run.
+    if model is None:
+        model = MissAlignment.load_from_checkpoint(
+            model_checkpoint_path,
+            map_location="cpu",
+        )
+        # load_from_checkpoint calls configure_model(), which compiles self.net via
+        # torch.compile. Unwrap it here so alignment inference runs in eager mode.
+        # torch.compile is fundamentally incompatible with spawned worker processes:
+        # the inductor spawns its own subprocess pool for async compilation and races
+        # on shared cache files when multiple workers compile simultaneously, causing
+        # stochastic FileNotFoundError crashes. See pytorch/pytorch#134384.
+        # The reconstruction step dominates alignment runtime so the eager-mode
+        # overhead on the model forward pass is negligible.
+        if hasattr(model.net, "_orig_mod"):
+            model.net = model.net._orig_mod
 
     # load tilt_series and set its name for output
     tilt_series_data = TiltSeriesData(xml_metadata_path=tilt_series_path)
