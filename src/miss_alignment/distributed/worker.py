@@ -124,8 +124,11 @@ def run_worker_loop(
     worker_id: str,
     device: str,
     manager_hb_timeout_s: float = _MANAGER_HB_TIMEOUT_S,
-) -> None:
-    """Main worker loop: claim → evaluate → write result. Repeat until queue empty."""
+) -> str:
+    """Main worker loop: claim → evaluate → write result. Repeat until queue empty.
+
+    Returns an exit-reason string suitable for writing to logs/<worker_id>.exit.
+    """
     worker_dir = layout.worker_dir(worker_id)
     worker_dir.mkdir(parents=True, exist_ok=True)
 
@@ -133,15 +136,16 @@ def run_worker_loop(
     cached_model: MissAlignment | None = None
     hb_seq = 0
     last_hb_time = 0.0
+    tasks_done = 0
+    tasks_failed = 0
 
     while True:
         age = _manager_hb_age_s(layout)
         if age > manager_hb_timeout_s:
-            print(
-                f"[{worker_id}] Manager heartbeat stale ({age:.0f}s). Exiting.",
-                file=sys.stderr,
+            return (
+                f"manager heartbeat stale ({age:.0f}s > {manager_hb_timeout_s:.0f}s); "
+                f"done={tasks_done} failed={tasks_failed}"
             )
-            return
 
         now = time.time()
         if now - last_hb_time >= _HB_INTERVAL_S:
@@ -151,7 +155,7 @@ def run_worker_loop(
 
         spec = claim_one(layout, worker_id)
         if spec is None:
-            return  # queue empty, exit cleanly
+            return f"queue empty; done={tasks_done} failed={tasks_failed}"
 
         # For alignment tasks, (re)load the model when the fingerprint changes.
         if spec.task_type == "alignment" and spec.init_fingerprint != last_fingerprint:
@@ -161,9 +165,11 @@ def run_worker_loop(
         try:
             final_loss = _execute_task(spec, device, cached_model)
             mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
+            tasks_done += 1
         except Exception:
             error = traceback.format_exc()
             mark_failed(layout, worker_id, spec, error=error)
+            tasks_failed += 1
             print(
                 f"[{worker_id}] Failed {spec.task_id}:\n{error}",
                 file=sys.stderr,
@@ -185,4 +191,15 @@ def worker_miss_align(
     layout.ensure_directories()
 
     cuda_device = f"cuda:{device}" if torch.cuda.is_available() else "cpu"
-    run_worker_loop(layout, worker_id, cuda_device)
+    exit_reason = "unknown (unhandled exception)"
+    try:
+        exit_reason = run_worker_loop(layout, worker_id, cuda_device)
+    except Exception:
+        exit_reason = f"unhandled exception:\n{traceback.format_exc()}"
+        raise
+    finally:
+        exit_file = layout.logs / f"{worker_id}.exit"
+        try:
+            exit_file.write_text(exit_reason)
+        except Exception:
+            pass  # don't mask the original error

@@ -47,6 +47,10 @@ class QueueLayout:
     def cluster(self) -> Path:
         return self.root / "cluster"
 
+    @property
+    def logs(self) -> Path:
+        return self.root / "logs"
+
     def ensure_directories(self) -> None:
         for d in (
             self.pending,
@@ -55,6 +59,7 @@ class QueueLayout:
             self.failed,
             self.manager_hb,
             self.cluster,
+            self.logs,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
