@@ -11,3 +11,7 @@ class OrderCommands(TyperGroup):
 
 cli = typer.Typer(cls=OrderCommands, add_completion=False, no_args_is_help=True)
 OPTION_PROMPT_KWARGS = {"prompt": True, "prompt_required": True}
+
+from .distributed.worker import worker_miss_align  # noqa: E402
+
+cli.command(name="worker")(worker_miss_align)

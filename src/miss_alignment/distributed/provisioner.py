@@ -15,7 +15,10 @@ from .config import ClusterConfig
 class WorkerProvisioner(ABC):
     @abstractmethod
     def ensure_workers(self, n_workers: int) -> None:
-        """Ensure workers are running. Called once at startup and each scheduler tick."""
+        """Ensure workers are running.
+
+        Called once at startup and on each scheduler tick to respawn dead workers.
+        """
 
     @abstractmethod
     def shutdown(self) -> None:
@@ -85,7 +88,7 @@ class ClusterProvisioner(WorkerProvisioner):
         rendered = template_text.replace("{{command}}", command)
         for key, value in os.environ.items():
             if key.startswith("MISS_CLUSTER_VAR_"):
-                var_name = key[len("MISS_CLUSTER_VAR_"):].lower()
+                var_name = key[len("MISS_CLUSTER_VAR_") :].lower()
                 rendered = rendered.replace(f"{{{{{var_name}}}}}", value)
 
         script_path = self._scripts_dir / f"worker-{index}.sh"

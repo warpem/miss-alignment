@@ -310,6 +310,13 @@ def train_miss_align(
         help="Run cross-correlation based alignment before training iterations. "
         "This performs coarse alignment with pretilt estimation.",
     ),
+    n_cluster_workers: Optional[int] = typer.Option(
+        None,
+        help="Number of cluster jobs to submit for the alignment phase. "
+        "When set, activates cluster mode; requires MISS_CLUSTER_CONFIG "
+        "and MISS_CLUSTER_SCRIPT environment variables to be set. "
+        "When absent, local multi-GPU mode is used.",
+    ),
 ) -> None:
     """Iteratively train and realign a dataset over a series of coarse-to-fine
     macro-iterations.
@@ -485,6 +492,7 @@ def train_miss_align(
             apply_ctf=general_config["apply_ctf"],
             downsample=iteration_settings["downsample"],
             devices_list=devices_alignment,
+            n_cluster_workers=n_cluster_workers,
         )
 
         # make copies of the xml files and model after alignment

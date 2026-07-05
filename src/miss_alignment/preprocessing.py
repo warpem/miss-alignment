@@ -1,10 +1,56 @@
 """Preprocessing utilities for tilt-series alignment."""
 
+import multiprocessing as mp
 import queue
+import sys
+import time
 from pathlib import Path
 
-from ._parallel import run_device_pool
+import tqdm
+
 from .data.io import TiltSeriesData
+
+
+def _run_device_pool(jobs, runner, runner_args, devices, desc):
+    """Minimal one-process-per-GPU work queue. Internal to preprocessing."""
+    ctx = mp.get_context("spawn")
+    device_slots = sorted(set(devices)) if devices else [None]
+
+    with ctx.Manager() as manager:
+        task_queue = manager.Queue()
+        result_queue = manager.Queue()
+        for job in jobs:
+            task_queue.put_nowait(job)
+
+        procs = [
+            ctx.Process(
+                target=runner, args=(device, task_queue, result_queue, *runner_args)
+            )
+            for device in device_slots
+        ]
+        [p.start() for p in procs]
+
+        results = []
+        pbar = tqdm.tqdm(total=len(jobs), desc=desc, file=sys.stdout)
+        while len(results) < len(jobs):
+            while not result_queue.empty():
+                results.append(result_queue.get_nowait())
+                pbar.update(1)
+            for p in procs:
+                if not p.is_alive() and p.exitcode != 0:
+                    for x in procs:
+                        x.terminate()
+                    for x in procs:
+                        x.join(timeout=5.0)
+                    pbar.close()
+                    raise RuntimeError(
+                        f"A worker process for '{desc}' stopped unexpectedly."
+                    )
+            time.sleep(0.1)
+        pbar.close()
+        [p.join() for p in procs]
+
+    return results
 
 
 def _run_cross_correlation_single(
@@ -138,7 +184,7 @@ def run_cross_correlation_alignment_parallel(
     else:
         print("  Using default device assignment\n")
 
-    run_device_pool(
+    _run_device_pool(
         jobs=xml_files,
         runner=_cross_correlation_runner,
         runner_args=(lowpass_cutoff, pretilt_search_range),
