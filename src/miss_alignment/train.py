@@ -394,6 +394,7 @@ def train_miss_align(
             training_directory=training_directory,
             desired_pixel_size=prepare_stacks,
             devices=devices_alignment,
+            n_cluster_workers=n_cluster_workers,
         )
 
     # Run preprocessing if requested
@@ -417,6 +418,7 @@ def train_miss_align(
             run_cross_correlation_alignment_parallel(
                 training_directory=training_directory,
                 devices=devices_alignment,
+                n_cluster_workers=n_cluster_workers,
             )
 
     start_iter = start_at_iteration

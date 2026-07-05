@@ -1,56 +1,9 @@
 """Preprocessing utilities for tilt-series alignment."""
 
-import multiprocessing as mp
-import queue
-import sys
-import time
 from pathlib import Path
 
-import tqdm
-
 from .data.io import TiltSeriesData
-
-
-def _run_device_pool(jobs, runner, runner_args, devices, desc):
-    """Minimal one-process-per-GPU work queue. Internal to preprocessing."""
-    ctx = mp.get_context("spawn")
-    device_slots = sorted(set(devices)) if devices else [None]
-
-    with ctx.Manager() as manager:
-        task_queue = manager.Queue()
-        result_queue = manager.Queue()
-        for job in jobs:
-            task_queue.put_nowait(job)
-
-        procs = [
-            ctx.Process(
-                target=runner, args=(device, task_queue, result_queue, *runner_args)
-            )
-            for device in device_slots
-        ]
-        [p.start() for p in procs]
-
-        results = []
-        pbar = tqdm.tqdm(total=len(jobs), desc=desc, file=sys.stdout)
-        while len(results) < len(jobs):
-            while not result_queue.empty():
-                results.append(result_queue.get_nowait())
-                pbar.update(1)
-            for p in procs:
-                if not p.is_alive() and p.exitcode != 0:
-                    for x in procs:
-                        x.terminate()
-                    for x in procs:
-                        x.join(timeout=5.0)
-                    pbar.close()
-                    raise RuntimeError(
-                        f"A worker process for '{desc}' stopped unexpectedly."
-                    )
-            time.sleep(0.1)
-        pbar.close()
-        [p.join() for p in procs]
-
-    return results
+from .distributed.manager import run_distributed
 
 
 def _run_cross_correlation_single(
@@ -120,33 +73,12 @@ def _run_cross_correlation_single(
     return float(pretilt)
 
 
-def _cross_correlation_runner(
-    device: int | None,
-    task_queue,
-    result_queue,
-    lowpass_cutoff: float,
-    pretilt_search_range: tuple[float, float],
-) -> None:
-    """Pull tilt-series off the queue and align them on a single device."""
-    import torch
-
-    torch.set_num_threads(1)
-    while True:
-        try:
-            xml_file = task_queue.get_nowait()
-        except queue.Empty:
-            break
-        _run_cross_correlation_single(
-            xml_file, device, lowpass_cutoff, pretilt_search_range
-        )
-        result_queue.put_nowait(xml_file.stem)
-
-
 def run_cross_correlation_alignment_parallel(
     training_directory: Path,
     devices: list[int] | None = None,
     lowpass_cutoff: float = 0.25,
     pretilt_search_range: tuple[float, float] = (-30.0, 30.0),
+    n_cluster_workers: int | None = None,
 ) -> None:
     """
     Run cross-correlation based alignment with pretilt estimation in parallel.
@@ -166,6 +98,9 @@ def run_cross_correlation_alignment_parallel(
         Low-pass filter cutoff frequency (default: 0.25).
     pretilt_search_range : tuple[float, float], optional
         Search range for pretilt estimation in degrees (default: (-30.0, 30.0)).
+    n_cluster_workers : int | None
+        Number of cluster jobs to submit. When set, activates cluster mode;
+        requires MISS_CLUSTER_CONFIG and MISS_CLUSTER_SCRIPT to be set.
     """
     # Get list of all XML files to process
     xml_files = list(training_directory.glob("*.xml"))
@@ -184,12 +119,23 @@ def run_cross_correlation_alignment_parallel(
     else:
         print("  Using default device assignment\n")
 
-    _run_device_pool(
-        jobs=xml_files,
-        runner=_cross_correlation_runner,
-        runner_args=(lowpass_cutoff, pretilt_search_range),
-        devices=devices,
-        desc="Cross-correlation alignment",
+    queue_root = training_directory / "tasks"
+    run_distributed(
+        tilt_series_list=xml_files,
+        model_checkpoint=Path(""),
+        output_directory=training_directory,
+        setting="",
+        patch_size=0,
+        patch_overlap=0.0,
+        batch_size=0,
+        apply_ctf=False,
+        downsample=1,
+        devices=devices or [],
+        n_cluster_workers=n_cluster_workers,
+        queue_root=queue_root,
+        task_type="cross_correlation",
+        lowpass_cutoff=lowpass_cutoff,
+        pretilt_search_range=pretilt_search_range,
     )
 
     print("\nCross-correlation alignment complete!\n")

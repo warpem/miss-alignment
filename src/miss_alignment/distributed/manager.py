@@ -45,7 +45,10 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
             continue
         ticks = list(worker_dir.glob("hb-*"))
         if ticks:
-            age = time.time() - max(ticks, key=lambda p: p.stat().st_mtime).stat().st_mtime
+            age = (
+                time.time()
+                - max(ticks, key=lambda p: p.stat().st_mtime).stat().st_mtime
+            )
         else:
             age = time.time() - worker_dir.stat().st_mtime
 
@@ -109,25 +112,38 @@ def run_distributed(
     devices: list[int],
     n_cluster_workers: int | None,
     queue_root: Path,
+    task_type: str = "alignment",
+    desired_pixel_size: float | None = None,
+    lowpass_cutoff: float | None = None,
+    pretilt_search_range: tuple | None = None,
 ) -> dict[str, float]:
     """Write tasks, provision workers, block until all tasks are terminal.
 
     Returns dict[series_name → final_loss]. Raises RuntimeError listing all
     failed series if any task ends in failed/. Deletes queue_root on exit.
+
+    task_type selects the worker dispatch path:
+      "alignment"          — evaluate_tilt_series (default)
+      "prepare_stacks"     — _prepare_single_tilt_series
+      "cross_correlation"  — _run_cross_correlation_single
     """
     layout = QueueLayout(queue_root)
     layout.ensure_directories()
     clear_queue(layout)
 
-    fingerprint = compute_fingerprint(
-        model_checkpoint_path=str(model_checkpoint),
-        setting=setting if isinstance(setting, str) else list(setting),
-        patch_size=patch_size,
-        patch_overlap=patch_overlap,
-        batch_size=batch_size,
-        apply_ctf=apply_ctf,
-        downsample=downsample,
-    )
+    # Fingerprint only meaningful for alignment tasks (amortizes model load).
+    if task_type == "alignment":
+        fingerprint = compute_fingerprint(
+            model_checkpoint_path=str(model_checkpoint),
+            setting=setting if isinstance(setting, str) else list(setting),
+            patch_size=patch_size,
+            patch_overlap=patch_overlap,
+            batch_size=batch_size,
+            apply_ctf=apply_ctf,
+            downsample=downsample,
+        )
+    else:
+        fingerprint = ""
 
     task_ids = []
     for i, ts_path in enumerate(tilt_series_list):
@@ -135,7 +151,9 @@ def run_distributed(
         task_ids.append(task_id)
         spec = TaskSpec(
             task_id=task_id,
-            model_checkpoint_path=str(model_checkpoint),
+            model_checkpoint_path=(
+                str(model_checkpoint) if task_type == "alignment" else ""
+            ),
             tilt_series_path=str(ts_path),
             output_directory=str(output_directory),
             setting=setting if isinstance(setting, str) else list(setting),
@@ -145,6 +163,12 @@ def run_distributed(
             apply_ctf=apply_ctf,
             downsample=downsample,
             init_fingerprint=fingerprint,
+            task_type=task_type,
+            desired_pixel_size=desired_pixel_size,
+            lowpass_cutoff=lowpass_cutoff,
+            pretilt_search_range=(
+                list(pretilt_search_range) if pretilt_search_range is not None else None
+            ),
         )
         write_pending(layout, spec)
 

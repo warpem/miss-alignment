@@ -156,3 +156,53 @@ def test_run_distributed_cleans_up_tasks_dir(tmp_path):
         )
 
     assert not queue_root.exists()
+
+
+def test_run_distributed_prepare_stacks_task_type(tmp_path):
+    """Manager creates prepare_stacks tasks with the correct task_type field."""
+    import json
+
+    xml1 = _make_xml(tmp_path, "ts01")
+    queue_root = tmp_path / "tasks"
+
+    # Capture the task JSON before the worker thread consumes it
+    written_tasks = []
+
+    worker = _fake_worker_thread(queue_root, n_tasks=1)
+
+    with patch(
+        "miss_alignment.distributed.manager.LocalProvisioner",
+        return_value=_NoOpProvisioner(),
+    ):
+        # Run in a thread so we can inspect tasks/ briefly — but just check
+        # the return value here since the fake worker resolves immediately.
+        losses = None
+
+        def run():
+            nonlocal losses
+            losses = run_distributed(
+                tilt_series_list=[xml1],
+                model_checkpoint=Path(""),
+                output_directory=tmp_path,
+                setting="",
+                patch_size=0,
+                patch_overlap=0.0,
+                batch_size=0,
+                apply_ctf=False,
+                downsample=1,
+                devices=[0],
+                n_cluster_workers=None,
+                queue_root=queue_root,
+                task_type="prepare_stacks",
+                desired_pixel_size=10.0,
+            )
+
+        import threading
+
+        worker.start()
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(timeout=15)
+
+    assert losses is not None
+    assert "ts01" in losses

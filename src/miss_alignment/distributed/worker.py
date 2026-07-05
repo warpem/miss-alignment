@@ -22,6 +22,8 @@ import typer
 
 from ..alignment.tilt_series import evaluate_tilt_series
 from ..models.models import MissAlignment
+from ..prepare_stacks import _prepare_single_tilt_series
+from ..preprocessing import _run_cross_correlation_single
 from .queue import (
     QueueLayout,
     TaskSpec,
@@ -56,6 +58,65 @@ def _load_model(checkpoint_path: str) -> MissAlignment:
     if hasattr(model.net, "_orig_mod"):
         model.net = model.net._orig_mod
     return model
+
+
+def _device_int(device: str) -> int | None:
+    """Convert 'cuda:0' → 0, 'cpu' → None."""
+    if device.startswith("cuda:"):
+        return int(device.split(":")[1])
+    return None
+
+
+def _execute_task(
+    spec: TaskSpec,
+    device: str,
+    cached_model: MissAlignment | None,
+) -> float:
+    """Run the work described by spec and return a scalar result (final loss or 0.0)."""
+    if spec.task_type == "alignment":
+        # Convert setting back to tuple if serialised as list.
+        setting = (
+            tuple(spec.setting) if isinstance(spec.setting, list) else spec.setting
+        )
+        _, loss_values = evaluate_tilt_series(
+            model_checkpoint_path=Path(spec.model_checkpoint_path),
+            tilt_series_path=Path(spec.tilt_series_path),
+            output_directory=Path(spec.output_directory),
+            setting=setting,
+            patch_size=spec.patch_size,
+            patch_overlap=spec.patch_overlap,
+            batch_size=spec.batch_size,
+            apply_ctf=spec.apply_ctf,
+            downsample=spec.downsample,
+            device=device,
+            model=cached_model,
+        )
+        return float(loss_values[-1]) if loss_values else float("nan")
+
+    elif spec.task_type == "prepare_stacks":
+        _prepare_single_tilt_series(
+            xml_path=Path(spec.tilt_series_path),
+            desired_pixel_size=spec.desired_pixel_size,
+            device=_device_int(device),
+        )
+        return 0.0
+
+    elif spec.task_type == "cross_correlation":
+        pretilt_range = (
+            tuple(spec.pretilt_search_range)
+            if spec.pretilt_search_range is not None
+            else (-30.0, 30.0)
+        )
+        _run_cross_correlation_single(
+            xml_file=Path(spec.tilt_series_path),
+            device=_device_int(device),
+            lowpass_cutoff=spec.lowpass_cutoff or 0.25,
+            pretilt_search_range=pretilt_range,
+        )
+        return 0.0
+
+    else:
+        raise ValueError(f"Unknown task_type: {spec.task_type!r}")
 
 
 def run_worker_loop(
@@ -94,30 +155,13 @@ def run_worker_loop(
 
         print(f"[{worker_id}] Claimed {spec.task_id}", file=sys.stderr)
 
-        if spec.init_fingerprint != last_fingerprint:
+        # For alignment tasks, (re)load the model when the fingerprint changes.
+        if spec.task_type == "alignment" and spec.init_fingerprint != last_fingerprint:
             cached_model = _load_model(spec.model_checkpoint_path)
             last_fingerprint = spec.init_fingerprint
 
-        # Convert setting back to tuple if it was serialized as a list.
-        setting = (
-            tuple(spec.setting) if isinstance(spec.setting, list) else spec.setting
-        )
-
         try:
-            _, loss_values = evaluate_tilt_series(
-                model_checkpoint_path=Path(spec.model_checkpoint_path),
-                tilt_series_path=Path(spec.tilt_series_path),
-                output_directory=Path(spec.output_directory),
-                setting=setting,
-                patch_size=spec.patch_size,
-                patch_overlap=spec.patch_overlap,
-                batch_size=spec.batch_size,
-                apply_ctf=spec.apply_ctf,
-                downsample=spec.downsample,
-                device=device,
-                model=cached_model,
-            )
-            final_loss = float(loss_values[-1]) if loss_values else float("nan")
+            final_loss = _execute_task(spec, device, cached_model)
             mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
             print(
                 f"[{worker_id}] Done {spec.task_id} loss={final_loss:.4f}",

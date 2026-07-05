@@ -156,3 +156,77 @@ def test_worker_reloads_model_when_fingerprint_changes(layout):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
     assert len(load_calls) == 2
+
+
+def test_worker_dispatches_prepare_stacks(layout):
+    """prepare_stacks tasks call _prepare_single_tilt_series, not evaluate_tilt_series."""
+    _write_manager_hb(layout)
+    spec = TaskSpec(
+        task_id="0000001-ts01",
+        model_checkpoint_path="",
+        tilt_series_path="/data/ts01.xml",
+        output_directory="/data/out",
+        setting="",
+        patch_size=0,
+        patch_overlap=0.0,
+        batch_size=0,
+        apply_ctf=False,
+        downsample=1,
+        init_fingerprint="",
+        task_type="prepare_stacks",
+        desired_pixel_size=10.0,
+    )
+    write_pending(layout, spec)
+
+    prepare_calls = []
+
+    def fake_prepare(xml_path, desired_pixel_size, device):
+        prepare_calls.append((str(xml_path), desired_pixel_size, device))
+
+    with patch(
+        "miss_alignment.distributed.worker._prepare_single_tilt_series",
+        side_effect=fake_prepare,
+    ):
+        run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
+
+    assert len(prepare_calls) == 1
+    assert prepare_calls[0][1] == 10.0
+    assert (layout.done / "0000001-ts01.json").exists()
+
+
+def test_worker_dispatches_cross_correlation(layout):
+    """cross_correlation tasks call _run_cross_correlation_single."""
+    _write_manager_hb(layout)
+    spec = TaskSpec(
+        task_id="0000001-ts01",
+        model_checkpoint_path="",
+        tilt_series_path="/data/ts01.xml",
+        output_directory="/data/out",
+        setting="",
+        patch_size=0,
+        patch_overlap=0.0,
+        batch_size=0,
+        apply_ctf=False,
+        downsample=1,
+        init_fingerprint="",
+        task_type="cross_correlation",
+        lowpass_cutoff=0.25,
+        pretilt_search_range=[-30.0, 30.0],
+    )
+    write_pending(layout, spec)
+
+    xcorr_calls = []
+
+    def fake_xcorr(xml_file, device, lowpass_cutoff, pretilt_search_range):
+        xcorr_calls.append((str(xml_file), lowpass_cutoff))
+        return 2.5  # pretilt degrees
+
+    with patch(
+        "miss_alignment.distributed.worker._run_cross_correlation_single",
+        side_effect=fake_xcorr,
+    ):
+        run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
+
+    assert len(xcorr_calls) == 1
+    assert xcorr_calls[0][1] == 0.25
+    assert (layout.done / "0000001-ts01.json").exists()

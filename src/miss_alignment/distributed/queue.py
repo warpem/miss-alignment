@@ -75,6 +75,11 @@ class TaskSpec:
     apply_ctf: bool
     downsample: int
     init_fingerprint: str
+    # Task type and optional parameters for non-alignment tasks.
+    task_type: str = "alignment"
+    desired_pixel_size: float | None = None
+    lowpass_cutoff: float | None = None
+    pretilt_search_range: list | None = None
 
 
 def _atomic_write(path: Path, data: dict) -> None:
@@ -86,7 +91,9 @@ def _atomic_write(path: Path, data: dict) -> None:
 
 def _read_spec(path: Path) -> TaskSpec:
     data = json.loads(path.read_text())
-    return TaskSpec(**{k: v for k, v in data.items() if k in TaskSpec.__dataclass_fields__})
+    return TaskSpec(
+        **{k: v for k, v in data.items() if k in TaskSpec.__dataclass_fields__}
+    )
 
 
 def compute_fingerprint(
