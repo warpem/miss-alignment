@@ -59,10 +59,6 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
             dest = layout.pending / task_file.name
             try:
                 os.rename(task_file, dest)
-                print(
-                    f"[manager] Recovered stalled task {task_file.name} to pending",
-                    file=sys.stderr,
-                )
             except FileNotFoundError:
                 pass
         for hb in worker_dir.glob("hb-*"):

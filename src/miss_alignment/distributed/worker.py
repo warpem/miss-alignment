@@ -153,8 +153,6 @@ def run_worker_loop(
         if spec is None:
             return  # queue empty, exit cleanly
 
-        print(f"[{worker_id}] Claimed {spec.task_id}", file=sys.stderr)
-
         # For alignment tasks, (re)load the model when the fingerprint changes.
         if spec.task_type == "alignment" and spec.init_fingerprint != last_fingerprint:
             cached_model = _load_model(spec.model_checkpoint_path)
@@ -163,10 +161,6 @@ def run_worker_loop(
         try:
             final_loss = _execute_task(spec, device, cached_model)
             mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
-            print(
-                f"[{worker_id}] Done {spec.task_id} loss={final_loss:.4f}",
-                file=sys.stderr,
-            )
         except Exception:
             error = traceback.format_exc()
             mark_failed(layout, worker_id, spec, error=error)
