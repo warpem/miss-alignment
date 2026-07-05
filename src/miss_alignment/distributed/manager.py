@@ -44,11 +44,16 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
         if not worker_dir.is_dir():
             continue
         ticks = list(worker_dir.glob("hb-*"))
-        if ticks:
-            age = (
-                time.time()
-                - max(ticks, key=lambda p: p.stat().st_mtime).stat().st_mtime
-            )
+        latest_mtime = None
+        for tick in ticks:
+            try:
+                mtime = tick.stat().st_mtime
+                if latest_mtime is None or mtime > latest_mtime:
+                    latest_mtime = mtime
+            except FileNotFoundError:
+                pass  # heartbeat thread replaced this tick; ignore
+        if latest_mtime is not None:
+            age = time.time() - latest_mtime
         else:
             age = time.time() - worker_dir.stat().st_mtime
 
