@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -38,9 +39,34 @@ _HB_INTERVAL_S = 5.0
 
 def _write_worker_hb(worker_dir: Path, seq: int) -> None:
     new_hb = worker_dir / f"hb-{seq}"
-    new_hb.write_text("")
+    try:
+        new_hb.write_text("")
+    except FileNotFoundError:
+        # Worker dir was swept by the manager stall check; recreate it.
+        worker_dir.mkdir(parents=True, exist_ok=True)
+        new_hb.write_text("")
     if seq > 0:
         (worker_dir / f"hb-{seq - 1}").unlink(missing_ok=True)
+
+
+def _start_heartbeat_thread(
+    worker_dir: Path, stop_event: threading.Event
+) -> threading.Thread:
+    """Write a heartbeat tick every _HB_INTERVAL_S in a background daemon thread.
+
+    Runs independently of task execution so long-running series don't make
+    the worker appear stale to the manager's sweep.
+    """
+
+    def _loop() -> None:
+        seq = 0
+        while not stop_event.wait(timeout=_HB_INTERVAL_S):
+            _write_worker_hb(worker_dir, seq)
+            seq += 1
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    return t
 
 
 def _manager_hb_age_s(layout: QueueLayout) -> float:
@@ -132,48 +158,55 @@ def run_worker_loop(
     worker_dir = layout.worker_dir(worker_id)
     worker_dir.mkdir(parents=True, exist_ok=True)
 
+    stop_hb = threading.Event()
+    _start_heartbeat_thread(worker_dir, stop_hb)
+
     last_fingerprint: str | None = None
     cached_model: MissAlignment | None = None
-    hb_seq = 0
-    last_hb_time = 0.0
     tasks_done = 0
     tasks_failed = 0
 
-    while True:
-        age = _manager_hb_age_s(layout)
-        if age > manager_hb_timeout_s:
-            return (
-                f"manager heartbeat stale ({age:.0f}s > {manager_hb_timeout_s:.0f}s); "
-                f"done={tasks_done} failed={tasks_failed}"
-            )
+    try:
+        while True:
+            age = _manager_hb_age_s(layout)
+            if age > manager_hb_timeout_s:
+                return (
+                    f"manager heartbeat stale ({age:.0f}s > "
+                    f"{manager_hb_timeout_s:.0f}s); "
+                    f"done={tasks_done} failed={tasks_failed}"
+                )
 
-        now = time.time()
-        if now - last_hb_time >= _HB_INTERVAL_S:
-            _write_worker_hb(worker_dir, hb_seq)
-            hb_seq += 1
-            last_hb_time = now
+            spec = claim_one(layout, worker_id)
+            if spec is None:
+                return f"queue empty; done={tasks_done} failed={tasks_failed}"
 
-        spec = claim_one(layout, worker_id)
-        if spec is None:
-            return f"queue empty; done={tasks_done} failed={tasks_failed}"
+            # For alignment tasks, (re)load model when fingerprint changes.
+            if (
+                spec.task_type == "alignment"
+                and spec.init_fingerprint != last_fingerprint
+            ):
+                cached_model = _load_model(spec.model_checkpoint_path)
+                last_fingerprint = spec.init_fingerprint
 
-        # For alignment tasks, (re)load the model when the fingerprint changes.
-        if spec.task_type == "alignment" and spec.init_fingerprint != last_fingerprint:
-            cached_model = _load_model(spec.model_checkpoint_path)
-            last_fingerprint = spec.init_fingerprint
+            try:
+                final_loss = _execute_task(spec, device, cached_model)
+                mark_done(
+                    layout, worker_id, spec, final_loss=final_loss, device=device
+                )
+                tasks_done += 1
+            except Exception:
+                error = traceback.format_exc()
+                mark_failed(layout, worker_id, spec, error=error)
+                tasks_failed += 1
+                print(
+                    f"[{worker_id}] Failed {spec.task_id}:\n{error}",
+                    file=sys.stderr,
+                )
+    finally:
+        stop_hb.set()
 
-        try:
-            final_loss = _execute_task(spec, device, cached_model)
-            mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
-            tasks_done += 1
-        except Exception:
-            error = traceback.format_exc()
-            mark_failed(layout, worker_id, spec, error=error)
-            tasks_failed += 1
-            print(
-                f"[{worker_id}] Failed {spec.task_id}:\n{error}",
-                file=sys.stderr,
-            )
+    # Unreachable — loop only exits via return statements above.
+    return f"done={tasks_done} failed={tasks_failed}"
 
 
 def worker_miss_align(
