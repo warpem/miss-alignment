@@ -56,6 +56,13 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
             continue
 
         for task_file in worker_dir.glob("*.json"):
+            # Skip tasks that already completed while the worker was being swept.
+            if (layout.done / task_file.name).exists():
+                task_file.unlink(missing_ok=True)
+                continue
+            if (layout.failed / task_file.name).exists():
+                task_file.unlink(missing_ok=True)
+                continue
             dest = layout.pending / task_file.name
             try:
                 os.rename(task_file, dest)
