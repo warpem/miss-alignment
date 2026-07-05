@@ -86,6 +86,7 @@ def _scheduler_thread(
     provisioner: WorkerProvisioner,
     n_workers: int,
     stop_event: threading.Event,
+    error_box: list,
 ) -> None:
     hb_seq = 1  # seq 0 written before thread starts
     last_hb = time.time()
@@ -93,20 +94,24 @@ def _scheduler_thread(
     # run_distributed calls ensure_workers() explicitly at startup instead.
     last_sweep = time.time()
 
-    while not stop_event.is_set():
-        now = time.time()
+    try:
+        while not stop_event.is_set():
+            now = time.time()
 
-        if now - last_hb >= _MANAGER_HB_INTERVAL_S:
-            _write_manager_hb(layout, hb_seq)
-            hb_seq += 1
-            last_hb = now
+            if now - last_hb >= _MANAGER_HB_INTERVAL_S:
+                _write_manager_hb(layout, hb_seq)
+                hb_seq += 1
+                last_hb = now
 
-        if now - last_sweep >= _SCHEDULER_INTERVAL_S:
-            _sweep_stalled_workers(layout)
-            provisioner.ensure_workers(n_workers)
-            last_sweep = now
+            if now - last_sweep >= _SCHEDULER_INTERVAL_S:
+                _sweep_stalled_workers(layout)
+                provisioner.ensure_workers(n_workers)
+                last_sweep = now
 
-        stop_event.wait(timeout=1.0)
+            stop_event.wait(timeout=1.0)
+    except Exception as exc:
+        error_box.append(exc)
+        stop_event.set()  # wake the poll loop so it notices immediately
 
 
 def run_distributed(
@@ -197,9 +202,10 @@ def run_distributed(
         n_workers = len(devices)
 
     stop_event = threading.Event()
+    scheduler_errors: list = []
     scheduler = threading.Thread(
         target=_scheduler_thread,
-        args=(layout, provisioner, n_workers, stop_event),
+        args=(layout, provisioner, n_workers, stop_event, scheduler_errors),
         daemon=True,
     )
     scheduler.start()
@@ -218,6 +224,11 @@ def run_distributed(
     try:
         while pending_ids:
             time.sleep(_POLL_INTERVAL_S)
+
+            if scheduler_errors:
+                raise RuntimeError(
+                    "Scheduler thread crashed"
+                ) from scheduler_errors[0]
 
             for done_file in layout.done.glob("*.json"):
                 data = json.loads(done_file.read_text())
