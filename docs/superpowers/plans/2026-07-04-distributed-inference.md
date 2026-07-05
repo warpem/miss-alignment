@@ -4,20 +4,21 @@
 
 **Goal:** Add a disk-based task queue that distributes per-tilt-series alignment inference across cluster nodes (SLURM/PBS), while keeping the existing local multi-GPU behaviour unchanged.
 
-**Architecture:** A new `miss_alignment/distributed/` package implements a filesystem queue (atomic rename as the claim mutex), a manager that writes tasks and blocks until done, two provisioners (local subprocess and cluster batch scheduler), and a `miss-alignment worker` subcommand. `run_alignment_parallel` in `alignment/parallel.py` is updated to drive the manager instead of `_parallel.run_device_pool`. No changes to `train.py`, `infer.py`, or `evaluate_tilt_series`.
+**Architecture:** A new `miss_alignment/distributed/` package implements a filesystem queue (atomic rename as the claim mutex), a manager that writes tasks and blocks until done, two provisioners (local subprocess and cluster batch scheduler), and a `miss-alignment worker` subcommand. Each worker processes many series per run; checkpoint loading is amortized by passing the resident model into `evaluate_tilt_series`. Cluster mode is triggered by a new `--n-cluster-workers` CLI arg; without it local multi-GPU mode is unchanged.
 
-**Tech Stack:** Python 3.10+, stdlib only (`pathlib`, `os`, `subprocess`, `threading`, `hashlib`, `json`, `re`, `time`, `signal`) — no new dependencies.
+**Tech Stack:** Python 3.10+, stdlib only for `distributed/` (`pathlib`, `os`, `subprocess`, `threading`, `hashlib`, `json`, `re`, `time`, `signal`). `tqdm` (already a dependency) used in manager. `typer` (already a dependency) used in worker CLI.
 
 ## Global Constraints
 
 - Python ≥ 3.10 (project minimum).
-- No new runtime dependencies beyond stdlib.
+- No new runtime dependencies beyond stdlib + existing deps.
 - `ruff check --fix && ruff format` must pass (line length 88, ignore E712).
 - `pytest --color=yes` must pass with no warnings-as-errors regressions.
-- All new files under `src/miss_alignment/distributed/`.
-- Cluster mode activated only when **both** `MISS_CLUSTER_CONFIG` and `MISS_CLUSTER_SCRIPT` env vars are set; otherwise `LocalProvisioner` is used.
-- `evaluate_tilt_series` is never modified.
-- `train.py` and `infer.py` are never modified.
+- All new queue infrastructure under `src/miss_alignment/distributed/`.
+- Cluster mode activated only by `--n-cluster-workers N`; without it local mode runs unchanged.
+- `MISS_CLUSTER_CONFIG` and `MISS_CLUSTER_SCRIPT` are **required** when `--n-cluster-workers` is set; `config.py` raises `RuntimeError` if either is absent (never silently falls back to local mode).
+- `evaluate_tilt_series` gains one optional `model` parameter and is otherwise unchanged.
+- `train.py` and `infer.py` are modified only to add the `--n-cluster-workers` option and pass it through.
 
 ---
 
@@ -25,27 +26,34 @@
 
 | Path | Action | Responsibility |
 |---|---|---|
-| `src/miss_alignment/distributed/__init__.py` | Create | Re-export public API |
+| `src/miss_alignment/__main__.py` | Create | `python -m miss_alignment` entry point for `LocalProvisioner` subprocess launch |
+| `src/miss_alignment/distributed/__init__.py` | Create | Public re-exports |
 | `src/miss_alignment/distributed/queue.py` | Create | Directory layout, task JSON, atomic rename claim |
 | `src/miss_alignment/distributed/manager.py` | Create | Head-node coordinator, scheduler thread, poll loop |
 | `src/miss_alignment/distributed/provisioner.py` | Create | `WorkerProvisioner` ABC, `LocalProvisioner`, `ClusterProvisioner` |
 | `src/miss_alignment/distributed/worker.py` | Create | `miss-alignment worker` subcommand logic |
-| `src/miss_alignment/distributed/config.py` | Create | Read env vars, return `ClusterConfig \| None` |
-| `src/miss_alignment/alignment/parallel.py` | Modify | Replace `run_device_pool` call with manager call |
+| `src/miss_alignment/distributed/config.py` | Create | Read env vars, return `ClusterConfig` or raise |
+| `src/miss_alignment/alignment/tilt_series.py` | Modify | Add optional `model` parameter to `evaluate_tilt_series` |
+| `src/miss_alignment/alignment/parallel.py` | Modify | Replace `run_device_pool` call with manager; add `n_cluster_workers` param |
+| `src/miss_alignment/train.py` | Modify | Add `--n-cluster-workers` option; pass to `run_alignment_parallel` |
+| `src/miss_alignment/infer.py` | Modify | Add `--n-cluster-workers` option; pass to `run_alignment_parallel` |
 | `src/miss_alignment/_cli.py` | Modify | Register `worker` subcommand |
 | `src/miss_alignment/__init__.py` | Modify | Export `worker_miss_align` |
-| `src/miss_alignment/_parallel.py` | Delete (after Task 6) | Superseded by `LocalProvisioner` |
+| `src/miss_alignment/_parallel.py` | Delete (Task 7) | Superseded by `LocalProvisioner` |
+| `tests/distributed/__init__.py` | Create | Test package |
 | `tests/distributed/test_queue.py` | Create | Queue layer unit tests |
-| `tests/distributed/test_manager.py` | Create | Manager + provisioner integration tests |
+| `tests/distributed/test_manager.py` | Create | Manager integration tests |
 | `tests/distributed/test_worker.py` | Create | Worker claim loop unit tests |
 | `tests/distributed/test_config.py` | Create | Config env-var parsing tests |
-| `tests/test_parallel.py` | Modify | Update import from new path |
+| `tests/distributed/test_provisioner.py` | Create | Provisioner unit tests |
+| `tests/test_parallel.py` | Modify | Update to test new `LocalProvisioner` path |
 
 ---
 
 ## Task 1: Queue layer (`distributed/queue.py`)
 
 **Files:**
+- Create: `src/miss_alignment/__main__.py`
 - Create: `src/miss_alignment/distributed/__init__.py`
 - Create: `src/miss_alignment/distributed/queue.py`
 - Create: `tests/distributed/__init__.py`
@@ -53,21 +61,23 @@
 
 **Interfaces:**
 - Produces:
-  - `QueueLayout(root: Path)` — manages subdirectory creation; attributes `pending`, `running`, `done`, `failed`, `manager_hb`, each a `Path`.
-  - `TaskSpec` — `dataclass` with fields: `task_id: str`, `model_checkpoint_path: str`, `tilt_series_path: str`, `output_directory: str`, `setting: str | list`, `patch_size: int`, `patch_overlap: float`, `batch_size: int`, `apply_ctf: bool`, `downsample: int`, `init_fingerprint: str`.
-  - `write_pending(layout: QueueLayout, spec: TaskSpec) -> None` — writes `layout.pending/<spec.task_id>.json`.
-  - `claim_one(layout: QueueLayout, worker_id: str) -> TaskSpec | None` — shuffled rename claim; returns `None` when queue empty.
+  - `QueueLayout(root: Path)` — dataclass; `ensure_directories() -> None`; properties: `pending`, `running`, `done`, `failed`, `manager_hb`, `cluster` each returning `Path`; `worker_dir(worker_id: str) -> Path`.
+  - `TaskSpec` — dataclass with fields: `task_id: str`, `model_checkpoint_path: str`, `tilt_series_path: str`, `output_directory: str`, `setting: str | list`, `patch_size: int`, `patch_overlap: float`, `batch_size: int`, `apply_ctf: bool`, `downsample: int`, `init_fingerprint: str`.
+  - `compute_fingerprint(model_checkpoint_path, setting, patch_size, patch_overlap, batch_size, apply_ctf, downsample) -> str` — SHA-256 hex.
+  - `write_pending(layout: QueueLayout, spec: TaskSpec) -> None`
+  - `claim_one(layout: QueueLayout, worker_id: str) -> TaskSpec | None`
   - `mark_done(layout: QueueLayout, worker_id: str, spec: TaskSpec, final_loss: float, device: str) -> None`
   - `mark_failed(layout: QueueLayout, worker_id: str, spec: TaskSpec, error: str) -> None`
-  - `compute_fingerprint(model_checkpoint_path: str, setting: str | list, patch_size: int, patch_overlap: float, batch_size: int, apply_ctf: bool, downsample: int) -> str` — SHA-256 hex.
-  - `clear_queue(layout: QueueLayout) -> None` — deletes all JSON files in `pending/`, `done/`, `failed/`; moves any `running/<wid>/<id>.json` back to `pending/` (orphan recovery).
+  - `clear_queue(layout: QueueLayout) -> None` — deletes `pending/done/failed` contents first, then recovers `running/` orphans into the now-empty `pending/`.
 
-- [ ] **Step 1: Create directory skeleton and write failing tests**
+- [ ] **Step 1: Create directory skeleton**
 
 ```bash
 mkdir -p tests/distributed
 touch tests/distributed/__init__.py
 ```
+
+- [ ] **Step 2: Write failing tests**
 
 ```python
 # tests/distributed/test_queue.py
@@ -128,13 +138,12 @@ def test_claim_one_returns_none_when_empty(layout):
     assert claim_one(layout, "worker-0") is None
 
 
-def test_claim_one_exclusive(layout, tmp_path):
-    """Two concurrent claimers: exactly one wins."""
+def test_claim_one_exclusive(layout):
+    """Two sequential claimers: exactly one wins."""
     write_pending(layout, _spec())
-    results = []
-    results.append(claim_one(layout, "worker-0"))
-    results.append(claim_one(layout, "worker-1"))
-    claimed = [r for r in results if r is not None]
+    r0 = claim_one(layout, "worker-0")
+    r1 = claim_one(layout, "worker-1")
+    claimed = [r for r in (r0, r1) if r is not None]
     assert len(claimed) == 1
 
 
@@ -167,10 +176,25 @@ def test_clear_queue_recovers_orphans(layout):
     spec = _spec()
     write_pending(layout, spec)
     claim_one(layout, "worker-0")
-    # simulate crash: running file remains, we clear and recover
+    # simulate crash: running file remains; clear should put it back in pending
     clear_queue(layout)
-    # orphan should be back in pending
     assert (layout.pending / "0000001-ts01.json").exists()
+
+
+def test_clear_queue_wipes_done_and_failed(layout):
+    spec = _spec()
+    write_pending(layout, spec)
+    claim_one(layout, "worker-0")
+    mark_done(layout, "worker-0", spec, final_loss=0.1, device="cpu")
+    # write a second spec directly to failed
+    spec2 = _spec("0000002-ts02")
+    write_pending(layout, spec2)
+    claim_one(layout, "worker-0")
+    mark_failed(layout, "worker-0", spec2, error="boom")
+
+    clear_queue(layout)
+    assert list(layout.done.glob("*.json")) == []
+    assert list(layout.failed.glob("*.json")) == []
 
 
 def test_compute_fingerprint_is_deterministic():
@@ -186,23 +210,30 @@ def test_compute_fingerprint_differs_on_change():
     assert fp1 != fp2
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
 cd /Users/tegunovd/dev/miss-alignment
-pytest tests/distributed/test_queue.py -v 2>&1 | head -30
+pytest tests/distributed/test_queue.py -v 2>&1 | head -20
 ```
 
 Expected: `ModuleNotFoundError: No module named 'miss_alignment.distributed'`
 
-- [ ] **Step 3: Create `__init__.py` skeleton**
+- [ ] **Step 4: Create `__main__.py` and `distributed/__init__.py` skeleton**
+
+```python
+# src/miss_alignment/__main__.py
+from miss_alignment import cli
+
+cli()
+```
 
 ```python
 # src/miss_alignment/distributed/__init__.py
 """Disk-based distributed task queue for miss-alignment inference."""
 ```
 
-- [ ] **Step 4: Implement `queue.py`**
+- [ ] **Step 5: Implement `queue.py`**
 
 ```python
 # src/miss_alignment/distributed/queue.py
@@ -361,8 +392,7 @@ def mark_done(
     data["final_loss"] = final_loss
     data["device"] = device
     _atomic_write(layout.done / f"{spec.task_id}.json", data)
-    running_path = layout.worker_dir(worker_id) / f"{spec.task_id}.json"
-    running_path.unlink(missing_ok=True)
+    (layout.worker_dir(worker_id) / f"{spec.task_id}.json").unlink(missing_ok=True)
 
 
 def mark_failed(
@@ -376,13 +406,19 @@ def mark_failed(
     data["error"] = error
     data["worker_id"] = worker_id
     _atomic_write(layout.failed / f"{spec.task_id}.json", data)
-    running_path = layout.worker_dir(worker_id) / f"{spec.task_id}.json"
-    running_path.unlink(missing_ok=True)
+    (layout.worker_dir(worker_id) / f"{spec.task_id}.json").unlink(missing_ok=True)
 
 
 def clear_queue(layout: QueueLayout) -> None:
-    """Delete stale queue state from a prior run; recover running orphans to pending."""
-    # recover orphaned running tasks back to pending
+    """Delete stale queue state from a prior run; recover running orphans to pending.
+
+    Order matters: wipe pending/done/failed first, THEN recover orphans into
+    the now-empty pending/ so they are not immediately re-deleted.
+    """
+    for directory in (layout.pending, layout.done, layout.failed):
+        for f in directory.glob("*.json"):
+            f.unlink(missing_ok=True)
+
     for worker_dir in layout.running.iterdir():
         if not worker_dir.is_dir():
             continue
@@ -392,28 +428,30 @@ def clear_queue(layout: QueueLayout) -> None:
                 os.rename(task_file, dest)
             except FileNotFoundError:
                 pass
+        for hb in worker_dir.glob("hb-*"):
+            hb.unlink(missing_ok=True)
         try:
             worker_dir.rmdir()
         except OSError:
-            pass  # not empty; will be swept later
-
-    for directory in (layout.pending, layout.done, layout.failed):
-        for f in directory.glob("*.json"):
-            f.unlink(missing_ok=True)
+            pass  # not empty yet; scheduler will sweep it
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
 pytest tests/distributed/test_queue.py -v
 ```
 
-Expected: all 9 tests PASS.
+Expected: all 10 tests PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/miss_alignment/distributed/__init__.py src/miss_alignment/distributed/queue.py tests/distributed/__init__.py tests/distributed/test_queue.py
+git add src/miss_alignment/__main__.py \
+        src/miss_alignment/distributed/__init__.py \
+        src/miss_alignment/distributed/queue.py \
+        tests/distributed/__init__.py \
+        tests/distributed/test_queue.py
 git commit -m "feat: add distributed queue layer with atomic rename claim protocol"
 ```
 
@@ -426,16 +464,14 @@ git commit -m "feat: add distributed queue layer with atomic rename claim protoc
 - Create: `tests/distributed/test_config.py`
 
 **Interfaces:**
-- Consumes: nothing.
 - Produces:
-  - `ClusterConfig` — `dataclass` with fields: `submit: str`, `submit_job_id_regex: str`, `cancel: str`, `script_path: Path`.
-  - `load_cluster_config() -> ClusterConfig | None` — reads `MISS_CLUSTER_CONFIG` and `MISS_CLUSTER_SCRIPT`; returns `None` if either is unset.
+  - `ClusterConfig` — dataclass with fields: `submit: str`, `submit_job_id_regex: str`, `cancel: str`, `script_path: Path`.
+  - `load_cluster_config() -> ClusterConfig` — reads `MISS_CLUSTER_CONFIG` and `MISS_CLUSTER_SCRIPT`; raises `RuntimeError` if either is unset, `FileNotFoundError` if a path doesn't exist, `KeyError` if a required JSON key is missing.
 
 - [ ] **Step 1: Write failing tests**
 
 ```python
 # tests/distributed/test_config.py
-import os
 import json
 import pytest
 from pathlib import Path
@@ -461,16 +497,18 @@ def cluster_script(tmp_path):
     return p
 
 
-def test_load_cluster_config_returns_none_when_unset(monkeypatch):
+def test_load_cluster_config_raises_when_config_unset(monkeypatch):
     monkeypatch.delenv("MISS_CLUSTER_CONFIG", raising=False)
     monkeypatch.delenv("MISS_CLUSTER_SCRIPT", raising=False)
-    assert load_cluster_config() is None
+    with pytest.raises(RuntimeError, match="MISS_CLUSTER_CONFIG"):
+        load_cluster_config()
 
 
-def test_load_cluster_config_returns_none_when_only_one_set(monkeypatch, cluster_json):
+def test_load_cluster_config_raises_when_script_unset(monkeypatch, cluster_json):
     monkeypatch.setenv("MISS_CLUSTER_CONFIG", str(cluster_json))
     monkeypatch.delenv("MISS_CLUSTER_SCRIPT", raising=False)
-    assert load_cluster_config() is None
+    with pytest.raises(RuntimeError, match="MISS_CLUSTER_SCRIPT"):
+        load_cluster_config()
 
 
 def test_load_cluster_config_returns_config(monkeypatch, cluster_json, cluster_script):
@@ -505,7 +543,7 @@ def test_load_cluster_config_raises_on_missing_key(monkeypatch, tmp_path, cluste
 pytest tests/distributed/test_config.py -v 2>&1 | head -20
 ```
 
-Expected: `ImportError` or `ModuleNotFoundError`.
+Expected: `ImportError` for `miss_alignment.distributed.config`.
 
 - [ ] **Step 3: Implement `config.py`**
 
@@ -513,9 +551,9 @@ Expected: `ImportError` or `ModuleNotFoundError`.
 # src/miss_alignment/distributed/config.py
 """Read cluster configuration from environment variables.
 
-Cluster mode is activated when both MISS_CLUSTER_CONFIG and MISS_CLUSTER_SCRIPT
-are set. If either is absent, load_cluster_config() returns None and
-LocalProvisioner is used instead.
+load_cluster_config() is called only when --n-cluster-workers is set.
+It raises RuntimeError immediately if either required env var is absent,
+so the user gets a clear error rather than a silent fallback to local mode.
 """
 
 from __future__ import annotations
@@ -534,13 +572,23 @@ class ClusterConfig:
     script_path: Path
 
 
-def load_cluster_config() -> ClusterConfig | None:
-    """Return ClusterConfig if both env vars are set, else None."""
+def load_cluster_config() -> ClusterConfig:
+    """Return ClusterConfig. Raises RuntimeError if env vars are missing."""
     config_path_str = os.environ.get("MISS_CLUSTER_CONFIG")
-    script_path_str = os.environ.get("MISS_CLUSTER_SCRIPT")
+    if not config_path_str:
+        raise RuntimeError(
+            "MISS_CLUSTER_CONFIG environment variable is required when "
+            "--n-cluster-workers is set. Point it to a JSON file with "
+            "'submit', 'submit_job_id_regex', and 'cancel' keys."
+        )
 
-    if not config_path_str or not script_path_str:
-        return None
+    script_path_str = os.environ.get("MISS_CLUSTER_SCRIPT")
+    if not script_path_str:
+        raise RuntimeError(
+            "MISS_CLUSTER_SCRIPT environment variable is required when "
+            "--n-cluster-workers is set. Point it to a shell script template "
+            "containing a {{command}} placeholder."
+        )
 
     config_path = Path(config_path_str)
     script_path = Path(script_path_str)
@@ -571,7 +619,7 @@ Expected: all 5 tests PASS.
 
 ```bash
 git add src/miss_alignment/distributed/config.py tests/distributed/test_config.py
-git commit -m "feat: add cluster config reader (MISS_CLUSTER_CONFIG + MISS_CLUSTER_SCRIPT)"
+git commit -m "feat: add cluster config reader (raises if env vars missing)"
 ```
 
 ---
@@ -585,9 +633,11 @@ git commit -m "feat: add cluster config reader (MISS_CLUSTER_CONFIG + MISS_CLUST
 **Interfaces:**
 - Consumes:
   - `QueueLayout`, `TaskSpec`, `claim_one`, `mark_done`, `mark_failed` from `distributed/queue.py`
+  - `MissAlignment` from `..models.models`
+  - `evaluate_tilt_series` from `..alignment.tilt_series` (after Task 4 adds the `model` param)
 - Produces:
-  - `worker_miss_align(queue_dir: Path, device: int, worker_id: str | None)` — Typer command entry point; loops until queue empty or manager heartbeat stale.
-  - `run_worker_loop(layout: QueueLayout, worker_id: str, device: str, manager_hb_timeout_s: float) -> None` — testable loop body.
+  - `run_worker_loop(layout, worker_id, device, manager_hb_timeout_s) -> None` — testable loop body.
+  - `worker_miss_align(queue_dir, device, worker_id)` — Typer command.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -595,21 +645,18 @@ git commit -m "feat: add cluster config reader (MISS_CLUSTER_CONFIG + MISS_CLUST
 # tests/distributed/test_worker.py
 """Unit tests for the worker claim loop.
 
-These tests do NOT call evaluate_tilt_series; they mock it to keep
-tests fast and free of CUDA/warpylib dependencies.
+evaluate_tilt_series is mocked throughout; these tests validate the claim,
+model-reuse, heartbeat-exit, and result-write logic without CUDA.
 """
 import json
+import os
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from miss_alignment.distributed.queue import (
-    QueueLayout,
-    TaskSpec,
-    write_pending,
-)
+from miss_alignment.distributed.queue import QueueLayout, TaskSpec, write_pending
 from miss_alignment.distributed.worker import run_worker_loop
 
 
@@ -621,17 +668,16 @@ def layout(tmp_path):
 
 
 def _write_manager_hb(layout, seq=0):
-    """Write a fresh manager heartbeat tick."""
     for old in layout.manager_hb.glob("hb-*"):
         old.unlink(missing_ok=True)
     (layout.manager_hb / f"hb-{seq}").write_text("")
 
 
-def _spec(task_id="0000001-ts01"):
+def _spec(task_id="0000001-ts01", fingerprint="abc123"):
     return TaskSpec(
         task_id=task_id,
         model_checkpoint_path="/data/model.ckpt",
-        tilt_series_path="/data/ts01.xml",
+        tilt_series_path=f"/data/{task_id}.xml",
         output_directory="/data/out",
         setting="anchoring",
         patch_size=96,
@@ -639,18 +685,20 @@ def _spec(task_id="0000001-ts01"):
         batch_size=32,
         apply_ctf=False,
         downsample=2,
-        init_fingerprint="abc123",
+        init_fingerprint=fingerprint,
     )
 
 
-def test_worker_processes_task_and_writes_done(layout, tmp_path):
+def test_worker_processes_task_and_writes_done(layout):
     _write_manager_hb(layout)
     write_pending(layout, _spec())
 
-    fake_loss = [0.5, 0.3, 0.1]
     with patch(
         "miss_alignment.distributed.worker.evaluate_tilt_series",
-        return_value=(Path("/data/ts01.xml"), fake_loss),
+        return_value=(Path("/data/ts01.xml"), [0.5, 0.3, 0.1]),
+    ), patch(
+        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+        return_value=MagicMock(),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
@@ -667,6 +715,9 @@ def test_worker_writes_failed_on_exception(layout):
     with patch(
         "miss_alignment.distributed.worker.evaluate_tilt_series",
         side_effect=RuntimeError("CUDA OOM"),
+    ), patch(
+        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+        return_value=MagicMock(),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
@@ -677,12 +728,10 @@ def test_worker_writes_failed_on_exception(layout):
 
 
 def test_worker_exits_when_manager_hb_stale(layout):
-    # Write a manager heartbeat that is already old
+    # Write a heartbeat file that is 200 seconds old
     hb_file = layout.manager_hb / "hb-0"
     hb_file.write_text("")
-    # Make it appear 200 seconds old by back-dating mtime
     old_time = time.time() - 200
-    import os
     os.utime(hb_file, (old_time, old_time))
 
     write_pending(layout, _spec())
@@ -691,49 +740,67 @@ def test_worker_exits_when_manager_hb_stale(layout):
     with patch(
         "miss_alignment.distributed.worker.evaluate_tilt_series",
         side_effect=lambda **kw: called.append(True),
+    ), patch(
+        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+        return_value=MagicMock(),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=120.0)
 
-    # Worker should exit without processing the task
     assert called == []
 
 
 def test_worker_reuses_model_when_fingerprint_matches(layout):
     """Model is loaded once when two tasks share the same init_fingerprint."""
     _write_manager_hb(layout)
-    spec1 = _spec("0000001-ts01")
-    spec2 = TaskSpec(
-        task_id="0000002-ts02",
-        model_checkpoint_path="/data/model.ckpt",
-        tilt_series_path="/data/ts02.xml",
-        output_directory="/data/out",
-        setting="anchoring",
-        patch_size=96,
-        patch_overlap=0.1,
-        batch_size=32,
-        apply_ctf=False,
-        downsample=2,
-        init_fingerprint="abc123",  # same fingerprint
-    )
-    write_pending(layout, spec1)
-    write_pending(layout, spec2)
+    write_pending(layout, _spec("0000001-ts01", fingerprint="same"))
+    write_pending(layout, _spec("0000002-ts02", fingerprint="same"))
 
     load_calls = []
 
     def fake_evaluate(**kwargs):
         return (Path(kwargs["tilt_series_path"]), [0.1])
 
+    def fake_load(path, map_location=None):
+        load_calls.append(path)
+        return MagicMock()
+
     with patch(
         "miss_alignment.distributed.worker.evaluate_tilt_series",
         side_effect=fake_evaluate,
+    ), patch(
+        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+        side_effect=fake_load,
     ):
-        with patch(
-            "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
-        ) as mock_load:
-            mock_load.return_value = mock_load  # return self as stub
-            run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
-            # Model should only be loaded once despite two tasks
-            assert mock_load.call_count == 1
+        run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
+
+    assert len(load_calls) == 1  # loaded once despite two tasks
+
+
+def test_worker_reloads_model_when_fingerprint_changes(layout):
+    """Model is reloaded when fingerprint differs between tasks."""
+    _write_manager_hb(layout)
+    write_pending(layout, _spec("0000001-ts01", fingerprint="fp-a"))
+    write_pending(layout, _spec("0000002-ts02", fingerprint="fp-b"))
+
+    load_calls = []
+
+    def fake_evaluate(**kwargs):
+        return (Path(kwargs["tilt_series_path"]), [0.1])
+
+    def fake_load(path, map_location=None):
+        load_calls.append(path)
+        return MagicMock()
+
+    with patch(
+        "miss_alignment.distributed.worker.evaluate_tilt_series",
+        side_effect=fake_evaluate,
+    ), patch(
+        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+        side_effect=fake_load,
+    ):
+        run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
+
+    assert len(load_calls) == 2
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -749,6 +816,10 @@ Expected: `ImportError` for `miss_alignment.distributed.worker`.
 ```python
 # src/miss_alignment/distributed/worker.py
 """Worker subcommand: claims tasks from the queue and runs evaluate_tilt_series.
+
+Each worker processes many series per run. The model checkpoint is loaded once
+when the first task is claimed, then reused for all subsequent tasks that share
+the same init_fingerprint (all tasks in one alignment phase do).
 
 Usage (launched by provisioner):
     miss-alignment worker --queue-dir <path> --device <int> [--worker-id <str>]
@@ -775,19 +846,15 @@ from .queue import (
     mark_failed,
 )
 
-# Seconds without a manager heartbeat tick before the worker exits.
 _MANAGER_HB_TIMEOUT_S = 120.0
-# Seconds between heartbeat writes.
 _HB_INTERVAL_S = 5.0
 
 
 def _write_worker_hb(worker_dir: Path, seq: int) -> None:
-    """Write a new heartbeat tick, removing the previous one."""
     new_hb = worker_dir / f"hb-{seq}"
     new_hb.write_text("")
     if seq > 0:
-        old_hb = worker_dir / f"hb-{seq - 1}"
-        old_hb.unlink(missing_ok=True)
+        (worker_dir / f"hb-{seq - 1}").unlink(missing_ok=True)
 
 
 def _manager_hb_age_s(layout: QueueLayout) -> float:
@@ -799,36 +866,38 @@ def _manager_hb_age_s(layout: QueueLayout) -> float:
     return time.time() - latest.stat().st_mtime
 
 
+def _load_model(checkpoint_path: str) -> MissAlignment:
+    model = MissAlignment.load_from_checkpoint(checkpoint_path, map_location="cpu")
+    # Unwrap torch.compile: incompatible with spawned processes (see tilt_series.py).
+    if hasattr(model.net, "_orig_mod"):
+        model.net = model.net._orig_mod
+    return model
+
+
 def run_worker_loop(
     layout: QueueLayout,
     worker_id: str,
     device: str,
     manager_hb_timeout_s: float = _MANAGER_HB_TIMEOUT_S,
 ) -> None:
-    """Main worker loop: claim → check heartbeat → evaluate → write result.
-
-    Separated from the Typer command for testability.
-    """
+    """Main worker loop: claim → evaluate → write result. Repeat until queue empty."""
     worker_dir = layout.worker_dir(worker_id)
     worker_dir.mkdir(parents=True, exist_ok=True)
 
     last_fingerprint: str | None = None
-    loaded_model = None
+    cached_model: MissAlignment | None = None
     hb_seq = 0
     last_hb_time = 0.0
 
     while True:
-        # Check manager heartbeat before every claim attempt.
         age = _manager_hb_age_s(layout)
         if age > manager_hb_timeout_s:
             print(
-                f"[{worker_id}] Manager heartbeat stale ({age:.0f}s > "
-                f"{manager_hb_timeout_s:.0f}s). Exiting.",
+                f"[{worker_id}] Manager heartbeat stale ({age:.0f}s). Exiting.",
                 file=sys.stderr,
             )
             return
 
-        # Write our own heartbeat if due.
         now = time.time()
         if now - last_hb_time >= _HB_INTERVAL_S:
             _write_worker_hb(worker_dir, hb_seq)
@@ -841,25 +910,28 @@ def run_worker_loop(
 
         print(f"[{worker_id}] Claimed {spec.task_id}", file=sys.stderr)
 
-        # Load model only when fingerprint changes.
         if spec.init_fingerprint != last_fingerprint:
-            loaded_model = MissAlignment.load_from_checkpoint(
-                spec.model_checkpoint_path, map_location="cpu"
-            )
+            cached_model = _load_model(spec.model_checkpoint_path)
             last_fingerprint = spec.init_fingerprint
+
+        # Convert setting back to tuple if it was serialized as a list.
+        setting = (
+            tuple(spec.setting) if isinstance(spec.setting, list) else spec.setting
+        )
 
         try:
             _, loss_values = evaluate_tilt_series(
                 model_checkpoint_path=Path(spec.model_checkpoint_path),
                 tilt_series_path=Path(spec.tilt_series_path),
                 output_directory=Path(spec.output_directory),
-                setting=spec.setting,
+                setting=setting,
                 patch_size=spec.patch_size,
                 patch_overlap=spec.patch_overlap,
                 batch_size=spec.batch_size,
                 apply_ctf=spec.apply_ctf,
                 downsample=spec.downsample,
                 device=device,
+                model=cached_model,
             )
             final_loss = float(loss_values[-1]) if loss_values else float("nan")
             mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
@@ -891,7 +963,6 @@ def worker_miss_align(
     layout.ensure_directories()
 
     cuda_device = f"cuda:{device}" if torch.cuda.is_available() else "cpu"
-
     run_worker_loop(layout, worker_id, cuda_device)
 ```
 
@@ -901,18 +972,99 @@ def worker_miss_align(
 pytest tests/distributed/test_worker.py -v
 ```
 
-Expected: all 4 tests PASS.
+Expected: all 5 tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/miss_alignment/distributed/worker.py tests/distributed/test_worker.py
-git commit -m "feat: add worker subcommand with claim loop and model fingerprint reuse"
+git commit -m "feat: add worker subcommand with model fingerprint reuse across tasks"
 ```
 
 ---
 
-## Task 4: Provisioners (`distributed/provisioner.py`)
+## Task 4: Add `model` parameter to `evaluate_tilt_series`
+
+**Files:**
+- Modify: `src/miss_alignment/alignment/tilt_series.py`
+
+**Interfaces:**
+- Produces: `evaluate_tilt_series(..., model: MissAlignment | None = None)` — when `model` is provided, uses it directly instead of loading from disk. All existing callers unaffected.
+
+- [ ] **Step 1: Read the current model-loading block**
+
+Open `src/miss_alignment/alignment/tilt_series.py` at lines 118–186. The relevant section is:
+
+```python
+# line 131 ends the signature
+) -> tuple[Path, list[float]]:
+    ...
+    # line 172
+    model = MissAlignment.load_from_checkpoint(
+        model_checkpoint_path,
+        map_location="cpu",
+    )
+    # line 184
+    if hasattr(model.net, "_orig_mod"):
+        model.net = model.net._orig_mod
+```
+
+- [ ] **Step 2: Add the `model` parameter to the signature**
+
+In `src/miss_alignment/alignment/tilt_series.py`, add `model` as the last parameter before the closing `)`:
+
+```python
+# Before:
+    n_control_points: int = 7,
+) -> tuple[Path, list[float]]:
+
+# After:
+    n_control_points: int = 7,
+    model: "MissAlignment | None" = None,
+) -> tuple[Path, list[float]]:
+```
+
+Use a string annotation to avoid a circular import (the type is already imported at the top of the file — verify with `grep "MissAlignment" src/miss_alignment/alignment/tilt_series.py` before committing; if already imported, use the bare type).
+
+- [ ] **Step 3: Replace the model-loading block**
+
+```python
+# Before (lines ~172-185):
+    model = MissAlignment.load_from_checkpoint(
+        model_checkpoint_path,
+        map_location="cpu",
+    )
+    if hasattr(model.net, "_orig_mod"):
+        model.net = model.net._orig_mod
+
+# After:
+    if model is None:
+        model = MissAlignment.load_from_checkpoint(
+            model_checkpoint_path,
+            map_location="cpu",
+        )
+        if hasattr(model.net, "_orig_mod"):
+            model.net = model.net._orig_mod
+```
+
+- [ ] **Step 4: Run the existing alignment tests to verify nothing broke**
+
+```bash
+pytest tests/alignment/ -v
+```
+
+Expected: all tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/miss_alignment/alignment/tilt_series.py
+git commit -m "feat: add optional model param to evaluate_tilt_series for checkpoint reuse"
+```
+
+---
+
+## Task 5: Provisioners (`distributed/provisioner.py`)
 
 **Files:**
 - Create: `src/miss_alignment/distributed/provisioner.py`
@@ -921,19 +1073,17 @@ git commit -m "feat: add worker subcommand with claim loop and model fingerprint
 **Interfaces:**
 - Consumes: `ClusterConfig` from `distributed/config.py`.
 - Produces:
-  - `WorkerProvisioner` — ABC with `ensure_workers(n_tasks: int) -> None` and `shutdown() -> None`.
-  - `LocalProvisioner(queue_dir: Path, devices: list[int])` — spawns `miss-alignment worker` child processes.
-  - `ClusterProvisioner(queue_dir: Path, config: ClusterConfig, n_tasks: int)` — submits cluster jobs.
+  - `WorkerProvisioner` — ABC with `ensure_workers(n_workers: int) -> None` and `shutdown() -> None`.
+  - `LocalProvisioner(queue_dir: Path, devices: list[int])` — spawns `python -m miss_alignment worker` child processes, one per device. Ignores `n_workers`.
+  - `ClusterProvisioner(queue_dir: Path, config: ClusterConfig)` — submits exactly `n_workers` cluster jobs on the first `ensure_workers` call.
 
 - [ ] **Step 1: Write failing tests**
 
 ```python
 # tests/distributed/test_provisioner.py
-"""Tests for LocalProvisioner and ClusterProvisioner."""
-import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -944,46 +1094,58 @@ from miss_alignment.distributed.provisioner import ClusterProvisioner, LocalProv
 def test_local_provisioner_spawns_one_process_per_device(tmp_path):
     with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
-        mock_proc.poll.return_value = None  # still running
+        mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
-        p = LocalProvisioner(queue_dir=tmp_path, devices=[0, 1])
-        p.ensure_workers(n_tasks=10)
+        p = LocalProvisioner(queue_dir=tmp_path, devices=[0, 1, 2])
+        p.ensure_workers(n_workers=10)
 
-        assert mock_popen.call_count == 2
-        # Each call should pass --device 0 and --device 1
-        calls_str = [str(c) for c in mock_popen.call_args_list]
-        assert any("--device" in s and "0" in s for s in calls_str)
-        assert any("--device" in s and "1" in s for s in calls_str)
+        assert mock_popen.call_count == 3
+        # verify device args
+        all_args = [str(c) for c in mock_popen.call_args_list]
+        assert any("'0'" in s or '"0"' in s or "0" in s for s in all_args)
 
 
-def test_local_provisioner_shutdown_terminates_processes(tmp_path):
+def test_local_provisioner_does_not_respawn_running(tmp_path):
     with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
         p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
-        p.ensure_workers(n_tasks=5)
+        p.ensure_workers(n_workers=5)
+        p.ensure_workers(n_workers=5)
+
+        assert mock_popen.call_count == 1
+
+
+def test_local_provisioner_respawns_dead_worker(tmp_path):
+    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0  # exited
+        mock_popen.return_value = mock_proc
+
+        p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
+        p.ensure_workers(n_workers=5)
+        p.ensure_workers(n_workers=5)  # should respawn because poll() != None
+
+        assert mock_popen.call_count == 2
+
+
+def test_local_provisioner_shutdown_terminates(tmp_path):
+    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
+        p.ensure_workers(n_workers=5)
         p.shutdown()
 
         mock_proc.terminate.assert_called()
 
 
-def test_local_provisioner_does_not_respawn_running_processes(tmp_path):
-    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None  # still running
-        mock_popen.return_value = mock_proc
-
-        p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
-        p.ensure_workers(n_tasks=5)
-        p.ensure_workers(n_tasks=5)  # second call should not spawn again
-
-        assert mock_popen.call_count == 1
-
-
-def test_cluster_provisioner_submits_one_job_per_task(tmp_path):
+def test_cluster_provisioner_submits_n_workers_jobs(tmp_path):
     script = tmp_path / "worker.sh"
     script.write_text("#!/bin/bash\n{{command}}\n")
     cfg = ClusterConfig(
@@ -1001,14 +1163,16 @@ def test_cluster_provisioner_submits_one_job_per_task(tmp_path):
         result.stdout = "Submitted batch job 12345\n"
         return result
 
-    with patch("miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run):
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
-        p.ensure_workers(n_tasks=3)
+        p.ensure_workers(n_workers=4)
 
-    assert len(submitted) == 3
+    assert len(submitted) == 4
 
 
-def test_cluster_provisioner_cancels_jobs_on_shutdown(tmp_path):
+def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
     script = tmp_path / "worker.sh"
     script.write_text("#!/bin/bash\n{{command}}\n")
     cfg = ClusterConfig(
@@ -1028,12 +1192,14 @@ def test_cluster_provisioner_cancels_jobs_on_shutdown(tmp_path):
         cancel_calls.append(cmd)
         return MagicMock()
 
-    with patch("miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run):
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
-        p.ensure_workers(n_tasks=2)
+        p.ensure_workers(n_workers=3)
         p.shutdown()
 
-    assert len(cancel_calls) == 2
+    assert len(cancel_calls) == 3
     assert all("scancel" in c for c in cancel_calls)
 ```
 
@@ -1053,20 +1219,20 @@ Expected: `ImportError` for `miss_alignment.distributed.provisioner`.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from string import Template
 
 from .config import ClusterConfig
 
 
 class WorkerProvisioner(ABC):
     @abstractmethod
-    def ensure_workers(self, n_tasks: int) -> None:
-        """Ensure sufficient workers are running for n_tasks tasks."""
+    def ensure_workers(self, n_workers: int) -> None:
+        """Ensure workers are running. Called once at startup and each scheduler tick."""
 
     @abstractmethod
     def shutdown(self) -> None:
@@ -1074,14 +1240,14 @@ class WorkerProvisioner(ABC):
 
 
 class LocalProvisioner(WorkerProvisioner):
-    """Spawns miss-alignment worker child processes, one per GPU device."""
+    """Spawns one miss-alignment worker subprocess per GPU device."""
 
     def __init__(self, queue_dir: Path, devices: list[int]) -> None:
         self._queue_dir = queue_dir
         self._devices = devices
-        self._procs: dict[int, subprocess.Popen] = {}  # device -> process
+        self._procs: dict[int, subprocess.Popen] = {}
 
-    def ensure_workers(self, n_tasks: int) -> None:
+    def ensure_workers(self, n_workers: int) -> None:
         for device in self._devices:
             proc = self._procs.get(device)
             if proc is not None and proc.poll() is None:
@@ -1115,7 +1281,7 @@ class LocalProvisioner(WorkerProvisioner):
 
 
 class ClusterProvisioner(WorkerProvisioner):
-    """Submits one cluster job per task via a configurable submit command."""
+    """Submits exactly n_workers cluster jobs, each running until the queue drains."""
 
     def __init__(self, queue_dir: Path, config: ClusterConfig) -> None:
         self._queue_dir = queue_dir
@@ -1125,19 +1291,14 @@ class ClusterProvisioner(WorkerProvisioner):
         self._scripts_dir.mkdir(parents=True, exist_ok=True)
 
     def _render_script(self, index: int) -> Path:
-        """Render the .sh template for one worker and write it to tasks/cluster/."""
         template_text = self._config.script_path.read_text()
-        # The {{command}} in the template uses shell-evaluated $(hostname) and $$
-        # so worker IDs are unique per compute node at runtime.
+        # $(hostname) and $$ are expanded by the compute node's shell at runtime.
         command = (
             f"miss-alignment worker"
             f" --queue-dir {self._queue_dir}"
             f" --device 0"
             f' --worker-id "$(hostname)-$$-{index}"'
         )
-        # Replace {{command}} and any {{MISS_CLUSTER_VAR_*}} env var placeholders.
-        import os
-
         rendered = template_text.replace("{{command}}", command)
         for key, value in os.environ.items():
             if key.startswith("MISS_CLUSTER_VAR_"):
@@ -1148,9 +1309,9 @@ class ClusterProvisioner(WorkerProvisioner):
         script_path.write_text(rendered)
         return script_path
 
-    def ensure_workers(self, n_tasks: int) -> None:
+    def ensure_workers(self, n_workers: int) -> None:
         already = len(self._job_ids)
-        for i in range(already, n_tasks):
+        for i in range(already, n_workers):
             script_path = self._render_script(i)
             submit_cmd = self._config.submit.replace(
                 "{{script_path}}", str(script_path)
@@ -1158,7 +1319,6 @@ class ClusterProvisioner(WorkerProvisioner):
             result = subprocess.run(
                 submit_cmd,
                 shell=True,
-                capture_output=False,
                 stdout=subprocess.PIPE,
                 stderr=sys.stderr,
                 text=True,
@@ -1180,7 +1340,7 @@ class ClusterProvisioner(WorkerProvisioner):
 pytest tests/distributed/test_provisioner.py -v
 ```
 
-Expected: all 5 tests PASS.
+Expected: all 6 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1191,7 +1351,7 @@ git commit -m "feat: add LocalProvisioner and ClusterProvisioner"
 
 ---
 
-## Task 5: Manager (`distributed/manager.py`)
+## Task 6: Manager (`distributed/manager.py`)
 
 **Files:**
 - Create: `src/miss_alignment/distributed/manager.py`
@@ -1202,39 +1362,28 @@ git commit -m "feat: add LocalProvisioner and ClusterProvisioner"
   - `QueueLayout`, `TaskSpec`, `write_pending`, `clear_queue`, `compute_fingerprint` from `distributed/queue.py`
   - `WorkerProvisioner` from `distributed/provisioner.py`
 - Produces:
-  - `run_distributed(tilt_series_list: list[Path], model_checkpoint: Path, output_directory: Path, setting: str | tuple, patch_size: int, patch_overlap: float, batch_size: int, apply_ctf: bool, downsample: int, devices: list[int], queue_root: Path, cluster_config: ClusterConfig | None) -> dict[str, float]`
+  - `run_distributed(tilt_series_list, model_checkpoint, output_directory, setting, patch_size, patch_overlap, batch_size, apply_ctf, downsample, devices, n_cluster_workers, queue_root) -> dict[str, float]`
 
 - [ ] **Step 1: Write failing tests**
 
 ```python
 # tests/distributed/test_manager.py
-"""Integration tests for the manager coordinator."""
+"""Integration tests for the manager coordinator.
+
+A fake worker thread simulates cluster workers by polling pending/ and
+writing done/ or failed/ files.
+"""
 import json
+import os
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from miss_alignment.distributed.manager import run_distributed
-from miss_alignment.distributed.queue import QueueLayout, mark_done, mark_failed
-
-
-def _fake_provisioner_class(layout):
-    """Returns a provisioner that writes done files for each pending task."""
-
-    class FakeProvisioner:
-        def __init__(self, *a, **kw):
-            pass
-
-        def ensure_workers(self, n_tasks):
-            pass
-
-        def shutdown(self):
-            pass
-
-    return FakeProvisioner
+from miss_alignment.distributed.queue import QueueLayout
 
 
 def _make_xml(tmp_path, name):
@@ -1243,45 +1392,61 @@ def _make_xml(tmp_path, name):
     return p
 
 
-def test_run_distributed_returns_losses(tmp_path):
-    """Manager resolves all tasks completed by a simulated worker thread."""
-    xml1 = _make_xml(tmp_path, "ts01")
-    xml2 = _make_xml(tmp_path, "ts02")
-    ckpt = tmp_path / "model.ckpt"
-    ckpt.write_text("")
+def _fake_worker_thread(queue_root, n_tasks, fail=False):
+    """Simulates a worker: claims pending tasks, writes done or failed."""
 
-    queue_root = tmp_path / "tasks"
-
-    # Simulate a worker: poll pending/ and write done/ files
-    def fake_worker(layout_root):
-        layout = QueueLayout(layout_root)
-        deadline = time.time() + 10
+    def _run():
+        layout = QueueLayout(queue_root)
         done_count = 0
-        while done_count < 2 and time.time() < deadline:
+        deadline = time.time() + 15
+        while done_count < n_tasks and time.time() < deadline:
             for f in list(layout.pending.glob("*.json")):
                 data = json.loads(f.read_text())
                 task_id = data["task_id"]
                 running_dir = layout.running / "fake-worker"
                 running_dir.mkdir(parents=True, exist_ok=True)
-                import os
                 try:
                     os.rename(f, running_dir / f.name)
                 except FileNotFoundError:
                     continue
-                done_data = {**data, "final_loss": 0.01, "device": "cpu"}
-                (layout.done / f"{task_id}.json").write_text(
-                    json.dumps(done_data)
-                )
+                if fail:
+                    fail_data = {**data, "error": "boom", "worker_id": "fake-worker"}
+                    (layout.failed / f"{task_id}.json").write_text(
+                        json.dumps(fail_data)
+                    )
+                else:
+                    done_data = {**data, "final_loss": 0.01, "device": "cpu"}
+                    (layout.done / f"{task_id}.json").write_text(
+                        json.dumps(done_data)
+                    )
                 (running_dir / f"{task_id}.json").unlink(missing_ok=True)
                 done_count += 1
             time.sleep(0.05)
 
-    worker_thread = threading.Thread(target=fake_worker, args=(queue_root,), daemon=True)
-    worker_thread.start()
+    return threading.Thread(target=_run, daemon=True)
+
+
+class _NoOpProvisioner:
+    def ensure_workers(self, n_workers):
+        pass
+
+    def shutdown(self):
+        pass
+
+
+def test_run_distributed_returns_losses(tmp_path):
+    xml1 = _make_xml(tmp_path, "ts01")
+    xml2 = _make_xml(tmp_path, "ts02")
+    ckpt = tmp_path / "model.ckpt"
+    ckpt.write_text("")
+    queue_root = tmp_path / "tasks"
+
+    worker = _fake_worker_thread(queue_root, n_tasks=2)
+    worker.start()
 
     with patch(
         "miss_alignment.distributed.manager.LocalProvisioner",
-        _fake_provisioner_class(None),
+        return_value=_NoOpProvisioner(),
     ):
         losses = run_distributed(
             tilt_series_list=[xml1, xml2],
@@ -1294,52 +1459,26 @@ def test_run_distributed_returns_losses(tmp_path):
             apply_ctf=False,
             downsample=2,
             devices=[0],
+            n_cluster_workers=None,
             queue_root=queue_root,
-            cluster_config=None,
         )
 
     assert set(losses.keys()) == {"ts01", "ts02"}
     assert all(v == pytest.approx(0.01) for v in losses.values())
 
 
-def test_run_distributed_raises_if_any_task_fails(tmp_path):
-    """Manager raises RuntimeError if any series ends in failed/."""
+def test_run_distributed_raises_on_any_failure(tmp_path):
     xml1 = _make_xml(tmp_path, "ts01")
     ckpt = tmp_path / "model.ckpt"
     ckpt.write_text("")
-
     queue_root = tmp_path / "tasks"
 
-    def fake_failing_worker(layout_root):
-        layout = QueueLayout(layout_root)
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            for f in list(layout.pending.glob("*.json")):
-                data = json.loads(f.read_text())
-                task_id = data["task_id"]
-                running_dir = layout.running / "fake-worker"
-                running_dir.mkdir(parents=True, exist_ok=True)
-                import os
-                try:
-                    os.rename(f, running_dir / f.name)
-                except FileNotFoundError:
-                    continue
-                fail_data = {**data, "error": "boom", "worker_id": "fake-worker"}
-                (layout.failed / f"{task_id}.json").write_text(
-                    json.dumps(fail_data)
-                )
-                (running_dir / f"{task_id}.json").unlink(missing_ok=True)
-                return
-            time.sleep(0.05)
-
-    worker_thread = threading.Thread(
-        target=fake_failing_worker, args=(queue_root,), daemon=True
-    )
-    worker_thread.start()
+    worker = _fake_worker_thread(queue_root, n_tasks=1, fail=True)
+    worker.start()
 
     with patch(
         "miss_alignment.distributed.manager.LocalProvisioner",
-        _fake_provisioner_class(None),
+        return_value=_NoOpProvisioner(),
     ):
         with pytest.raises(RuntimeError, match="ts01"):
             run_distributed(
@@ -1353,9 +1492,40 @@ def test_run_distributed_raises_if_any_task_fails(tmp_path):
                 apply_ctf=False,
                 downsample=2,
                 devices=[0],
+                n_cluster_workers=None,
                 queue_root=queue_root,
-                cluster_config=None,
             )
+
+
+def test_run_distributed_cleans_up_tasks_dir(tmp_path):
+    xml1 = _make_xml(tmp_path, "ts01")
+    ckpt = tmp_path / "model.ckpt"
+    ckpt.write_text("")
+    queue_root = tmp_path / "tasks"
+
+    worker = _fake_worker_thread(queue_root, n_tasks=1)
+    worker.start()
+
+    with patch(
+        "miss_alignment.distributed.manager.LocalProvisioner",
+        return_value=_NoOpProvisioner(),
+    ):
+        run_distributed(
+            tilt_series_list=[xml1],
+            model_checkpoint=ckpt,
+            output_directory=tmp_path,
+            setting="anchoring",
+            patch_size=96,
+            patch_overlap=0.1,
+            batch_size=32,
+            apply_ctf=False,
+            downsample=2,
+            devices=[0],
+            n_cluster_workers=None,
+            queue_root=queue_root,
+        )
+
+    assert not queue_root.exists()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1375,6 +1545,7 @@ Expected: `ImportError` for `miss_alignment.distributed.manager`.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import threading
 import time
@@ -1382,7 +1553,7 @@ from pathlib import Path
 
 import tqdm
 
-from .config import ClusterConfig
+from .config import load_cluster_config
 from .provisioner import ClusterProvisioner, LocalProvisioner, WorkerProvisioner
 from .queue import (
     QueueLayout,
@@ -1406,27 +1577,22 @@ def _write_manager_hb(layout: QueueLayout, seq: int) -> None:
     new_hb = layout.manager_hb / f"hb-{seq}"
     new_hb.write_text("")
     if seq > 0:
-        old_hb = layout.manager_hb / f"hb-{seq - 1}"
-        old_hb.unlink(missing_ok=True)
+        (layout.manager_hb / f"hb-{seq - 1}").unlink(missing_ok=True)
 
 
 def _sweep_stalled_workers(layout: QueueLayout) -> None:
-    """Move tasks from stalled worker dirs back to pending/."""
     for worker_dir in layout.running.iterdir():
         if not worker_dir.is_dir():
             continue
         ticks = list(worker_dir.glob("hb-*"))
         if ticks:
-            latest = max(ticks, key=lambda p: p.stat().st_mtime)
-            age = time.time() - latest.stat().st_mtime
+            age = time.time() - max(ticks, key=lambda p: p.stat().st_mtime).stat().st_mtime
         else:
-            # No heartbeat yet — use dir mtime as proxy
             age = time.time() - worker_dir.stat().st_mtime
 
         if age <= _WORKER_STALL_TIMEOUT_S:
             continue
 
-        # Worker is stalled — recover its tasks
         for task_file in worker_dir.glob("*.json"):
             dest = layout.pending / task_file.name
             try:
@@ -1438,7 +1604,6 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
                 )
             except FileNotFoundError:
                 pass
-        # Clean up heartbeat files
         for hb in worker_dir.glob("hb-*"):
             hb.unlink(missing_ok=True)
         try:
@@ -1450,11 +1615,11 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
 def _scheduler_thread(
     layout: QueueLayout,
     provisioner: WorkerProvisioner,
-    n_tasks: int,
+    n_workers: int,
     stop_event: threading.Event,
 ) -> None:
-    hb_seq = 0
-    last_hb = 0.0
+    hb_seq = 1  # seq 0 written before thread starts
+    last_hb = time.time()
     last_sweep = 0.0
 
     while not stop_event.is_set():
@@ -1467,7 +1632,7 @@ def _scheduler_thread(
 
         if now - last_sweep >= _SCHEDULER_INTERVAL_S:
             _sweep_stalled_workers(layout)
-            provisioner.ensure_workers(n_tasks)
+            provisioner.ensure_workers(n_workers)
             last_sweep = now
 
         stop_event.wait(timeout=1.0)
@@ -1484,19 +1649,18 @@ def run_distributed(
     apply_ctf: bool,
     downsample: int,
     devices: list[int],
+    n_cluster_workers: int | None,
     queue_root: Path,
-    cluster_config: ClusterConfig | None,
 ) -> dict[str, float]:
     """Write tasks, provision workers, block until all tasks are terminal.
 
-    Returns a dict mapping tilt-series name to final loss.
-    Raises RuntimeError listing all failed series if any task ends in failed/.
+    Returns dict[series_name → final_loss]. Raises RuntimeError listing all
+    failed series if any task ends in failed/. Deletes queue_root on exit.
     """
     layout = QueueLayout(queue_root)
     layout.ensure_directories()
     clear_queue(layout)
 
-    # Fingerprint is the same for all tasks in one alignment phase.
     fingerprint = compute_fingerprint(
         model_checkpoint_path=str(model_checkpoint),
         setting=setting if isinstance(setting, str) else list(setting),
@@ -1526,28 +1690,34 @@ def run_distributed(
         )
         write_pending(layout, spec)
 
-    n_tasks = len(tilt_series_list)
-    if cluster_config is not None:
+    # Write the first manager heartbeat before starting workers so workers
+    # never see a missing heartbeat on startup.
+    _write_manager_hb(layout, seq=0)
+
+    if n_cluster_workers is not None:
+        cluster_config = load_cluster_config()
         provisioner: WorkerProvisioner = ClusterProvisioner(
             queue_dir=queue_root, config=cluster_config
         )
+        n_workers = n_cluster_workers
     else:
         provisioner = LocalProvisioner(queue_dir=queue_root, devices=devices)
+        n_workers = len(devices)
 
     stop_event = threading.Event()
     scheduler = threading.Thread(
         target=_scheduler_thread,
-        args=(layout, provisioner, n_tasks, stop_event),
+        args=(layout, provisioner, n_workers, stop_event),
         daemon=True,
     )
     scheduler.start()
-    provisioner.ensure_workers(n_tasks)
+    provisioner.ensure_workers(n_workers)
 
     pending_ids = set(task_ids)
     losses: dict[str, float] = {}
     failed_series: list[str] = []
 
-    pbar = tqdm.tqdm(total=n_tasks, desc="Tilt series alignment", file=sys.stdout)
+    pbar = tqdm.tqdm(total=len(task_ids), desc="Tilt series alignment", file=sys.stdout)
     try:
         while pending_ids:
             time.sleep(_POLL_INTERVAL_S)
@@ -1578,6 +1748,7 @@ def run_distributed(
         stop_event.set()
         scheduler.join(timeout=5.0)
         provisioner.shutdown()
+        shutil.rmtree(queue_root, ignore_errors=True)
 
     if failed_series:
         raise RuntimeError(
@@ -1588,15 +1759,7 @@ def run_distributed(
     return losses
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
-
-```bash
-pytest tests/distributed/test_manager.py -v
-```
-
-Expected: both tests PASS.
-
-- [ ] **Step 5: Run all distributed tests together**
+- [ ] **Step 4: Run all distributed tests**
 
 ```bash
 pytest tests/distributed/ -v
@@ -1604,40 +1767,38 @@ pytest tests/distributed/ -v
 
 Expected: all tests PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/miss_alignment/distributed/manager.py tests/distributed/test_manager.py
-git commit -m "feat: add distributed manager with scheduler thread and poll loop"
+git commit -m "feat: add distributed manager with scheduler thread, poll loop, and cleanup"
 ```
 
 ---
 
-## Task 6: Wire up `alignment/parallel.py` and CLI; delete `_parallel.py`
+## Task 7: Wire up CLI, parallel, train, infer; delete `_parallel.py`
 
 **Files:**
 - Modify: `src/miss_alignment/alignment/parallel.py`
+- Modify: `src/miss_alignment/train.py`
+- Modify: `src/miss_alignment/infer.py`
 - Modify: `src/miss_alignment/_cli.py`
 - Modify: `src/miss_alignment/__init__.py`
+- Modify: `src/miss_alignment/distributed/__init__.py`
 - Modify: `tests/test_parallel.py`
 - Delete: `src/miss_alignment/_parallel.py`
 
 **Interfaces:**
-- Consumes:
-  - `run_distributed` from `distributed/manager.py`
-  - `load_cluster_config` from `distributed/config.py`
-  - `worker_miss_align` from `distributed/worker.py`
-- Produces: `run_alignment_parallel` — same signature as before, same return type `dict[str, float]`.
+- `run_alignment_parallel` gains `n_cluster_workers: int | None = None` parameter.
+- `train_miss_align` and `infer_miss_align` each gain `n_cluster_workers: Optional[int] = typer.Option(None, ...)`.
 
-- [ ] **Step 1: Update `tests/test_parallel.py` to use the new import**
+- [ ] **Step 1: Update `tests/test_parallel.py`**
 
-The existing `test_parallel.py` tests `_parallel.run_device_pool` directly. Since `_parallel.py` is being deleted, update the tests to verify the equivalent behaviour through `LocalProvisioner` instead. Replace the file entirely:
+Replace the file entirely to test through the new `LocalProvisioner` path:
 
 ```python
 # tests/test_parallel.py
 """Tests for the distributed worker provisioner (replaces _parallel.py tests)."""
-import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1647,64 +1808,57 @@ from miss_alignment.distributed.provisioner import LocalProvisioner
 
 
 def test_local_provisioner_spawns_worker_per_device(tmp_path):
-    """LocalProvisioner starts one worker process per GPU device."""
     with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
         p = LocalProvisioner(queue_dir=tmp_path, devices=[0, 1, 2])
-        p.ensure_workers(n_tasks=10)
+        p.ensure_workers(n_workers=10)
 
         assert mock_popen.call_count == 3
 
 
 def test_local_provisioner_does_not_double_spawn(tmp_path):
-    """Calling ensure_workers twice does not spawn extra processes."""
     with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
         p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
-        p.ensure_workers(n_tasks=5)
-        p.ensure_workers(n_tasks=5)
+        p.ensure_workers(n_workers=5)
+        p.ensure_workers(n_workers=5)
 
         assert mock_popen.call_count == 1
 
 
-@pytest.mark.filterwarnings("ignore")
 def test_local_provisioner_shutdown_terminates(tmp_path):
-    """shutdown() terminates all spawned processes."""
     with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
         p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
-        p.ensure_workers(n_tasks=3)
+        p.ensure_workers(n_workers=5)
         p.shutdown()
 
         mock_proc.terminate.assert_called()
 ```
 
-- [ ] **Step 2: Run updated tests to verify they pass before touching sources**
+- [ ] **Step 2: Run updated `test_parallel.py` to verify it passes now**
 
 ```bash
 pytest tests/test_parallel.py -v
 ```
 
-Expected: all 3 tests PASS (they import from `distributed.provisioner` which already exists).
+Expected: all 3 tests PASS.
 
 - [ ] **Step 3: Update `alignment/parallel.py`**
-
-Replace the file entirely:
 
 ```python
 # src/miss_alignment/alignment/parallel.py
 from pathlib import Path
 
-from ..distributed.config import load_cluster_config
 from ..distributed.manager import run_distributed
 
 
@@ -1719,18 +1873,17 @@ def run_alignment_parallel(
     apply_ctf: bool,
     downsample: int,
     devices_list: list[int],
+    n_cluster_workers: int | None = None,
 ) -> dict[str, float]:
     """Distribute per-tilt-series alignment across local GPUs or a cluster.
 
-    With no cluster env vars set, workers are spawned as local child processes
-    (one per GPU in devices_list). Set MISS_CLUSTER_CONFIG and MISS_CLUSTER_SCRIPT
-    to fan work out to a batch scheduler instead.
+    Without --n-cluster-workers, one worker subprocess is spawned per GPU in
+    devices_list (local mode, unchanged behaviour). Set --n-cluster-workers N
+    to submit N cluster jobs instead; requires MISS_CLUSTER_CONFIG and
+    MISS_CLUSTER_SCRIPT to be set.
 
-    Returns a dict mapping tilt-series stem names to their final loss values.
+    Returns dict mapping tilt-series stem names to their final loss values.
     """
-    cluster_config = load_cluster_config()
-    # output_directory is the training directory in train.py and data_directory in
-    # infer.py — both are the top-level data dir, so tasks/ lives alongside the XMLs.
     queue_root = output_directory / "tasks"
 
     return run_distributed(
@@ -1744,12 +1897,76 @@ def run_alignment_parallel(
         apply_ctf=apply_ctf,
         downsample=downsample,
         devices=devices_list,
+        n_cluster_workers=n_cluster_workers,
         queue_root=queue_root,
-        cluster_config=cluster_config,
     )
 ```
 
-- [ ] **Step 4: Register `worker` subcommand in `_cli.py`**
+- [ ] **Step 4: Add `--n-cluster-workers` to `train.py`**
+
+Add the new option to `train_miss_align`'s signature. Find the `preprocess: bool` option (last existing option, around line 308) and add after it:
+
+```python
+    n_cluster_workers: Optional[int] = typer.Option(
+        None,
+        help="Number of cluster jobs to submit for the alignment phase. "
+        "When set, activates cluster mode; requires MISS_CLUSTER_CONFIG "
+        "and MISS_CLUSTER_SCRIPT environment variables to be set. "
+        "When absent, local multi-GPU mode is used.",
+    ),
+```
+
+Then pass it through to `run_alignment_parallel` in the call at line ~487:
+
+```python
+        run_alignment_parallel(
+            model_checkpoint=str(training_model_path),
+            tilt_series_list=tilt_series_list,
+            output_directory=training_directory,
+            setting=iteration_settings["alignment"],
+            patch_size=alignment_config["patch_size"],
+            patch_overlap=alignment_config["patch_overlap"],
+            batch_size=alignment_config["batch_size"],
+            apply_ctf=general_config["apply_ctf"],
+            downsample=iteration_settings["downsample"],
+            devices_list=devices_alignment,
+            n_cluster_workers=n_cluster_workers,
+        )
+```
+
+- [ ] **Step 5: Add `--n-cluster-workers` to `infer.py`**
+
+Add the same option to `infer_miss_align`'s signature after `preprocess: bool` (around line 41):
+
+```python
+    n_cluster_workers: Optional[int] = typer.Option(
+        None,
+        help="Number of cluster jobs to submit for the alignment phase. "
+        "When set, activates cluster mode; requires MISS_CLUSTER_CONFIG "
+        "and MISS_CLUSTER_SCRIPT environment variables to be set. "
+        "When absent, local multi-GPU mode is used.",
+    ),
+```
+
+Then pass it through to the `run_alignment_parallel` call at line ~161:
+
+```python
+        run_alignment_parallel(
+            model_checkpoint=str(model_checkpoint),
+            tilt_series_list=tilt_series_list,
+            output_directory=data_directory,
+            setting=iteration_settings["alignment"],
+            patch_size=alignment_config["patch_size"],
+            patch_overlap=alignment_config["patch_overlap"],
+            batch_size=alignment_config["batch_size"],
+            apply_ctf=general_config["apply_ctf"],
+            downsample=iteration_settings["downsample"],
+            devices_list=devices_alignment,
+            n_cluster_workers=n_cluster_workers,
+        )
+```
+
+- [ ] **Step 6: Register the `worker` subcommand in `_cli.py`**
 
 ```python
 # src/miss_alignment/_cli.py
@@ -1761,7 +1978,7 @@ from typer.core import TyperGroup
 class OrderCommands(TyperGroup):
     def list_commands(self, ctx: Context):
         """Return list of commands in the order appear."""
-        return list(self.commands)  # get commands using self.commands
+        return list(self.commands)
 
 
 cli = typer.Typer(cls=OrderCommands, add_completion=False, no_args_is_help=True)
@@ -1772,7 +1989,7 @@ from .distributed.worker import worker_miss_align  # noqa: E402
 cli.command(name="worker")(worker_miss_align)
 ```
 
-- [ ] **Step 5: Export `worker_miss_align` from `__init__.py`**
+- [ ] **Step 7: Export `worker_miss_align` from `__init__.py`**
 
 ```python
 # src/miss_alignment/__init__.py
@@ -1801,47 +2018,7 @@ from .infer import infer_miss_align
 from .distributed.worker import worker_miss_align
 ```
 
-- [ ] **Step 6: Delete `_parallel.py`**
-
-```bash
-git rm src/miss_alignment/_parallel.py
-```
-
-- [ ] **Step 7: Run the full test suite**
-
-```bash
-pytest --color=yes -v
-```
-
-Expected: all tests PASS, no warnings-as-errors regressions. If `test_infer.py` or `test_train.py` import `_parallel` directly, fix those imports to remove them (the module no longer exists).
-
-- [ ] **Step 8: Run linter**
-
-```bash
-ruff check --fix src/miss_alignment/
-ruff format src/miss_alignment/
-```
-
-Expected: no errors.
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add src/miss_alignment/alignment/parallel.py src/miss_alignment/_cli.py src/miss_alignment/__init__.py tests/test_parallel.py
-git commit -m "feat: wire distributed queue into run_alignment_parallel; add worker subcommand; delete _parallel.py"
-```
-
----
-
-## Task 7: Update `distributed/__init__.py` and run full suite
-
-**Files:**
-- Modify: `src/miss_alignment/distributed/__init__.py`
-
-**Interfaces:**
-- Produces: public re-exports for any consumer that imports directly from `miss_alignment.distributed`.
-
-- [ ] **Step 1: Update `__init__.py`**
+- [ ] **Step 8: Update `distributed/__init__.py`**
 
 ```python
 # src/miss_alignment/distributed/__init__.py
@@ -1882,27 +2059,41 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 2: Run full test suite and linter**
+- [ ] **Step 9: Delete `_parallel.py`**
 
 ```bash
-pytest --color=yes --cov --cov-report=term-missing
-ruff check src/miss_alignment/
-ruff format --check src/miss_alignment/
+git rm src/miss_alignment/_parallel.py
 ```
 
-Expected: all tests PASS, coverage report shows `distributed/` coverage, no ruff errors.
-
-- [ ] **Step 3: Verify `miss-alignment worker --help` works**
+- [ ] **Step 10: Run full test suite and linter**
 
 ```bash
+pytest --color=yes -v
+ruff check --fix src/miss_alignment/
+ruff format src/miss_alignment/
+```
+
+Expected: all tests PASS. If any test imports `miss_alignment._parallel` directly, fix that import (the module no longer exists). No ruff errors.
+
+- [ ] **Step 11: Verify the worker subcommand is registered**
+
+```bash
+miss-alignment --help
 miss-alignment worker --help
 ```
 
-Expected output includes `--queue-dir`, `--device`, `--worker-id` options.
+Expected: `worker` appears in the command list; `--queue-dir`, `--device`, `--worker-id` appear in its help.
 
-- [ ] **Step 4: Final commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add src/miss_alignment/distributed/__init__.py
-git commit -m "feat: export distributed public API from __init__.py"
+git add \
+  src/miss_alignment/alignment/parallel.py \
+  src/miss_alignment/train.py \
+  src/miss_alignment/infer.py \
+  src/miss_alignment/_cli.py \
+  src/miss_alignment/__init__.py \
+  src/miss_alignment/distributed/__init__.py \
+  tests/test_parallel.py
+git commit -m "feat: wire distributed queue into run_alignment_parallel; add --n-cluster-workers; register worker subcommand; delete _parallel.py"
 ```
