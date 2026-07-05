@@ -7,8 +7,8 @@
 #SBATCH --mem=32G
 #SBATCH --time=08:00:00
 #SBATCH --partition={{partition}}
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
+#SBATCH --output={{logs_dir}}/slurm-%j.out
+#SBATCH --error={{logs_dir}}/slurm-%j.err
 
 # Activate the miss-alignment conda environment.
 # Adjust the path to match your installation.

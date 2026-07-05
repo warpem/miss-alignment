@@ -85,7 +85,11 @@ class ClusterProvisioner(WorkerProvisioner):
             f" --device 0"
             f' --worker-id "$(hostname)-$$-{index}"'
         )
+        logs_dir = self._queue_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
         rendered = template_text.replace("{{command}}", command)
+        rendered = rendered.replace("{{tasks_dir}}", str(self._queue_dir))
+        rendered = rendered.replace("{{logs_dir}}", str(logs_dir))
         for key, value in os.environ.items():
             if key.startswith("MISS_CLUSTER_VAR_"):
                 var_name = key[len("MISS_CLUSTER_VAR_") :].lower()
