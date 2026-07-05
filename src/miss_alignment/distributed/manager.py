@@ -197,7 +197,12 @@ def run_distributed(
     losses: dict[str, float] = {}
     failed_series: list[str] = []
 
-    pbar = tqdm.tqdm(total=len(task_ids), desc="Tilt series alignment", file=sys.stdout)
+    _desc = {
+        "alignment": "Tilt series alignment",
+        "prepare_stacks": "Preparing stacks",
+        "cross_correlation": "Cross-correlation alignment",
+    }.get(task_type, task_type)
+    pbar = tqdm.tqdm(total=len(task_ids), desc=_desc, file=sys.stdout)
     try:
         while pending_ids:
             time.sleep(_POLL_INTERVAL_S)
