@@ -77,7 +77,9 @@ def _scheduler_thread(
 ) -> None:
     hb_seq = 1  # seq 0 written before thread starts
     last_hb = time.time()
-    last_sweep = 0.0
+    # Start from now so the first sweep is delayed by _SCHEDULER_INTERVAL_S;
+    # run_distributed calls ensure_workers() explicitly at startup instead.
+    last_sweep = time.time()
 
     while not stop_event.is_set():
         now = time.time()
