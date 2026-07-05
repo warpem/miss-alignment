@@ -1,0 +1,5 @@
+{
+  "submit": "sbatch {{script_path}}",
+  "submit_job_id_regex": "Submitted batch job (\\d+)",
+  "cancel": "scancel {{job_id}}"
+}
