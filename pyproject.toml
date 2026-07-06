@@ -58,7 +58,7 @@ dependencies = [
     "typer",
     "zenodo-get",
     "matplotlib",
-    "warpylib",
+    "warpylib>=1.1.0",  # tilt-axis angle optimization needs the gimbal-lock gradient fix
 ]
 
 [project.urls]
