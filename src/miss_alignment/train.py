@@ -20,6 +20,7 @@ from lightning.pytorch.strategies import DDPStrategy
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .utils import configure_logging, parse_device_list, sync_start_iteration_xmls
 from .data import MissAlignmentDataModule
+from .data.io import exclude_nonfinite_alignment_tilt_series
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
@@ -411,6 +412,8 @@ def train_miss_align(
                 training_directory=training_directory,
                 devices=devices_alignment,
             )
+
+    exclude_nonfinite_alignment_tilt_series(training_directory)
 
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
