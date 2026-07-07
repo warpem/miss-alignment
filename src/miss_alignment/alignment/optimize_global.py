@@ -483,9 +483,13 @@ def _optimize_shifts_inner(
 
         # --- MISS_DEBUG: is the jointly-optimized tilt-axis angle throttled? ---
         # Runs only under MISS_DEBUG=1. Reports (1) the final gradient on the
-        # angle relative to the shift gradients and (2) a 1-D loss sweep of the
-        # angle with the optimized shifts held fixed. A sweep minimum away from
-        # offset 0 means the joint LBFGS stopped short of the best angle.
+        # angle relative to the shift gradients and (2) a multi-start rerun: the
+        # angle is perturbed to each offset and the full joint descent (shifts +
+        # angle both free) is re-run from there. If the angle settles back to the
+        # solution regardless of its start it is not throttled; if the final
+        # angle tracks its start it is sticky, and if any start reaches a lower
+        # loss the original solution was suboptimal. Each rerun is a full LBFGS
+        # optimization, so this multiplies the alignment cost by the grid size.
         if _DEBUG:
             base_delta = tilt_axis_angle_delta.detach()
             print(
@@ -496,7 +500,8 @@ def _optimize_shifts_inner(
             # A materially non-zero angle gradient at termination means descent
             # w.r.t. the angle was still available (i.e. it was cut off, not
             # converged). The ratio to the median shift gradient quantifies the
-            # scale imbalance directly.
+            # scale imbalance directly (note: degrees vs Angstroms, so a ratio
+            # of order ~100 is the expected unit scaling, not evidence of harm).
             angle_grad = tilt_axis_angle_delta.grad
             if angle_grad is not None and shifts_x.grad is not None:
                 shift_grads = torch.cat(
@@ -515,15 +520,17 @@ def _optimize_shifts_inner(
                     f"{median_shift_grad:.3e}, ratio = {ratio:.3f}"
                 )
 
-            # Forward-only loss evaluation mirroring the optimizer closure, used
-            # for the sweep below. No backward pass, no side effects on
-            # loss_values. LBFGS minimizes this score, so lower is better.
-            def _debug_eval_loss():
+            # Reconstruct + score, mirroring the optimizer closure's forward pass
+            # but self-contained (no side effects on loss_values). Used with grad
+            # for the rerun closures and without grad for the final loss readout.
+            def _debug_reconstruct_and_score(compute_grad):
                 batches = int(math.ceil(positions.shape[0] / batch_size))
+                total_samples = positions.shape[0]
                 total_weighted_score = 0.0
                 total_precision = 0.0
+                grad_ctx = torch.enable_grad() if compute_grad else torch.no_grad()
                 with (
-                    torch.no_grad(),
+                    grad_ctx,
                     torch.amp.autocast(device_type=device_type, enabled=False),
                 ):
                     for b in range(batches):
@@ -533,6 +540,7 @@ def _optimize_shifts_inner(
                             batch_positions = positions[
                                 b * batch_size : (b + 1) * batch_size
                             ]
+                        current_batch_size = batch_positions.shape[0]
                         subvolumes = tilt_series.reconstruct_subvolumes_single(
                             tilt_data=images,
                             coords=batch_positions.to(device),
@@ -550,52 +558,109 @@ def _optimize_shifts_inner(
                             subvolumes, "b d h w -> b 1 d h w"
                         )
                         batch_scores, batch_log_precisions = model(subvolumes)
-                        batch_precisions = batch_log_precisions.exp()
-                        total_weighted_score += (
-                            (batch_scores * batch_precisions).sum().item()
-                        )
+                        batch_precisions = batch_log_precisions.exp().detach()
+                        batch_weighted_score = (batch_scores * batch_precisions).sum()
+                        if compute_grad:
+                            weighted_loss = batch_weighted_score * (
+                                current_batch_size / total_samples
+                            )
+                            weighted_loss.backward()
+                        total_weighted_score += batch_weighted_score.item()
                         total_precision += batch_precisions.sum().item()
                 return total_weighted_score / total_precision
 
-            sweep_offsets = [i * 0.5 for i in range(-6, 7)]  # -3.0 .. +3.0 deg
-            sweep_losses = []
-            for offset in sweep_offsets:
-                tilt_series.tilt_axis_angles = initial_tilt_axis_angles + (
-                    base_delta + offset
+            # Multi-start rerun: perturb the angle to each offset (shifts warm-
+            # started at the solution), then re-run the full joint LBFGS.
+            ms_offsets = [-3.0, -1.5, 0.0, 1.5, 3.0]
+            ms_results = []
+            print(
+                "[MISS_DEBUG] tilt-axis angle multi-start rerun "
+                "(shifts + angle free), start offset -> final state:"
+            )
+            print("[MISS_DEBUG]   start_off(deg)  final_off(deg)  final_loss")
+            for start_offset in ms_offsets:
+                ms_shifts_y = shifts_y.detach().clone().requires_grad_(True)
+                ms_shifts_x = shifts_x.detach().clone().requires_grad_(True)
+                ms_angle = (base_delta + start_offset).clone().requires_grad_(True)
+                ms_optimizer = torch.optim.LBFGS(
+                    [ms_shifts_y, ms_shifts_x, ms_angle],
+                    line_search_fn="strong_wolfe",
                 )
-                sweep_losses.append(_debug_eval_loss())
+
+                def ms_closure():
+                    ms_optimizer.zero_grad()
+                    tilt_series.tilt_axis_offset_y = (
+                        initial_tilt_axis_offset_y + ms_shifts_y
+                    )
+                    tilt_series.tilt_axis_offset_x = (
+                        initial_tilt_axis_offset_x + ms_shifts_x
+                    )
+                    tilt_series.tilt_axis_angles = initial_tilt_axis_angles + ms_angle
+                    return _debug_reconstruct_and_score(compute_grad=True)
+
+                try:
+                    for _ in range(n_iters):
+                        ms_optimizer.step(ms_closure)
+                    tilt_series.tilt_axis_offset_y = (
+                        initial_tilt_axis_offset_y + ms_shifts_y.detach()
+                    )
+                    tilt_series.tilt_axis_offset_x = (
+                        initial_tilt_axis_offset_x + ms_shifts_x.detach()
+                    )
+                    tilt_series.tilt_axis_angles = (
+                        initial_tilt_axis_angles + ms_angle.detach()
+                    )
+                    final_loss = _debug_reconstruct_and_score(compute_grad=False)
+                    final_offset = (ms_angle.detach() - base_delta).item()
+                    ms_results.append((start_offset, final_offset, final_loss))
+                    print(
+                        f"[MISS_DEBUG]   {start_offset:+7.1f}        "
+                        f"{final_offset:+7.2f}       {final_loss:.5f}"
+                    )
+                except AlignmentNanError:
+                    ms_results.append((start_offset, float("nan"), float("nan")))
+                    print(
+                        f"[MISS_DEBUG]   {start_offset:+7.1f}        "
+                        "    NaN           NaN"
+                    )
+
             # restore the finalized solution before recentering runs below
+            tilt_series.tilt_axis_offset_y = (
+                initial_tilt_axis_offset_y + shifts_y.detach()
+            )
+            tilt_series.tilt_axis_offset_x = (
+                initial_tilt_axis_offset_x + shifts_x.detach()
+            )
             tilt_series.tilt_axis_angles = initial_tilt_axis_angles + base_delta
 
-            print(
-                "[MISS_DEBUG] tilt-axis angle 1-D sweep (shifts frozen), "
-                "loss vs offset from solution:"
-            )
-            for offset, loss in zip(sweep_offsets, sweep_losses):
-                marker = "  <- solution" if offset == 0.0 else ""
-                print(f"[MISS_DEBUG]     {offset:+5.1f} deg   {loss:.5f}{marker}")
-            best_idx = min(range(len(sweep_losses)), key=lambda i: sweep_losses[i])
-            best_offset = sweep_offsets[best_idx]
-            loss_at_solution = sweep_losses[sweep_offsets.index(0.0)]
-            # Only call it throttled if the best offset improves the loss by a
-            # meaningful margin. A flat sweep means the loss is insensitive to
-            # the angle here (nothing left on the table), not that it was cut
-            # off; without this guard a tie would resolve to the leftmost offset.
-            rel_improvement = (loss_at_solution - sweep_losses[best_idx]) / (
-                abs(loss_at_solution) + 1e-8
-            )
-            if best_offset == 0.0 or rel_improvement <= 1e-3:
-                print(
-                    "[MISS_DEBUG] tilt-axis angle: sweep min at solution "
-                    "(or loss insensitive to angle) => not throttled"
-                )
-            else:
-                print(
-                    f"[MISS_DEBUG] tilt-axis angle: sweep min at offset "
-                    f"{best_offset:+.1f} deg (loss {sweep_losses[best_idx]:.5f} vs "
-                    f"{loss_at_solution:.5f}) => a better angle was available "
-                    f"(throttled by ~{abs(best_offset):.1f} deg)"
-                )
+            # Verdict: (a) do final angles converge regardless of start, and
+            # (b) does any start beat the solution's loss?
+            valid = [r for r in ms_results if not math.isnan(r[2])]
+            solution = next((r for r in valid if r[0] == 0.0), None)
+            if valid and solution is not None:
+                final_spread = max(r[1] for r in valid) - min(r[1] for r in valid)
+                best = min(valid, key=lambda r: r[2])
+                gain = solution[2] - best[2]
+                rel_gain = gain / (abs(solution[2]) + 1e-8)
+                sticky = final_spread > 1.0
+                better = rel_gain > 1e-3 and best[0] != 0.0
+                if not sticky and not better:
+                    print(
+                        f"[MISS_DEBUG] tilt-axis angle: converges regardless of "
+                        f"start (final spread {final_spread:.2f} deg), no start "
+                        f"beats the solution => not throttled"
+                    )
+                else:
+                    msg = f"final spread {final_spread:.2f} deg"
+                    if sticky:
+                        msg += " (angle sticky/throttled)"
+                    if better:
+                        msg += (
+                            f"; start {best[0]:+.1f} deg reached lower loss "
+                            f"{best[2]:.5f} vs {solution[2]:.5f} "
+                            "(solution suboptimal)"
+                        )
+                    print(f"[MISS_DEBUG] tilt-axis angle: {msg}")
 
         # Recenter alignment: set the shift at zero tilt to match initial zero tilt
         # Get the current shift at the zero tilt
