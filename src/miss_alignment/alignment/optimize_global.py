@@ -5,6 +5,7 @@ and warping grids (2D and 3D).
 """
 
 import math
+import os
 
 import einops
 import torch
@@ -15,6 +16,8 @@ from torch_affine_utils.transforms_2d import R
 
 from miss_alignment.models import MissAlignment
 from miss_alignment.alignment.utils import project_volume_shift_to_image_alignment
+
+_DEBUG = os.environ.get("MISS_DEBUG", "").lower() in ("1", "true", "yes")
 
 
 class AlignmentNanError(Exception):
@@ -477,6 +480,122 @@ def _optimize_shifts_inner(
         tilt_series.tilt_axis_angles = (
             initial_tilt_axis_angles + tilt_axis_angle_delta.detach()
         )
+
+        # --- MISS_DEBUG: is the jointly-optimized tilt-axis angle throttled? ---
+        # Runs only under MISS_DEBUG=1. Reports (1) the final gradient on the
+        # angle relative to the shift gradients and (2) a 1-D loss sweep of the
+        # angle with the optimized shifts held fixed. A sweep minimum away from
+        # offset 0 means the joint LBFGS stopped short of the best angle.
+        if _DEBUG:
+            base_delta = tilt_axis_angle_delta.detach()
+            print(
+                f"[MISS_DEBUG] tilt-axis angle: final delta = "
+                f"{base_delta.item():+.4f} deg"
+            )
+
+            # A materially non-zero angle gradient at termination means descent
+            # w.r.t. the angle was still available (i.e. it was cut off, not
+            # converged). The ratio to the median shift gradient quantifies the
+            # scale imbalance directly.
+            angle_grad = tilt_axis_angle_delta.grad
+            if angle_grad is not None and shifts_x.grad is not None:
+                shift_grads = torch.cat(
+                    [shifts_x.grad.abs().flatten(), shifts_y.grad.abs().flatten()]
+                )
+                median_shift_grad = shift_grads.median().item()
+                angle_grad_abs = angle_grad.abs().item()
+                ratio = (
+                    angle_grad_abs / median_shift_grad
+                    if median_shift_grad > 0
+                    else float("inf")
+                )
+                print(
+                    f"[MISS_DEBUG] tilt-axis angle: final |grad| = "
+                    f"{angle_grad_abs:.3e}, median shift |grad| = "
+                    f"{median_shift_grad:.3e}, ratio = {ratio:.3f}"
+                )
+
+            # Forward-only loss evaluation mirroring the optimizer closure, used
+            # for the sweep below. No backward pass, no side effects on
+            # loss_values. LBFGS minimizes this score, so lower is better.
+            def _debug_eval_loss():
+                batches = int(math.ceil(positions.shape[0] / batch_size))
+                total_weighted_score = 0.0
+                total_precision = 0.0
+                with (
+                    torch.no_grad(),
+                    torch.amp.autocast(device_type=device_type, enabled=False),
+                ):
+                    for b in range(batches):
+                        if b == batches - 1:
+                            batch_positions = positions[b * batch_size :]
+                        else:
+                            batch_positions = positions[
+                                b * batch_size : (b + 1) * batch_size
+                            ]
+                        subvolumes = tilt_series.reconstruct_subvolumes_single(
+                            tilt_data=images,
+                            coords=batch_positions.to(device),
+                            pixel_size=pixel_size,
+                            size=patch_size,
+                            apply_ctf=apply_ctf,
+                            oversampling=2.0,
+                        )
+                        mean = einops.reduce(
+                            subvolumes, "n d h w -> n 1 1 1", reduction="mean"
+                        )
+                        std = torch.std(subvolumes, dim=(-3, -2, -1), keepdim=True)
+                        subvolumes = (subvolumes - mean) / std.clamp(min=1e-6)
+                        subvolumes = einops.rearrange(
+                            subvolumes, "b d h w -> b 1 d h w"
+                        )
+                        batch_scores, batch_log_precisions = model(subvolumes)
+                        batch_precisions = batch_log_precisions.exp()
+                        total_weighted_score += (
+                            (batch_scores * batch_precisions).sum().item()
+                        )
+                        total_precision += batch_precisions.sum().item()
+                return total_weighted_score / total_precision
+
+            sweep_offsets = [i * 0.5 for i in range(-6, 7)]  # -3.0 .. +3.0 deg
+            sweep_losses = []
+            for offset in sweep_offsets:
+                tilt_series.tilt_axis_angles = initial_tilt_axis_angles + (
+                    base_delta + offset
+                )
+                sweep_losses.append(_debug_eval_loss())
+            # restore the finalized solution before recentering runs below
+            tilt_series.tilt_axis_angles = initial_tilt_axis_angles + base_delta
+
+            print(
+                "[MISS_DEBUG] tilt-axis angle 1-D sweep (shifts frozen), "
+                "loss vs offset from solution:"
+            )
+            for offset, loss in zip(sweep_offsets, sweep_losses):
+                marker = "  <- solution" if offset == 0.0 else ""
+                print(f"[MISS_DEBUG]     {offset:+5.1f} deg   {loss:.5f}{marker}")
+            best_idx = min(range(len(sweep_losses)), key=lambda i: sweep_losses[i])
+            best_offset = sweep_offsets[best_idx]
+            loss_at_solution = sweep_losses[sweep_offsets.index(0.0)]
+            # Only call it throttled if the best offset improves the loss by a
+            # meaningful margin. A flat sweep means the loss is insensitive to
+            # the angle here (nothing left on the table), not that it was cut
+            # off; without this guard a tie would resolve to the leftmost offset.
+            rel_improvement = (loss_at_solution - sweep_losses[best_idx]) / (
+                abs(loss_at_solution) + 1e-8
+            )
+            if best_offset == 0.0 or rel_improvement <= 1e-3:
+                print(
+                    "[MISS_DEBUG] tilt-axis angle: sweep min at solution "
+                    "(or loss insensitive to angle) => not throttled"
+                )
+            else:
+                print(
+                    f"[MISS_DEBUG] tilt-axis angle: sweep min at offset "
+                    f"{best_offset:+.1f} deg (loss {sweep_losses[best_idx]:.5f} vs "
+                    f"{loss_at_solution:.5f}) => a better angle was available "
+                    f"(throttled by ~{abs(best_offset):.1f} deg)"
+                )
 
         # Recenter alignment: set the shift at zero tilt to match initial zero tilt
         # Get the current shift at the zero tilt
