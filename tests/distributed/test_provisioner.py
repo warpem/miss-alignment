@@ -86,7 +86,7 @@ def test_cluster_provisioner_submits_n_workers_jobs(tmp_path):
 
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ):
+    ), patch.object(ClusterProvisioner, "live_worker_count", return_value=0):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=4)
 
@@ -115,7 +115,7 @@ def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
 
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ):
+    ), patch.object(ClusterProvisioner, "live_worker_count", return_value=0):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=3)
         p.shutdown()

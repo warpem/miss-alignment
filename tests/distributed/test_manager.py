@@ -63,6 +63,12 @@ class _NoOpProvisioner:
     def shutdown(self):
         pass
 
+    def live_worker_count(self):
+        return 0
+
+    def worker_counts_by_type(self):
+        return {"workers": 0}
+
 
 def test_run_distributed_returns_losses(tmp_path):
     xml1 = _make_xml(tmp_path, "ts01")

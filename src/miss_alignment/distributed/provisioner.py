@@ -6,10 +6,48 @@ import os
 import re
 import subprocess
 import sys
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from .config import ClusterConfig
+
+# A worker dir with no heartbeat file yet is assumed alive for this long
+# after the dir was created (worker is still starting up).
+_STARTUP_GRACE_S = 60.0
+# A worker dir whose newest heartbeat is older than this is considered dead.
+_STALL_TIMEOUT_S = 120.0
+
+
+def _live_worker_dirs(running_dir: Path) -> int:
+    """Count running/<wid>/ subdirs whose heartbeat is fresh enough to be alive."""
+    if not running_dir.exists():
+        return 0
+    count = 0
+    now = time.time()
+    for wdir in running_dir.iterdir():
+        if not wdir.is_dir():
+            continue
+        ticks = list(wdir.glob("hb-*"))
+        if ticks:
+            newest_mtime = None
+            for t in ticks:
+                try:
+                    mtime = t.stat().st_mtime
+                    if newest_mtime is None or mtime > newest_mtime:
+                        newest_mtime = mtime
+                except FileNotFoundError:
+                    pass  # heartbeat thread rotated this tick; ignore
+            if newest_mtime is not None and now - newest_mtime < _STALL_TIMEOUT_S:
+                count += 1
+        else:
+            # No heartbeat yet — consider alive if dir was created recently.
+            try:
+                if now - wdir.stat().st_mtime < _STARTUP_GRACE_S:
+                    count += 1
+            except FileNotFoundError:
+                pass  # dir vanished between iterdir and stat; skip
+    return count
 
 
 class WorkerProvisioner(ABC):
@@ -24,6 +62,14 @@ class WorkerProvisioner(ABC):
     def shutdown(self) -> None:
         """Terminate all managed workers."""
 
+    @abstractmethod
+    def live_worker_count(self) -> int:
+        """Return the number of workers currently considered alive."""
+
+    def worker_counts_by_type(self) -> dict[str, int]:
+        """Return a dict of label → live count for display purposes."""
+        return {"workers": self.live_worker_count()}
+
 
 class LocalProvisioner(WorkerProvisioner):
     """Spawns one miss-alignment worker subprocess per GPU device."""
@@ -32,6 +78,12 @@ class LocalProvisioner(WorkerProvisioner):
         self._queue_dir = queue_dir
         self._devices = devices
         self._procs: dict[int, subprocess.Popen] = {}
+
+    def live_worker_count(self) -> int:
+        return sum(1 for p in self._procs.values() if p.poll() is None)
+
+    def worker_counts_by_type(self) -> dict[str, int]:
+        return {"local": self.live_worker_count()}
 
     def ensure_workers(self, n_workers: int) -> None:
         for device in self._devices:
@@ -67,14 +119,23 @@ class LocalProvisioner(WorkerProvisioner):
 
 
 class ClusterProvisioner(WorkerProvisioner):
-    """Submits exactly n_workers cluster jobs, each running until the queue drains."""
+    """Submits cluster jobs; resubmits when alive workers fall below target."""
 
     def __init__(self, queue_dir: Path, config: ClusterConfig) -> None:
         self._queue_dir = queue_dir
         self._config = config
         self._job_ids: list[str] = []
+        # Monotonically increasing index for unique script names. Separate
+        # from _job_ids so we never reuse a script index even after replenishment.
+        self._next_index: int = 0
         self._scripts_dir = queue_dir / "cluster"
         self._scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    def live_worker_count(self) -> int:
+        return _live_worker_dirs(self._queue_dir / "running")
+
+    def worker_counts_by_type(self) -> dict[str, int]:
+        return {"cluster": self.live_worker_count()}
 
     def _render_script(self, index: int) -> Path:
         template_text = self._config.script_path.read_text()
@@ -99,23 +160,30 @@ class ClusterProvisioner(WorkerProvisioner):
         script_path.write_text(rendered)
         return script_path
 
+    def _submit_one(self) -> None:
+        index = self._next_index
+        self._next_index += 1
+        script_path = self._render_script(index)
+        submit_cmd = self._config.submit.replace(
+            "{{script_path}}", str(script_path)
+        )
+        result = subprocess.run(
+            submit_cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            text=True,
+        )
+        match = re.search(self._config.submit_job_id_regex, result.stdout)
+        if match:
+            self._job_ids.append(match.group(1))
+
     def ensure_workers(self, n_workers: int) -> None:
-        already = len(self._job_ids)
-        for i in range(already, n_workers):
-            script_path = self._render_script(i)
-            submit_cmd = self._config.submit.replace(
-                "{{script_path}}", str(script_path)
-            )
-            result = subprocess.run(
-                submit_cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=sys.stderr,
-                text=True,
-            )
-            match = re.search(self._config.submit_job_id_regex, result.stdout)
-            if match:
-                self._job_ids.append(match.group(1))
+        """Submit new jobs until live worker count reaches n_workers."""
+        alive = self.live_worker_count()
+        deficit = n_workers - alive
+        for _ in range(deficit):
+            self._submit_one()
 
     def shutdown(self) -> None:
         for job_id in self._job_ids:
@@ -133,6 +201,16 @@ class CompositeProvisioner(WorkerProvisioner):
 
     def __init__(self, provisioners: list[WorkerProvisioner]) -> None:
         self._provisioners = provisioners
+
+    def live_worker_count(self) -> int:
+        return sum(p.live_worker_count() for p in self._provisioners)
+
+    def worker_counts_by_type(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for p in self._provisioners:
+            for label, n in p.worker_counts_by_type().items():
+                counts[label] = counts.get(label, 0) + n
+        return counts
 
     def ensure_workers(self, n_workers: int) -> None:
         for p in self._provisioners:

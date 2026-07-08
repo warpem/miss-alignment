@@ -86,12 +86,17 @@ def _sweep_stalled_workers(layout: QueueLayout) -> None:
             pass
 
 
+def _format_worker_counts(counts: dict[str, int]) -> str:
+    return " ".join(f"{label}={n}" for label, n in sorted(counts.items()))
+
+
 def _scheduler_thread(
     layout: QueueLayout,
     provisioner: WorkerProvisioner,
     n_workers: int,
     stop_event: threading.Event,
     error_box: list,
+    worker_counts: dict,
 ) -> None:
     hb_seq = 1  # seq 0 written before thread starts
     last_hb = time.time()
@@ -110,7 +115,13 @@ def _scheduler_thread(
 
             if now - last_sweep >= _SCHEDULER_INTERVAL_S:
                 _sweep_stalled_workers(layout)
-                provisioner.ensure_workers(n_workers)
+                n_pending = len(list(layout.pending.glob("*.json")))
+                if n_pending > 0:
+                    # Cap at n_pending: no point submitting more workers than tasks.
+                    # This also prevents resubmission when workers exit cleanly on
+                    # an empty queue — only re-fill if the sweep re-pended orphans.
+                    provisioner.ensure_workers(min(n_workers, n_pending))
+                worker_counts.update(provisioner.worker_counts_by_type())
                 last_sweep = now
 
             stop_event.wait(timeout=1.0)
@@ -209,9 +220,12 @@ def run_distributed(
 
     stop_event = threading.Event()
     scheduler_errors: list = []
+    worker_counts: dict = provisioner.worker_counts_by_type()
     scheduler = threading.Thread(
         target=_scheduler_thread,
-        args=(layout, provisioner, n_workers, stop_event, scheduler_errors),
+        args=(
+            layout, provisioner, n_workers, stop_event, scheduler_errors, worker_counts
+        ),
         daemon=True,
     )
     scheduler.start()
@@ -233,6 +247,8 @@ def run_distributed(
 
             if scheduler_errors:
                 raise RuntimeError("Scheduler thread crashed") from scheduler_errors[0]
+
+            pbar.set_postfix_str(_format_worker_counts(worker_counts))
 
             for done_file in layout.done.glob("*.json"):
                 data = json.loads(done_file.read_text())
