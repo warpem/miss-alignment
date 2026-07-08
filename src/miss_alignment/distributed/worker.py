@@ -128,16 +128,10 @@ def _execute_task(
         return 0.0
 
     elif spec.task_type == "cross_correlation":
-        pretilt_range = (
-            tuple(spec.pretilt_search_range)
-            if spec.pretilt_search_range is not None
-            else (-30.0, 30.0)
-        )
         _run_cross_correlation_single(
             xml_file=Path(spec.tilt_series_path),
             device=_device_int(device),
             lowpass_cutoff=spec.lowpass_cutoff or 0.25,
-            pretilt_search_range=pretilt_range,
         )
         return 0.0
 
@@ -190,9 +184,7 @@ def run_worker_loop(
 
             try:
                 final_loss = _execute_task(spec, device, cached_model)
-                mark_done(
-                    layout, worker_id, spec, final_loss=final_loss, device=device
-                )
+                mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
                 tasks_done += 1
             except Exception:
                 error = traceback.format_exc()

@@ -84,7 +84,6 @@ class TaskSpec:
     task_type: str = "alignment"
     desired_pixel_size: float | None = None
     lowpass_cutoff: float | None = None
-    pretilt_search_range: list | None = None
 
 
 def _atomic_write(path: Path, data: dict) -> None:

@@ -3,6 +3,7 @@
 evaluate_tilt_series is mocked throughout; these tests validate the claim,
 model-reuse, heartbeat-exit, and result-write logic without CUDA.
 """
+
 import json
 import os
 import time
@@ -48,12 +49,15 @@ def test_worker_processes_task_and_writes_done(layout):
     _write_manager_hb(layout)
     write_pending(layout, _spec())
 
-    with patch(
-        "miss_alignment.distributed.worker.evaluate_tilt_series",
-        return_value=(Path("/data/ts01.xml"), [0.5, 0.3, 0.1]),
-    ), patch(
-        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
-        return_value=MagicMock(),
+    with (
+        patch(
+            "miss_alignment.distributed.worker.evaluate_tilt_series",
+            return_value=(Path("/data/ts01.xml"), [0.5, 0.3, 0.1]),
+        ),
+        patch(
+            "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+            return_value=MagicMock(),
+        ),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
@@ -67,12 +71,15 @@ def test_worker_writes_failed_on_exception(layout):
     _write_manager_hb(layout)
     write_pending(layout, _spec())
 
-    with patch(
-        "miss_alignment.distributed.worker.evaluate_tilt_series",
-        side_effect=RuntimeError("CUDA OOM"),
-    ), patch(
-        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
-        return_value=MagicMock(),
+    with (
+        patch(
+            "miss_alignment.distributed.worker.evaluate_tilt_series",
+            side_effect=RuntimeError("CUDA OOM"),
+        ),
+        patch(
+            "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+            return_value=MagicMock(),
+        ),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
@@ -92,12 +99,15 @@ def test_worker_exits_when_manager_hb_stale(layout):
     write_pending(layout, _spec())
 
     called = []
-    with patch(
-        "miss_alignment.distributed.worker.evaluate_tilt_series",
-        side_effect=lambda **kw: called.append(True),
-    ), patch(
-        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
-        return_value=MagicMock(),
+    with (
+        patch(
+            "miss_alignment.distributed.worker.evaluate_tilt_series",
+            side_effect=lambda **kw: called.append(True),
+        ),
+        patch(
+            "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+            return_value=MagicMock(),
+        ),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=120.0)
 
@@ -119,12 +129,15 @@ def test_worker_reuses_model_when_fingerprint_matches(layout):
         load_calls.append(path)
         return MagicMock()
 
-    with patch(
-        "miss_alignment.distributed.worker.evaluate_tilt_series",
-        side_effect=fake_evaluate,
-    ), patch(
-        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
-        side_effect=fake_load,
+    with (
+        patch(
+            "miss_alignment.distributed.worker.evaluate_tilt_series",
+            side_effect=fake_evaluate,
+        ),
+        patch(
+            "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+            side_effect=fake_load,
+        ),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
@@ -146,12 +159,15 @@ def test_worker_reloads_model_when_fingerprint_changes(layout):
         load_calls.append(path)
         return MagicMock()
 
-    with patch(
-        "miss_alignment.distributed.worker.evaluate_tilt_series",
-        side_effect=fake_evaluate,
-    ), patch(
-        "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
-        side_effect=fake_load,
+    with (
+        patch(
+            "miss_alignment.distributed.worker.evaluate_tilt_series",
+            side_effect=fake_evaluate,
+        ),
+        patch(
+            "miss_alignment.distributed.worker.MissAlignment.load_from_checkpoint",
+            side_effect=fake_load,
+        ),
     ):
         run_worker_loop(layout, "worker-0", "cpu", manager_hb_timeout_s=30.0)
 
@@ -159,7 +175,7 @@ def test_worker_reloads_model_when_fingerprint_changes(layout):
 
 
 def test_worker_dispatches_prepare_stacks(layout):
-    """prepare_stacks tasks call _prepare_single_tilt_series, not evaluate_tilt_series."""
+    """prepare_stacks tasks call _prepare_single_tilt_series, not evaluate."""
     _write_manager_hb(layout)
     spec = TaskSpec(
         task_id="0000001-ts01",
@@ -211,15 +227,14 @@ def test_worker_dispatches_cross_correlation(layout):
         init_fingerprint="",
         task_type="cross_correlation",
         lowpass_cutoff=0.25,
-        pretilt_search_range=[-30.0, 30.0],
     )
     write_pending(layout, spec)
 
     xcorr_calls = []
 
-    def fake_xcorr(xml_file, device, lowpass_cutoff, pretilt_search_range):
+    def fake_xcorr(xml_file, device, lowpass_cutoff):
         xcorr_calls.append((str(xml_file), lowpass_cutoff))
-        return 2.5  # pretilt degrees
+        return None
 
     with patch(
         "miss_alignment.distributed.worker._run_cross_correlation_single",

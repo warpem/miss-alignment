@@ -130,7 +130,6 @@ def run_distributed(
     task_type: str = "alignment",
     desired_pixel_size: float | None = None,
     lowpass_cutoff: float | None = None,
-    pretilt_search_range: tuple | None = None,
 ) -> dict[str, float]:
     """Write tasks, provision workers, block until all tasks are terminal.
 
@@ -181,9 +180,6 @@ def run_distributed(
             task_type=task_type,
             desired_pixel_size=desired_pixel_size,
             lowpass_cutoff=lowpass_cutoff,
-            pretilt_search_range=(
-                list(pretilt_search_range) if pretilt_search_range is not None else None
-            ),
         )
         write_pending(layout, spec)
 
@@ -226,9 +222,7 @@ def run_distributed(
             time.sleep(_POLL_INTERVAL_S)
 
             if scheduler_errors:
-                raise RuntimeError(
-                    "Scheduler thread crashed"
-                ) from scheduler_errors[0]
+                raise RuntimeError("Scheduler thread crashed") from scheduler_errors[0]
 
             for done_file in layout.done.glob("*.json"):
                 data = json.loads(done_file.read_text())
