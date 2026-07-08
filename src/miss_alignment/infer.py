@@ -37,7 +37,7 @@ def infer_miss_align(
     preprocess: bool = typer.Option(
         False,
         help="Run cross-correlation based alignment before the inference "
-        "iterations. This performs coarse alignment with pretilt estimation.",
+        "iterations. This performs coarse alignment.",
     ),
 ) -> None:
     """Align a dataset by applying models from a previous training run.

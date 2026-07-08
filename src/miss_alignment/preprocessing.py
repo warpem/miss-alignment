@@ -12,7 +12,7 @@ def _run_cross_correlation_single(
     xml_file: Path,
     device: int | None,
     lowpass_cutoff: float,
-) -> float:
+) -> None:
     """Run cross-correlation alignment on a single tilt-series.
 
     Parameters
@@ -23,13 +23,6 @@ def _run_cross_correlation_single(
         CUDA device index to use. If None, uses default device.
     lowpass_cutoff : float
         Low-pass filter cutoff frequency.
-    pretilt_search_range : tuple[float, float]
-        Search range for pretilt estimation in degrees.
-
-    Returns
-    -------
-    float
-        The estimated pretilt value in degrees.
     """
     from torch_tiltxcorr import tiltxcorr
 
@@ -46,13 +39,13 @@ def _run_cross_correlation_single(
     # Extract tilt axis angle from metadata (same for all tilts)
     tilt_axis_angle = ts.tilt_axis_angles[0].item()
 
-    # Run cross-correlation alignment with pretilt estimation
-    shifts = tiltxcorr_with_sample_tilt_estimation(
+    # Run cross-correlation alignment
+    shifts = tiltxcorr(
         tilt_series=stack.to(device_str),
         tilt_angles=ts.angles.to(device_str),
         tilt_axis_angle=tilt_axis_angle,
         pixel_spacing_angstroms=pixel_size,
-        lowpass_angstroms=pixel_size / lowpass_cutoff
+        lowpass_angstroms=pixel_size / lowpass_cutoff,
     )
 
     # Convert shifts from pixels to Angstroms
@@ -68,10 +61,7 @@ def _run_cross_correlation_single(
 
 
 def _cross_correlation_runner(
-    device: int | None,
-    task_queue,
-    result_queue,
-    lowpass_cutoff: float
+    device: int | None, task_queue, result_queue, lowpass_cutoff: float
 ) -> None:
     """Pull tilt-series off the queue and align them on a single device."""
 
@@ -82,7 +72,9 @@ def _cross_correlation_runner(
         except queue.Empty:
             break
         _run_cross_correlation_single(
-            xml_file, device, lowpass_cutoff,
+            xml_file,
+            device,
+            lowpass_cutoff,
         )
         result_queue.put_nowait(xml_file.stem)
 
@@ -90,13 +82,13 @@ def _cross_correlation_runner(
 def run_cross_correlation_alignment_parallel(
     training_directory: Path,
     devices: list[int] | None = None,
-    lowpass_cutoff: float = 0.25
+    lowpass_cutoff: float = 0.25,
 ) -> None:
     """
-    Run cross-correlation based alignment with pretilt estimation in parallel.
+    Run cross-correlation based alignment in parallel.
 
     This performs coarse alignment using cross-correlation to estimate shifts
-    for all tilt-series in the training directory, processing multiple 
+    for all tilt-series in the training directory, processing multiple
     tilt-series in parallel across available GPUs.
 
     Parameters

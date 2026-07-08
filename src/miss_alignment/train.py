@@ -308,7 +308,7 @@ def train_miss_align(
     preprocess: bool = typer.Option(
         False,
         help="Run cross-correlation based alignment before training iterations. "
-        "This performs coarse alignment with pretilt estimation.",
+        "This performs coarse alignment.",
     ),
 ) -> None:
     """Iteratively train and realign a dataset over a series of coarse-to-fine
