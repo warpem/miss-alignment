@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .config import ClusterConfig
@@ -186,9 +187,12 @@ class ClusterProvisioner(WorkerProvisioner):
             self._submit_one()
 
     def shutdown(self) -> None:
-        for job_id in self._job_ids:
+        def _cancel(job_id: str) -> None:
             cancel_cmd = self._config.cancel.replace("{{job_id}}", job_id)
             subprocess.run(cancel_cmd, shell=True, stderr=subprocess.DEVNULL)
+
+        with ThreadPoolExecutor(max_workers=min(32, len(self._job_ids) or 1)) as pool:
+            list(as_completed([pool.submit(_cancel, jid) for jid in self._job_ids]))
         self._job_ids.clear()
 
 
