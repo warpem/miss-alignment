@@ -13,7 +13,12 @@ from pathlib import Path
 import tqdm
 
 from .config import load_cluster_config
-from .provisioner import ClusterProvisioner, LocalProvisioner, WorkerProvisioner
+from .provisioner import (
+    ClusterProvisioner,
+    CompositeProvisioner,
+    LocalProvisioner,
+    WorkerProvisioner,
+)
 from .queue import (
     QueueLayout,
     TaskSpec,
@@ -189,9 +194,14 @@ def run_distributed(
 
     if n_cluster_workers is not None:
         cluster_config = load_cluster_config()
-        provisioner: WorkerProvisioner = ClusterProvisioner(
-            queue_dir=queue_root, config=cluster_config
-        )
+        cluster = ClusterProvisioner(queue_dir=queue_root, config=cluster_config)
+        if devices:
+            # Also use local GPUs — the queue is shared so local and cluster
+            # workers pull from the same task list with no extra coordination.
+            local = LocalProvisioner(queue_dir=queue_root, devices=devices)
+            provisioner: WorkerProvisioner = CompositeProvisioner([cluster, local])
+        else:
+            provisioner = cluster
         n_workers = n_cluster_workers
     else:
         provisioner = LocalProvisioner(queue_dir=queue_root, devices=devices)

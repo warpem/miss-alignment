@@ -122,3 +122,22 @@ class ClusterProvisioner(WorkerProvisioner):
             cancel_cmd = self._config.cancel.replace("{{job_id}}", job_id)
             subprocess.run(cancel_cmd, shell=True, stderr=subprocess.DEVNULL)
         self._job_ids.clear()
+
+
+class CompositeProvisioner(WorkerProvisioner):
+    """Delegates to multiple provisioners simultaneously.
+
+    Used to run local GPU workers alongside cluster workers so local GPUs
+    are not left idle during cluster-distributed alignment phases.
+    """
+
+    def __init__(self, provisioners: list[WorkerProvisioner]) -> None:
+        self._provisioners = provisioners
+
+    def ensure_workers(self, n_workers: int) -> None:
+        for p in self._provisioners:
+            p.ensure_workers(n_workers)
+
+    def shutdown(self) -> None:
+        for p in self._provisioners:
+            p.shutdown()

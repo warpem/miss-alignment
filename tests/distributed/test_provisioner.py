@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from miss_alignment.distributed.config import ClusterConfig
-from miss_alignment.distributed.provisioner import ClusterProvisioner, LocalProvisioner
+from miss_alignment.distributed.provisioner import (
+    ClusterProvisioner,
+    CompositeProvisioner,
+    LocalProvisioner,
+)
 
 
 def test_local_provisioner_spawns_one_process_per_device(tmp_path):
@@ -118,3 +122,18 @@ def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
 
     assert len(cancel_calls) == 3
     assert all("scancel" in c for c in cancel_calls)
+
+
+def test_composite_provisioner_delegates_to_all(tmp_path):
+    """CompositeProvisioner calls ensure_workers and shutdown on every child."""
+    a = MagicMock(spec=LocalProvisioner)
+    b = MagicMock(spec=LocalProvisioner)
+    p = CompositeProvisioner([a, b])
+
+    p.ensure_workers(5)
+    a.ensure_workers.assert_called_once_with(5)
+    b.ensure_workers.assert_called_once_with(5)
+
+    p.shutdown()
+    a.shutdown.assert_called_once()
+    b.shutdown.assert_called_once()

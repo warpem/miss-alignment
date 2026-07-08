@@ -2,7 +2,12 @@
 
 from .config import ClusterConfig, load_cluster_config
 from .manager import run_distributed
-from .provisioner import ClusterProvisioner, LocalProvisioner, WorkerProvisioner
+from .provisioner import (
+    ClusterProvisioner,
+    CompositeProvisioner,
+    LocalProvisioner,
+    WorkerProvisioner,
+)
 from .queue import (
     QueueLayout,
     TaskSpec,
@@ -20,6 +25,7 @@ __all__ = [
     "load_cluster_config",
     "run_distributed",
     "ClusterProvisioner",
+    "CompositeProvisioner",
     "LocalProvisioner",
     "WorkerProvisioner",
     "QueueLayout",
