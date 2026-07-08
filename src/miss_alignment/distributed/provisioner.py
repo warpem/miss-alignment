@@ -126,13 +126,20 @@ class LocalProvisioner(WorkerProvisioner):
 # (e.g. SLURM: squeue -u $USER -h -o "%i,%T").
 # ---------------------------------------------------------------------------
 
-# Statuses that mean the job is still occupying a slot (queued or running).
-_ALIVE_STATUSES: dict[str, set[str]] = {
-    "slurm": {"PENDING", "PD", "RUNNING", "R", "COMPLETING", "CG",
-               "RESIZING", "SUSPENDED", "S"},
-    "lsf":   {"PEND", "RUN", "SSUSP", "USUSP", "PSUSP"},
-    "pbs":   {"Q", "R", "E", "H", "W", "T", "S"},
-    "sge":   {"qw", "r", "t", "Rr", "Rq", "hqw", "hRwq"},
+# Statuses where the job is actively executing on a node.
+_RUNNING_STATUSES: dict[str, set[str]] = {
+    "slurm": {"RUNNING", "R", "COMPLETING", "CG", "RESIZING"},
+    "lsf":   {"RUN"},
+    "pbs":   {"R", "E"},
+    "sge":   {"r", "t", "Rr"},
+}
+
+# Statuses where the job is alive but not yet on a node.
+_PENDING_STATUSES: dict[str, set[str]] = {
+    "slurm": {"PENDING", "PD", "SUSPENDED", "S"},
+    "lsf":   {"PEND", "SSUSP", "USUSP", "PSUSP"},
+    "pbs":   {"Q", "H", "W", "T", "S"},
+    "sge":   {"qw", "Rq", "hqw", "hRwq"},
 }
 
 
@@ -142,15 +149,15 @@ def _parse_status_output(
     scheduler: str,
     custom_alive_statuses: list[str],
     custom_status_regex: str,
-) -> set[str]:
-    """Parse status_list output and return the subset of our_job_ids still alive.
+) -> dict[str, str]:
+    """Parse status_list output; return dict[job_id → 'running'|'pending'].
 
     Each line is expected to contain a job ID and a status token separated by
     a comma (matching the recommended status_list format "%i,%T" for SLURM).
-    Falls back to just checking if our job ID appears anywhere on a line for
-    schedulers whose status format varies.
+    Jobs absent from the output are considered terminal and not returned.
+    Jobs present without a recognisable status are treated as 'pending'.
     """
-    alive: set[str] = set()
+    result: dict[str, str] = {}
 
     if scheduler == "auto":
         schedulers_to_try = ["slurm", "lsf", "pbs", "sge"]
@@ -169,7 +176,6 @@ def _parse_status_output(
             job_id = job_id.strip()
             status_token = status_token.strip()
         else:
-            # No comma — treat the whole line as a job ID with unknown status.
             job_id = line
             status_token = ""
 
@@ -177,26 +183,29 @@ def _parse_status_output(
             continue
 
         if scheduler == "custom":
-            if status_token in custom_alive_statuses:
-                alive.add(job_id)
-            elif not status_token:
-                alive.add(job_id)  # presence without status → treat as alive
+            if status_token in custom_alive_statuses or not status_token:
+                result[job_id] = "pending"  # custom mode doesn't distinguish
             continue
 
         if not status_token:
-            # Present in output but no status parsed → assume alive.
-            alive.add(job_id)
+            result[job_id] = "pending"
             continue
 
+        state = "pending"
         for sched in schedulers_to_try:
-            if status_token in _ALIVE_STATUSES[sched]:
-                alive.add(job_id)
+            if status_token in _RUNNING_STATUSES[sched]:
+                state = "running"
+                break
+            if status_token in _PENDING_STATUSES[sched]:
+                state = "pending"
                 break
         else:
-            # Status token found but not in any alive set → job is terminal.
-            pass
+            # Not in any known set → treat as terminal, don't include.
+            continue
 
-    return alive
+        result[job_id] = state
+
+    return result
 
 
 class ClusterProvisioner(WorkerProvisioner):
@@ -224,14 +233,14 @@ class ClusterProvisioner(WorkerProvisioner):
         self._scripts_dir = queue_dir / "cluster"
         self._scripts_dir.mkdir(parents=True, exist_ok=True)
 
-    def _alive_job_ids(self) -> set[str]:
-        """Query the scheduler and return the subset of our job IDs still alive.
+    def _query_job_states(self) -> dict[str, str]:
+        """Query the scheduler; return dict[job_id → 'running'|'pending'].
 
-        On scheduler error, returns the full submitted-ID set to avoid
+        On scheduler error, returns all submitted IDs as 'pending' to avoid
         resubmission storms during transient scheduler outages.
         """
         if not self._job_ids:
-            return set()
+            return {}
         our_ids = set(self._job_ids)
         status_cmd = self._config.status_list.replace(
             "{{user}}", os.environ.get("USER", os.environ.get("USERNAME", ""))
@@ -245,7 +254,7 @@ class ClusterProvisioner(WorkerProvisioner):
                 text=True,
                 timeout=30,
             )
-            alive = _parse_status_output(
+            states = _parse_status_output(
                 output=result.stdout,
                 our_job_ids=our_ids,
                 scheduler=self._config.scheduler,
@@ -253,17 +262,30 @@ class ClusterProvisioner(WorkerProvisioner):
                 custom_status_regex=self._config.custom_status_regex,
             )
             # Prune terminated jobs from our tracking list.
-            self._job_ids = [jid for jid in self._job_ids if jid in alive]
-            return alive
+            self._job_ids = [jid for jid in self._job_ids if jid in states]
+            return states
         except Exception:
-            # Scheduler unavailable — assume all submitted jobs are still alive.
-            return our_ids
+            # Scheduler unavailable — assume all submitted jobs are pending.
+            return {jid: "pending" for jid in self._job_ids}
+
+    def _alive_job_ids(self) -> set[str]:
+        return set(self._query_job_states().keys())
 
     def live_worker_count(self) -> int:
         return len(self._alive_job_ids())
 
     def worker_counts_by_type(self) -> dict[str, int]:
-        return {"cluster": self.live_worker_count()}
+        states = self._query_job_states()
+        running = sum(1 for s in states.values() if s == "running")
+        pending = sum(1 for s in states.values() if s == "pending")
+        counts = {}
+        if running:
+            counts["cluster-running"] = running
+        if pending:
+            counts["cluster-pending"] = pending
+        if not counts:
+            counts["cluster"] = 0
+        return counts
 
     def _render_script(self, index: int) -> Path:
         template_text = self._config.script_path.read_text()

@@ -29,68 +29,68 @@ def _cluster_cfg(tmp_path) -> ClusterConfig:
 # Status parser unit tests
 # ---------------------------------------------------------------------------
 
-def test_parse_status_output_slurm_alive():
+def test_parse_status_output_slurm_running_and_pending():
     output = "12345,PENDING\n12346,RUNNING\n12347,COMPLETING\n"
     our_ids = {"12345", "12346", "12347", "99999"}
-    alive = _parse_status_output(output, our_ids, "slurm", [], "")
-    assert alive == {"12345", "12346", "12347"}
+    states = _parse_status_output(output, our_ids, "slurm", [], "")
+    assert states == {"12345": "pending", "12346": "running", "12347": "running"}
 
 
 def test_parse_status_output_slurm_terminal():
     output = "12345,COMPLETED\n12346,FAILED\n12347,CANCELLED\n"
     our_ids = {"12345", "12346", "12347"}
-    alive = _parse_status_output(output, our_ids, "slurm", [], "")
-    assert alive == set()
+    states = _parse_status_output(output, our_ids, "slurm", [], "")
+    assert states == {}
 
 
-def test_parse_status_output_lsf_alive():
+def test_parse_status_output_lsf():
     output = "12345,PEND\n12346,RUN\n"
     our_ids = {"12345", "12346"}
-    alive = _parse_status_output(output, our_ids, "lsf", [], "")
-    assert alive == {"12345", "12346"}
+    states = _parse_status_output(output, our_ids, "lsf", [], "")
+    assert states == {"12345": "pending", "12346": "running"}
 
 
-def test_parse_status_output_pbs_alive():
+def test_parse_status_output_pbs():
     output = "12345,Q\n12346,R\n12347,C\n"
     our_ids = {"12345", "12346", "12347"}
-    alive = _parse_status_output(output, our_ids, "pbs", [], "")
-    assert alive == {"12345", "12346"}
+    states = _parse_status_output(output, our_ids, "pbs", [], "")
+    assert states == {"12345": "pending", "12346": "running"}
 
 
-def test_parse_status_output_sge_alive():
+def test_parse_status_output_sge():
     output = "12345,qw\n12346,r\n"
     our_ids = {"12345", "12346"}
-    alive = _parse_status_output(output, our_ids, "sge", [], "")
-    assert alive == {"12345", "12346"}
+    states = _parse_status_output(output, our_ids, "sge", [], "")
+    assert states == {"12345": "pending", "12346": "running"}
 
 
 def test_parse_status_output_auto_detects_slurm():
     output = "12345,PENDING\n12346,RUNNING\n"
     our_ids = {"12345", "12346"}
-    alive = _parse_status_output(output, our_ids, "auto", [], "")
-    assert alive == {"12345", "12346"}
+    states = _parse_status_output(output, our_ids, "auto", [], "")
+    assert states == {"12345": "pending", "12346": "running"}
 
 
 def test_parse_status_output_ignores_unknown_ids():
     output = "99999,RUNNING\n"
     our_ids = {"12345"}
-    alive = _parse_status_output(output, our_ids, "slurm", [], "")
-    assert alive == set()
+    states = _parse_status_output(output, our_ids, "slurm", [], "")
+    assert states == {}
 
 
-def test_parse_status_output_no_status_token_treated_as_alive():
-    """A job present in output with no comma is assumed alive."""
+def test_parse_status_output_no_status_token_treated_as_pending():
+    """A job present in output with no comma is assumed pending."""
     output = "12345\n"
     our_ids = {"12345"}
-    alive = _parse_status_output(output, our_ids, "slurm", [], "")
-    assert alive == {"12345"}
+    states = _parse_status_output(output, our_ids, "slurm", [], "")
+    assert states == {"12345": "pending"}
 
 
 def test_parse_status_output_custom():
     output = "12345,INPROGRESS\n12346,DONE\n"
     our_ids = {"12345", "12346"}
-    alive = _parse_status_output(output, our_ids, "custom", ["INPROGRESS"], "")
-    assert alive == {"12345"}
+    states = _parse_status_output(output, our_ids, "custom", ["INPROGRESS"], "")
+    assert states == {"12345": "pending"}
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ def test_cluster_provisioner_submits_n_workers_jobs(tmp_path):
 
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(ClusterProvisioner, "_alive_job_ids", return_value=set()):
+    ), patch.object(ClusterProvisioner, "_query_job_states", return_value={}):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=4)
 
@@ -183,11 +183,10 @@ def test_cluster_provisioner_does_not_resubmit_alive_jobs(tmp_path):
         result.stdout = "Submitted batch job 12345\n"
         return result
 
+    alive = {"1": "running", "2": "running", "3": "pending", "4": "pending"}
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(
-        ClusterProvisioner, "_alive_job_ids", return_value={"1", "2", "3", "4"}
-    ):
+    ), patch.object(ClusterProvisioner, "_query_job_states", return_value=alive):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=4)
 
@@ -207,12 +206,23 @@ def test_cluster_provisioner_replenishes_preempted_jobs(tmp_path):
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
     ), patch.object(
-        ClusterProvisioner, "_alive_job_ids", return_value={"1", "2"}
+        ClusterProvisioner,
+        "_query_job_states",
+        return_value={"1": "running", "2": "pending"},
     ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=4)
 
     assert len(submitted) == 2
+
+
+def test_cluster_provisioner_worker_counts_split_running_pending(tmp_path):
+    cfg = _cluster_cfg(tmp_path)
+    states = {"1": "running", "2": "running", "3": "pending", "4": "pending", "5": "pending"}
+    with patch.object(ClusterProvisioner, "_query_job_states", return_value=states):
+        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
+        counts = p.worker_counts_by_type()
+    assert counts == {"cluster-running": 2, "cluster-pending": 3}
 
 
 def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
@@ -229,7 +239,7 @@ def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
 
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(ClusterProvisioner, "_alive_job_ids", return_value=set()):
+    ), patch.object(ClusterProvisioner, "_query_job_states", return_value={}):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=3)
         p.shutdown()
@@ -239,10 +249,9 @@ def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
 
 
 def test_cluster_provisioner_prunes_terminated_jobs(tmp_path):
-    """_alive_job_ids prunes job IDs no longer in scheduler output."""
+    """_query_job_states prunes job IDs no longer in scheduler output."""
     cfg = _cluster_cfg(tmp_path)
 
-    # Simulate: 3 jobs submitted, only 2 alive in scheduler
     status_output = "11111,PENDING\n22222,RUNNING\n"
 
     def fake_run(cmd, **kwargs):
@@ -256,9 +265,11 @@ def test_cluster_provisioner_prunes_terminated_jobs(tmp_path):
     ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p._job_ids = ["11111", "22222", "33333"]
-        alive = p._alive_job_ids()
+        states = p._query_job_states()
 
-    assert alive == {"11111", "22222"}
+    assert set(states.keys()) == {"11111", "22222"}
+    assert states["11111"] == "pending"
+    assert states["22222"] == "running"
     assert p._job_ids == ["11111", "22222"]
 
 
