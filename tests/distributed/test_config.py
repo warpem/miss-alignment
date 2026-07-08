@@ -10,6 +10,7 @@ def cluster_json(tmp_path):
         "submit": "sbatch {{script_path}}",
         "submit_job_id_regex": r"Submitted batch job (\d+)",
         "cancel": "scancel {{job_id}}",
+        "status_list": "squeue -u $USER -h -o '%i,%T'",
     }
     p = tmp_path / "cluster.json"
     p.write_text(json.dumps(cfg))
@@ -45,6 +46,24 @@ def test_load_cluster_config_returns_config(monkeypatch, cluster_json, cluster_s
     assert "sbatch" in cfg.submit
     assert cfg.script_path == cluster_script
     assert r"(\d+)" in cfg.submit_job_id_regex
+    assert "squeue" in cfg.status_list
+    assert cfg.scheduler == "auto"
+
+
+def test_load_cluster_config_explicit_scheduler(monkeypatch, tmp_path, cluster_script):
+    cfg_data = {
+        "submit": "sbatch {{script_path}}",
+        "submit_job_id_regex": r"Submitted batch job (\d+)",
+        "cancel": "scancel {{job_id}}",
+        "status_list": "squeue -u $USER -h -o '%i,%T'",
+        "scheduler": "slurm",
+    }
+    p = tmp_path / "cluster.json"
+    p.write_text(json.dumps(cfg_data))
+    monkeypatch.setenv("MISS_CLUSTER_CONFIG", str(p))
+    monkeypatch.setenv("MISS_CLUSTER_SCRIPT", str(cluster_script))
+    cfg = load_cluster_config()
+    assert cfg.scheduler == "slurm"
 
 
 def test_load_cluster_config_raises_on_missing_file(monkeypatch, tmp_path, cluster_script):

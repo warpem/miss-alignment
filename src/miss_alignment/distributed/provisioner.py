@@ -119,21 +119,148 @@ class LocalProvisioner(WorkerProvisioner):
         self._procs.clear()
 
 
+# ---------------------------------------------------------------------------
+# Per-scheduler status parsers.
+# Each entry maps a comma-separated "id,STATUS" token to alive/dead.
+# The status_list command is expected to emit one "id,STATUS" pair per line
+# (e.g. SLURM: squeue -u $USER -h -o "%i,%T").
+# ---------------------------------------------------------------------------
+
+# Statuses that mean the job is still occupying a slot (queued or running).
+_ALIVE_STATUSES: dict[str, set[str]] = {
+    "slurm": {"PENDING", "PD", "RUNNING", "R", "COMPLETING", "CG",
+               "RESIZING", "SUSPENDED", "S"},
+    "lsf":   {"PEND", "RUN", "SSUSP", "USUSP", "PSUSP"},
+    "pbs":   {"Q", "R", "E", "H", "W", "T", "S"},
+    "sge":   {"qw", "r", "t", "Rr", "Rq", "hqw", "hRwq"},
+}
+
+
+def _parse_status_output(
+    output: str,
+    our_job_ids: set[str],
+    scheduler: str,
+    custom_alive_statuses: list[str],
+    custom_status_regex: str,
+) -> set[str]:
+    """Parse status_list output and return the subset of our_job_ids still alive.
+
+    Each line is expected to contain a job ID and a status token separated by
+    a comma (matching the recommended status_list format "%i,%T" for SLURM).
+    Falls back to just checking if our job ID appears anywhere on a line for
+    schedulers whose status format varies.
+    """
+    alive: set[str] = set()
+
+    if scheduler == "auto":
+        schedulers_to_try = ["slurm", "lsf", "pbs", "sge"]
+    elif scheduler == "custom":
+        schedulers_to_try = []
+    else:
+        schedulers_to_try = [scheduler]
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        if "," in line:
+            job_id, _, status_token = line.partition(",")
+            job_id = job_id.strip()
+            status_token = status_token.strip()
+        else:
+            # No comma — treat the whole line as a job ID with unknown status.
+            job_id = line
+            status_token = ""
+
+        if job_id not in our_job_ids:
+            continue
+
+        if scheduler == "custom":
+            if status_token in custom_alive_statuses:
+                alive.add(job_id)
+            elif not status_token:
+                alive.add(job_id)  # presence without status → treat as alive
+            continue
+
+        if not status_token:
+            # Present in output but no status parsed → assume alive.
+            alive.add(job_id)
+            continue
+
+        for sched in schedulers_to_try:
+            if status_token in _ALIVE_STATUSES[sched]:
+                alive.add(job_id)
+                break
+        else:
+            # Status token found but not in any alive set → job is terminal.
+            pass
+
+    return alive
+
+
 class ClusterProvisioner(WorkerProvisioner):
-    """Submits cluster jobs; resubmits when alive workers fall below target."""
+    """Submits cluster jobs; tracks liveness by querying the batch scheduler.
+
+    The status_list command (configured in cluster_config.json) is called each
+    scheduler tick to get the set of alive jobs. Supports SLURM, LSF, PBS, SGE,
+    and custom schedulers. Scheduler type is auto-detected from status output
+    unless 'scheduler' is set explicitly in the config.
+
+    Recommended status_list format (one job per line, id,STATUS):
+      SLURM: squeue -u $USER -h -o "%i,%T"
+      LSF:   bjobs -noheader -o "jobid stat"  (with custom_status_regex)
+      PBS:   qstat -u $USER (with custom parser)
+      SGE:   qstat -u $USER (with custom parser)
+    """
 
     def __init__(self, queue_dir: Path, config: ClusterConfig) -> None:
         self._queue_dir = queue_dir
         self._config = config
         self._job_ids: list[str] = []
-        # Monotonically increasing index for unique script names. Separate
-        # from _job_ids so we never reuse a script index even after replenishment.
+        # Monotonically increasing index for unique script names so indices
+        # never repeat even after preemption-triggered resubmissions.
         self._next_index: int = 0
         self._scripts_dir = queue_dir / "cluster"
         self._scripts_dir.mkdir(parents=True, exist_ok=True)
 
+    def _alive_job_ids(self) -> set[str]:
+        """Query the scheduler and return the subset of our job IDs still alive.
+
+        On scheduler error, returns the full submitted-ID set to avoid
+        resubmission storms during transient scheduler outages.
+        """
+        if not self._job_ids:
+            return set()
+        our_ids = set(self._job_ids)
+        status_cmd = self._config.status_list.replace(
+            "{{user}}", os.environ.get("USER", os.environ.get("USERNAME", ""))
+        )
+        try:
+            result = subprocess.run(
+                status_cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=30,
+            )
+            alive = _parse_status_output(
+                output=result.stdout,
+                our_job_ids=our_ids,
+                scheduler=self._config.scheduler,
+                custom_alive_statuses=self._config.custom_alive_statuses,
+                custom_status_regex=self._config.custom_status_regex,
+            )
+            # Prune terminated jobs from our tracking list.
+            self._job_ids = [jid for jid in self._job_ids if jid in alive]
+            return alive
+        except Exception:
+            # Scheduler unavailable — assume all submitted jobs are still alive.
+            return our_ids
+
     def live_worker_count(self) -> int:
-        return _live_worker_dirs(self._queue_dir / "running")
+        return len(self._alive_job_ids())
 
     def worker_counts_by_type(self) -> dict[str, int]:
         return {"cluster": self.live_worker_count()}
@@ -180,8 +307,11 @@ class ClusterProvisioner(WorkerProvisioner):
             self._job_ids.append(match.group(1))
 
     def ensure_workers(self, n_workers: int) -> None:
-        """Submit new jobs until live worker count reaches n_workers."""
-        alive = self.live_worker_count()
+        """Submit new jobs until alive job count reaches n_workers.
+
+        Alive means queued or running according to the cluster scheduler.
+        """
+        alive = len(self._alive_job_ids())
         deficit = n_workers - alive
         for _ in range(deficit):
             self._submit_one()

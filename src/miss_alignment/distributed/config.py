@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -18,7 +18,14 @@ class ClusterConfig:
     submit: str
     submit_job_id_regex: str
     cancel: str
+    status_list: str
     script_path: Path
+    # Optional: 'slurm', 'lsf', 'pbs', 'sge', or 'custom'.
+    # When absent the status output is auto-detected by trying all parsers.
+    scheduler: str = "auto"
+    # Custom parser fields — only used when scheduler='custom'.
+    custom_alive_statuses: list[str] = field(default_factory=list)
+    custom_status_regex: str = ""  # captures (job_id, status) per line
 
 
 def load_cluster_config() -> ClusterConfig:
@@ -28,7 +35,7 @@ def load_cluster_config() -> ClusterConfig:
         raise RuntimeError(
             "MISS_CLUSTER_CONFIG environment variable is required when "
             "--n-cluster-workers is set. Point it to a JSON file with "
-            "'submit', 'submit_job_id_regex', and 'cancel' keys."
+            "'submit', 'submit_job_id_regex', 'cancel', and 'status_list' keys."
         )
 
     script_path_str = os.environ.get("MISS_CLUSTER_SCRIPT")
@@ -52,5 +59,9 @@ def load_cluster_config() -> ClusterConfig:
         submit=data["submit"],
         submit_job_id_regex=data["submit_job_id_regex"],
         cancel=data["cancel"],
+        status_list=data["status_list"],
         script_path=script_path,
+        scheduler=data.get("scheduler", "auto"),
+        custom_alive_statuses=data.get("custom_alive_statuses", []),
+        custom_status_regex=data.get("custom_status_regex", ""),
     )

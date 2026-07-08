@@ -54,13 +54,63 @@ automatically.
 
 ## Adapting for other schedulers
 
-Replace the three fields in `cluster_config.json`:
+The four required fields in `cluster_config.json`:
 
-| Field | Purpose | PBS/Torque example |
-|---|---|---|
-| `submit` | Command to submit `{{script_path}}` | `"qsub {{script_path}}"` |
-| `submit_job_id_regex` | Regex capturing the job ID from submit stdout | `"(\\d+)\\..*"` |
-| `cancel` | Command to cancel `{{job_id}}` | `"qdel {{job_id}}"` |
+| Field | Purpose |
+|---|---|
+| `submit` | Command to submit `{{script_path}}` |
+| `submit_job_id_regex` | Regex (group 1) capturing the job ID from submit stdout |
+| `cancel` | Command to cancel `{{job_id}}` |
+| `status_list` | Command listing all your active jobs; `$USER` is expanded by the shell. Output must be one job per line in `id,STATUS` format. |
 
-Update `worker.sh` with the corresponding scheduler directives (`#PBS` instead of
-`#SBATCH`, etc.).
+The `status_list` command is called each scheduler tick (every 10s) to count alive
+(queued or running) jobs. Status tokens are auto-detected across SLURM, LSF, PBS, and
+SGE. Set `"scheduler": "slurm"` (or `"lsf"`, `"pbs"`, `"sge"`) to skip auto-detection.
+
+### Examples by scheduler
+
+**SLURM** (default):
+```json
+{
+  "submit": "sbatch {{script_path}}",
+  "submit_job_id_regex": "Submitted batch job (\\d+)",
+  "cancel": "scancel {{job_id}}",
+  "status_list": "squeue -u $USER -h -o \"%i,%T\""
+}
+```
+
+**LSF**:
+```json
+{
+  "submit": "bsub < {{script_path}}",
+  "submit_job_id_regex": "Job <(\\d+)> is submitted",
+  "cancel": "bkill {{job_id}}",
+  "status_list": "bjobs -u $USER -noheader -o 'jobid stat'",
+  "scheduler": "lsf"
+}
+```
+
+**PBS/Torque**:
+```json
+{
+  "submit": "qsub {{script_path}}",
+  "submit_job_id_regex": "(\\d+)\\.\\w+",
+  "cancel": "qdel {{job_id}}",
+  "status_list": "qstat -u $USER | awk 'NR>5 {print $1\",\"$10}'",
+  "scheduler": "pbs"
+}
+```
+
+**Custom scheduler** — provide your own alive status tokens:
+```json
+{
+  "submit": "...",
+  "submit_job_id_regex": "(\\d+)",
+  "cancel": "...",
+  "status_list": "...",
+  "scheduler": "custom",
+  "custom_alive_statuses": ["QUEUED", "ACTIVE"]
+}
+```
+
+Update `worker.sh` with the corresponding scheduler directives (`#PBS`, `#BSUB`, etc.).
