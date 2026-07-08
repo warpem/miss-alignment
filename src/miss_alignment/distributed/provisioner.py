@@ -283,8 +283,6 @@ class ClusterProvisioner(WorkerProvisioner):
             counts["cluster-running"] = running
         if pending:
             counts["cluster-pending"] = pending
-        if not counts:
-            counts["cluster"] = 0
         return counts
 
     def _render_script(self, index: int) -> Path:

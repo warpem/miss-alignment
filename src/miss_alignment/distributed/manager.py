@@ -121,6 +121,7 @@ def _scheduler_thread(
                     # This also prevents resubmission when workers exit cleanly on
                     # an empty queue — only re-fill if the sweep re-pended orphans.
                     provisioner.ensure_workers(min(n_workers, n_pending))
+                worker_counts.clear()
                 worker_counts.update(provisioner.worker_counts_by_type())
                 last_sweep = now
 
@@ -220,7 +221,7 @@ def run_distributed(
 
     stop_event = threading.Event()
     scheduler_errors: list = []
-    worker_counts: dict = provisioner.worker_counts_by_type()
+    worker_counts: dict = {}
     scheduler = threading.Thread(
         target=_scheduler_thread,
         args=(
