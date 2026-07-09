@@ -143,6 +143,12 @@ _PENDING_STATUSES: dict[str, set[str]] = {
 }
 
 
+# Jobs absent from squeue for longer than this are considered gone.
+# Must be long enough to cover scheduler registration delay (usually <30s)
+# plus a full squeue poll cycle.
+_JOB_GRACE_S = 120.0
+
+
 def _parse_status_output(
     output: str,
     our_job_ids: set[str],
@@ -152,10 +158,9 @@ def _parse_status_output(
 ) -> dict[str, str]:
     """Parse status_list output; return dict[job_id → 'running'|'pending'].
 
-    Each line is expected to contain a job ID and a status token separated by
-    a comma (matching the recommended status_list format "%i,%T" for SLURM).
-    Jobs absent from the output are considered terminal and not returned.
-    Jobs present without a recognisable status are treated as 'pending'.
+    Only jobs from our_job_ids that appear in the output are returned.
+    Jobs absent from the output are not included — the caller decides
+    whether to prune them based on how long they have been absent.
     """
     result: dict[str, str] = {}
 
@@ -184,26 +189,22 @@ def _parse_status_output(
 
         if scheduler == "custom":
             if status_token in custom_alive_statuses or not status_token:
-                result[job_id] = "pending"  # custom mode doesn't distinguish
+                result[job_id] = "pending"
+            # Otherwise not recognised as alive — leave absent from result.
             continue
 
         if not status_token:
             result[job_id] = "pending"
             continue
 
-        state = "pending"
         for sched in schedulers_to_try:
             if status_token in _RUNNING_STATUSES[sched]:
-                state = "running"
+                result[job_id] = "running"
                 break
             if status_token in _PENDING_STATUSES[sched]:
-                state = "pending"
+                result[job_id] = "pending"
                 break
-        else:
-            # Not in any known set → treat as terminal, don't include.
-            continue
-
-        result[job_id] = state
+        # Jobs with unrecognised status are simply absent from the result.
 
     return result
 
@@ -216,32 +217,39 @@ class ClusterProvisioner(WorkerProvisioner):
     and custom schedulers. Scheduler type is auto-detected from status output
     unless 'scheduler' is set explicitly in the config.
 
+    Jobs absent from squeue output are kept for _JOB_GRACE_S seconds before
+    being pruned — this covers the window between submission and scheduler
+    registration, which can be tens of seconds on busy clusters.
+
     Recommended status_list format (one job per line, id,STATUS):
       SLURM: squeue -u $USER -h -o "%i,%T"
-      LSF:   bjobs -noheader -o "jobid stat"  (with custom_status_regex)
-      PBS:   qstat -u $USER (with custom parser)
-      SGE:   qstat -u $USER (with custom parser)
     """
 
     def __init__(self, queue_dir: Path, config: ClusterConfig) -> None:
         self._queue_dir = queue_dir
         self._config = config
-        self._job_ids: list[str] = []
+        # job_id → submission timestamp
+        self._job_submit_time: dict[str, float] = {}
         # Monotonically increasing index for unique script names so indices
         # never repeat even after preemption-triggered resubmissions.
         self._next_index: int = 0
         self._scripts_dir = queue_dir / "cluster"
         self._scripts_dir.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def _job_ids(self) -> list[str]:
+        return list(self._job_submit_time.keys())
+
     def _query_job_states(self) -> dict[str, str]:
         """Query the scheduler; return dict[job_id → 'running'|'pending'].
 
-        On scheduler error, returns all submitted IDs as 'pending' to avoid
-        resubmission storms during transient scheduler outages.
+        Jobs absent from squeue are pruned only after _JOB_GRACE_S seconds,
+        allowing for scheduler registration delay. On error, returns all
+        tracked jobs as 'pending'.
         """
-        if not self._job_ids:
+        if not self._job_submit_time:
             return {}
-        our_ids = set(self._job_ids)
+        our_ids = set(self._job_submit_time.keys())
         status_cmd = self._config.status_list.replace(
             "{{user}}", os.environ.get("USER", os.environ.get("USERNAME", ""))
         )
@@ -261,29 +269,43 @@ class ClusterProvisioner(WorkerProvisioner):
                 custom_alive_statuses=self._config.custom_alive_statuses,
                 custom_status_regex=self._config.custom_status_regex,
             )
-            # Prune terminated jobs from our tracking list.
-            self._job_ids = [jid for jid in self._job_ids if jid in states]
+            now = time.time()
+            # Prune jobs absent from squeue only after the grace period.
+            for jid in list(self._job_submit_time):
+                if jid not in states:
+                    age = now - self._job_submit_time[jid]
+                    if age > _JOB_GRACE_S:
+                        del self._job_submit_time[jid]
             return states
         except Exception:
-            # Scheduler unavailable — assume all submitted jobs are pending.
-            return {jid: "pending" for jid in self._job_ids}
-
-    def _alive_job_ids(self) -> set[str]:
-        return set(self._query_job_states().keys())
+            return {jid: "pending" for jid in self._job_submit_time}
 
     def live_worker_count(self) -> int:
-        return len(self._alive_job_ids())
+        return len(self._job_submit_time)
 
     def worker_counts_by_type(self) -> dict[str, int]:
         states = self._query_job_states()
         running = sum(1 for s in states.values() if s == "running")
+        # pending = squeue-visible pending + not-yet-visible (within grace period)
+        visible = set(states.keys())
         pending = sum(1 for s in states.values() if s == "pending")
+        pending += sum(1 for jid in self._job_submit_time if jid not in visible)
         counts = {}
         if running:
             counts["cluster-running"] = running
         if pending:
             counts["cluster-pending"] = pending
         return counts
+
+    def ensure_workers(self, n_workers: int) -> None:
+        """Submit new jobs until tracked job count reaches n_workers.
+
+        Prunes grace-expired absent jobs first, then submits the deficit.
+        """
+        self._query_job_states()
+        deficit = n_workers - len(self._job_submit_time)
+        for _ in range(deficit):
+            self._submit_one()
 
     def _render_script(self, index: int) -> Path:
         template_text = self._config.script_path.read_text()
@@ -324,26 +346,17 @@ class ClusterProvisioner(WorkerProvisioner):
         )
         match = re.search(self._config.submit_job_id_regex, result.stdout)
         if match:
-            self._job_ids.append(match.group(1))
-
-    def ensure_workers(self, n_workers: int) -> None:
-        """Submit new jobs until alive job count reaches n_workers.
-
-        Alive means queued or running according to the cluster scheduler.
-        """
-        alive = len(self._alive_job_ids())
-        deficit = n_workers - alive
-        for _ in range(deficit):
-            self._submit_one()
+            self._job_submit_time[match.group(1)] = time.time()
 
     def shutdown(self) -> None:
         def _cancel(job_id: str) -> None:
             cancel_cmd = self._config.cancel.replace("{{job_id}}", job_id)
             subprocess.run(cancel_cmd, shell=True, stderr=subprocess.DEVNULL)
 
-        with ThreadPoolExecutor(max_workers=min(32, len(self._job_ids) or 1)) as pool:
-            list(as_completed([pool.submit(_cancel, jid) for jid in self._job_ids]))
-        self._job_ids.clear()
+        job_ids = list(self._job_submit_time.keys())
+        with ThreadPoolExecutor(max_workers=min(32, len(job_ids) or 1)) as pool:
+            list(as_completed([pool.submit(_cancel, jid) for jid in job_ids]))
+        self._job_submit_time.clear()
 
 
 class CompositeProvisioner(WorkerProvisioner):

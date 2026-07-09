@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +37,8 @@ def test_parse_status_output_slurm_running_and_pending():
     assert states == {"12345": "pending", "12346": "running", "12347": "running"}
 
 
-def test_parse_status_output_slurm_terminal():
+def test_parse_status_output_slurm_terminal_absent():
+    """Terminal jobs (COMPLETED/FAILED) are absent from the result, not included."""
     output = "12345,COMPLETED\n12346,FAILED\n12347,CANCELLED\n"
     our_ids = {"12345", "12346", "12347"}
     states = _parse_status_output(output, our_ids, "slurm", [], "")
@@ -87,6 +89,7 @@ def test_parse_status_output_no_status_token_treated_as_pending():
 
 
 def test_parse_status_output_custom():
+    """Custom: alive statuses appear as 'pending'; others are absent."""
     output = "12345,INPROGRESS\n12346,DONE\n"
     our_ids = {"12345", "12346"}
     states = _parse_status_output(output, our_ids, "custom", ["INPROGRESS"], "")
@@ -155,122 +158,168 @@ def test_local_provisioner_shutdown_terminates(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_cluster_provisioner_submits_n_workers_jobs(tmp_path):
+    """ensure_workers submits until _job_submit_time reaches target."""
     cfg = _cluster_cfg(tmp_path)
-    submitted = []
+    call_num = [0]
 
     def fake_run(cmd, **kwargs):
-        submitted.append(cmd)
+        call_num[0] += 1
         result = MagicMock()
-        result.stdout = "Submitted batch job 12345\n"
+        result.stdout = (
+            "" if "squeue" in cmd
+            else f"Submitted batch job {call_num[0]}\n"
+        )
         return result
 
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(ClusterProvisioner, "_query_job_states", return_value={}):
-        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
-        p.ensure_workers(n_workers=4)
-
-    assert len(submitted) == 4
-
-
-def test_cluster_provisioner_does_not_resubmit_alive_jobs(tmp_path):
-    cfg = _cluster_cfg(tmp_path)
-    submitted = []
-
-    def fake_run(cmd, **kwargs):
-        submitted.append(cmd)
-        result = MagicMock()
-        result.stdout = "Submitted batch job 12345\n"
-        return result
-
-    alive = {"1": "running", "2": "running", "3": "pending", "4": "pending"}
-    with patch(
-        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(ClusterProvisioner, "_query_job_states", return_value=alive):
-        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
-        p.ensure_workers(n_workers=4)
-
-    assert len(submitted) == 0
-
-
-def test_cluster_provisioner_replenishes_preempted_jobs(tmp_path):
-    cfg = _cluster_cfg(tmp_path)
-    submitted = []
-
-    def fake_run(cmd, **kwargs):
-        submitted.append(cmd)
-        result = MagicMock()
-        result.stdout = "Submitted batch job 99999\n"
-        return result
-
-    with patch(
-        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(
-        ClusterProvisioner,
-        "_query_job_states",
-        return_value={"1": "running", "2": "pending"},
     ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=4)
 
-    assert len(submitted) == 2
+    assert len(p._job_submit_time) == 4
+
+
+def test_cluster_provisioner_does_not_resubmit_within_grace(tmp_path):
+    """Jobs recently submitted but absent from squeue are not double-counted."""
+    cfg = _cluster_cfg(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        result.stdout = ""  # squeue returns nothing (jobs not yet registered)
+        return result
+
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
+        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
+        now = time.time()
+        p._job_submit_time = {"1": now, "2": now, "3": now, "4": now}
+        p.ensure_workers(n_workers=4)
+
+    assert len(p._job_submit_time) == 4  # no new submissions
+
+
+def test_cluster_provisioner_prunes_grace_expired_absent_jobs(tmp_path):
+    """Jobs absent from squeue past the grace period are pruned."""
+    cfg = _cluster_cfg(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        result.stdout = "3,RUNNING\n"  # only job 3 visible
+        return result
+
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
+        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
+        old = time.time() - 200  # well past grace period
+        now = time.time()
+        p._job_submit_time = {"1": old, "2": old, "3": now}
+        states = p._query_job_states()
+
+    # Old absent jobs pruned; recent absent job kept; visible job in states
+    assert "1" not in p._job_submit_time
+    assert "2" not in p._job_submit_time
+    assert "3" in p._job_submit_time
+    assert states == {"3": "running"}
+
+
+def test_cluster_provisioner_absent_within_grace_not_pruned(tmp_path):
+    """Jobs absent from squeue within the grace period are kept."""
+    cfg = _cluster_cfg(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        result.stdout = "11111,RUNNING\n"
+        return result
+
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
+        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
+        now = time.time()
+        p._job_submit_time = {"11111": now, "22222": now, "33333": now}
+        states = p._query_job_states()
+
+    assert states == {"11111": "running"}
+    assert set(p._job_submit_time.keys()) == {"11111", "22222", "33333"}
+
+
+def test_cluster_provisioner_replenishes_grace_expired_jobs(tmp_path):
+    """ensure_workers resubmits for jobs that have aged out."""
+    cfg = _cluster_cfg(tmp_path)
+    submitted = []
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        if "squeue" in cmd:
+            result.stdout = "3,RUNNING\n4,RUNNING\n"
+        else:
+            submitted.append(cmd)
+            result.stdout = f"Submitted batch job {len(submitted) + 10}\n"
+        return result
+
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
+        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
+        old = time.time() - 200
+        now = time.time()
+        p._job_submit_time = {"1": old, "2": old, "3": now, "4": now}
+        p.ensure_workers(n_workers=4)
+
+    assert len(submitted) == 2  # replaced the 2 expired-absent jobs
 
 
 def test_cluster_provisioner_worker_counts_split_running_pending(tmp_path):
     cfg = _cluster_cfg(tmp_path)
-    states = {"1": "running", "2": "running", "3": "pending", "4": "pending", "5": "pending"}
-    with patch.object(ClusterProvisioner, "_query_job_states", return_value=states):
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        result.stdout = "1,RUNNING\n2,RUNNING\n3,PENDING\n"
+        return result
+
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
+    ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
+        now = time.time()
+        # 5 tracked: 3 visible (2 running, 1 pending), 2 not yet visible
+        p._job_submit_time = {"1": now, "2": now, "3": now, "4": now, "5": now}
         counts = p.worker_counts_by_type()
-    assert counts == {"cluster-running": 2, "cluster-pending": 3}
+
+    assert counts["cluster-running"] == 2
+    assert counts["cluster-pending"] == 3  # 1 explicit + 2 not-yet-visible
 
 
 def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
     cfg = _cluster_cfg(tmp_path)
     cancel_calls = []
+    submit_count = [0]
 
     def fake_run(cmd, **kwargs):
         if "sbatch" in cmd:
+            submit_count[0] += 1
             result = MagicMock()
-            result.stdout = "Submitted batch job 99999\n"
+            result.stdout = f"Submitted batch job {submit_count[0]}\n"
+            return result
+        if "squeue" in cmd:
+            result = MagicMock()
+            result.stdout = ""
             return result
         cancel_calls.append(cmd)
         return MagicMock()
 
     with patch(
         "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ), patch.object(ClusterProvisioner, "_query_job_states", return_value={}):
+    ):
         p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
         p.ensure_workers(n_workers=3)
         p.shutdown()
 
     assert len(cancel_calls) == 3
     assert all("scancel" in c for c in cancel_calls)
-
-
-def test_cluster_provisioner_prunes_terminated_jobs(tmp_path):
-    """_query_job_states prunes job IDs no longer in scheduler output."""
-    cfg = _cluster_cfg(tmp_path)
-
-    status_output = "11111,PENDING\n22222,RUNNING\n"
-
-    def fake_run(cmd, **kwargs):
-        result = MagicMock()
-        result.stdout = status_output
-        result.returncode = 0
-        return result
-
-    with patch(
-        "miss_alignment.distributed.provisioner.subprocess.run", side_effect=fake_run
-    ):
-        p = ClusterProvisioner(queue_dir=tmp_path, config=cfg)
-        p._job_ids = ["11111", "22222", "33333"]
-        states = p._query_job_states()
-
-    assert set(states.keys()) == {"11111", "22222"}
-    assert states["11111"] == "pending"
-    assert states["22222"] == "running"
-    assert p._job_ids == ["11111", "22222"]
 
 
 # ---------------------------------------------------------------------------
