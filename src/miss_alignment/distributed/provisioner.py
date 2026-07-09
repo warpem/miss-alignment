@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -79,33 +80,36 @@ class LocalProvisioner(WorkerProvisioner):
         self._queue_dir = queue_dir
         self._devices = devices
         self._procs: dict[int, subprocess.Popen] = {}
+        self._lock = threading.Lock()
 
     def live_worker_count(self) -> int:
-        return sum(1 for p in self._procs.values() if p.poll() is None)
+        with self._lock:
+            return sum(1 for p in self._procs.values() if p.poll() is None)
 
     def worker_counts_by_type(self) -> dict[str, int]:
         return {"local": self.live_worker_count()}
 
     def ensure_workers(self, n_workers: int) -> None:
-        for device in self._devices:
-            proc = self._procs.get(device)
-            if proc is not None and proc.poll() is None:
-                continue  # still running
-            new_proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "miss_alignment",
-                    "worker",
-                    "--queue-dir",
-                    str(self._queue_dir),
-                    "--device",
-                    str(device),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=sys.stderr,
-            )
-            self._procs[device] = new_proc
+        with self._lock:
+            for device in self._devices:
+                proc = self._procs.get(device)
+                if proc is not None and proc.poll() is None:
+                    continue  # still running
+                new_proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "miss_alignment",
+                        "worker",
+                        "--queue-dir",
+                        str(self._queue_dir),
+                        "--device",
+                        str(device),
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=sys.stderr,
+                )
+                self._procs[device] = new_proc
 
     def shutdown(self) -> None:
         for proc in self._procs.values():
