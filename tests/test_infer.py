@@ -52,7 +52,7 @@ def test_infer_applies_models_per_iteration(tmp_path, monkeypatch):
     model_run_dir = tmp_path / "run"
     iteration_settings = [
         {"downsample": 3, "alignment": "anchoring"},
-        {"downsample": 1, "alignment": [3, 3]},
+        {"downsample": 1, "alignment": [3, 3], "apply_ctf": True},
     ]
     _make_models(model_run_dir, len(iteration_settings))
     config_path = _write_config(tmp_path, data_dir, model_run_dir, iteration_settings)
@@ -66,6 +66,7 @@ def test_infer_applies_models_per_iteration(tmp_path, monkeypatch):
         output_directory,
         setting,
         downsample,
+        apply_ctf,
         **_,
     ):
         calls.append(
@@ -73,6 +74,7 @@ def test_infer_applies_models_per_iteration(tmp_path, monkeypatch):
                 "model_checkpoint": model_checkpoint,
                 "setting": setting,
                 "downsample": downsample,
+                "apply_ctf": apply_ctf,
             }
         )
         # mimic the real writer: produce one loss json per tilt series
@@ -97,9 +99,11 @@ def test_infer_applies_models_per_iteration(tmp_path, monkeypatch):
     assert calls[0]["model_checkpoint"] == str(model_run_dir / "iter1" / "model.ckpt")
     assert calls[0]["setting"] == "anchoring"
     assert calls[0]["downsample"] == 3
+    assert calls[0]["apply_ctf"] is False
     assert calls[1]["model_checkpoint"] == str(model_run_dir / "iter2" / "model.ckpt")
     assert calls[1]["setting"] == [3, 3]
     assert calls[1]["downsample"] == 1
+    assert calls[1]["apply_ctf"] is True
 
     # snapshots created per iteration, with provenance recorded
     for i in range(1, len(iteration_settings) + 1):

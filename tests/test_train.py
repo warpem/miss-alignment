@@ -24,7 +24,11 @@ from miss_alignment.train import (
     _resolve_start_checkpoint,
     _set_ddp_env,
 )
-from miss_alignment.utils import is_rank_zero, sync_start_iteration_xmls
+from miss_alignment.utils import (
+    is_rank_zero,
+    resolve_iteration_apply_ctf,
+    sync_start_iteration_xmls,
+)
 
 
 class _TinyDataset(Dataset):
@@ -205,3 +209,36 @@ def test_sync_start_iteration_xmls_resume_missing_raises(tmp_path):
     """Resuming at an iteration with no snapshot directory is an error."""
     with pytest.raises(FileNotFoundError, match="Cannot resume at iteration 3"):
         sync_start_iteration_xmls(3, tmp_path)
+
+
+def test_iteration_apply_ctf_uses_global_fallback():
+    assert (
+        resolve_iteration_apply_ctf(
+            {"downsample": 1, "alignment": "global"},
+            {"apply_ctf": True},
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize("iteration_value", [True, False])
+def test_iteration_apply_ctf_overrides_global(iteration_value):
+    assert (
+        resolve_iteration_apply_ctf(
+            {
+                "downsample": 1,
+                "alignment": [3, 3],
+                "apply_ctf": iteration_value,
+            },
+            {"apply_ctf": not iteration_value},
+        )
+        is iteration_value
+    )
+
+
+def test_iteration_apply_ctf_rejects_non_boolean():
+    with pytest.raises(TypeError, match="YAML boolean"):
+        resolve_iteration_apply_ctf(
+            {"apply_ctf": "True"},
+            {"apply_ctf": False},
+        )

@@ -21,6 +21,15 @@ Place a miss-alignment config file in the `warp_tiltseries/` directory — use [
 
 - **`training_directory`**: set to `/path/to/your/warp/project/warp_tiltseries/`
 - **`batch_size`** (in the `tilt_series_alignment` section): controls how many patches are reconstructed simultaneously during alignment. A value of 32 works well for 24 GB cards; reduce it for smaller cards or increase it for larger ones to improve throughput.
+- **`apply_ctf`**: the value under `general` is the default for every iteration.
+  An iteration can override it by adding `apply_ctf: True` or
+  `apply_ctf: False` to its entry in `iteration_settings`. This allows, for
+  example, inexpensive non-CTF coarse alignment followed by CTF-aware final
+  refinement. During training, the resolved value is used consistently for
+  both model-training reconstructions and alignment in that iteration. The
+  console reports `Training reconstruction CTF` and `Alignment reconstruction
+  CTF` separately, including the resolved boolean, so both phases are
+  auditable in run logs.
 
 ### 4. Run miss-alignment
 

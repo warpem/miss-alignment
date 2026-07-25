@@ -4,11 +4,33 @@ import logging
 import os
 from pathlib import Path
 from shutil import copyfile
+from typing import Any
 
 import torch
 
 # Env var controlling miss-alignment's own log verbosity (DEBUG/INFO/WARNING/...).
 LOG_LEVEL_ENV_VAR = "MISS_ALIGNMENT_LOG_LEVEL"
+
+
+def resolve_iteration_apply_ctf(
+    iteration_settings: dict[str, Any],
+    general_config: dict[str, Any],
+) -> bool:
+    """Resolve whether CTF is applied for one macro-iteration.
+
+    An ``apply_ctf`` value on the iteration takes precedence over the global
+    ``general.apply_ctf`` value. The global value remains the fallback so
+    existing configuration files keep their original behavior.
+    """
+    apply_ctf = iteration_settings.get(
+        "apply_ctf", general_config.get("apply_ctf", False)
+    )
+    if not isinstance(apply_ctf, bool):
+        raise TypeError(
+            "apply_ctf must be a YAML boolean (True/False), "
+            f"got {apply_ctf!r} ({type(apply_ctf).__name__})"
+        )
+    return apply_ctf
 
 
 def configure_logging() -> None:

@@ -18,7 +18,12 @@ from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
-from .utils import configure_logging, parse_device_list, sync_start_iteration_xmls
+from .utils import (
+    configure_logging,
+    parse_device_list,
+    resolve_iteration_apply_ctf,
+    sync_start_iteration_xmls,
+)
 from .data import MissAlignmentDataModule
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
@@ -241,6 +246,7 @@ def _training_worker(
         model = MissAlignment(**model_params)
 
     # Each GPU uses the full batch size (effective batch size scales with GPUs)
+    apply_ctf = resolve_iteration_apply_ctf(iteration_settings, general_config)
     with MissAlignmentDataModule(
         training_directory,
         create_default_generator(**shift_generation_config),
@@ -248,7 +254,7 @@ def _training_worker(
         n_training_devices=len(devices_training),
         batch_size=data_module_config["batch_size"],
         patch_size=data_module_config["patch_size"],
-        apply_ctf=general_config["apply_ctf"],
+        apply_ctf=apply_ctf,
         downsample=iteration_settings["downsample"],
         steps_per_epoch=data_module_config["steps_per_epoch"],
         pool_size=pool_size,
@@ -430,8 +436,10 @@ def train_miss_align(
         # ============================================================
         iteration_settings = general_config["iteration_settings"][x]
         alignment_mode = iteration_settings["alignment"]
+        apply_ctf = resolve_iteration_apply_ctf(iteration_settings, general_config)
         print(f"\n{'=' * 60}")
         print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
+        print(f"  apply CTF: {apply_ctf}")
         print(f"{'=' * 60}\n")
 
         # Run the training phase. Multi-GPU spawns one DDP worker per training
@@ -482,7 +490,7 @@ def train_miss_align(
             patch_size=alignment_config["patch_size"],
             patch_overlap=alignment_config["patch_overlap"],
             batch_size=alignment_config["batch_size"],
-            apply_ctf=general_config["apply_ctf"],
+            apply_ctf=apply_ctf,
             downsample=iteration_settings["downsample"],
             devices_list=devices_alignment,
         )
