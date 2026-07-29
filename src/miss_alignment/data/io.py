@@ -3,6 +3,7 @@ import time
 import torch
 import mrcfile
 from pathlib import Path
+from shutil import move
 
 from warpylib import TiltSeries
 from warpylib.ops import rescale
@@ -58,6 +59,62 @@ def _validate_tilt_series_dimensions(tilt_series: TiltSeries, path: Path) -> Non
             f"XML metadata at {path} has zero values in "
             f"'VolumeDimensionsAngstrom': {volume_dims.tolist()}"
         )
+
+
+_ALIGNMENT_FIELDS = (
+    "angles",
+    "tilt_axis_angles",
+    "tilt_axis_offset_x",
+    "tilt_axis_offset_y",
+)
+
+
+def _nonfinite_alignment_fields(tilt_series: TiltSeries) -> list[str]:
+    """Return the names of alignment fields that contain NaN/Inf values."""
+    bad = []
+    for name in _ALIGNMENT_FIELDS:
+        value = getattr(tilt_series, name, None)
+        if value is None:
+            continue
+        tensor = torch.as_tensor(value)
+        if tensor.numel() > 0 and not torch.isfinite(tensor).all():
+            bad.append(name)
+    return bad
+
+
+def exclude_nonfinite_alignment_tilt_series(training_directory: Path) -> list[Path]:
+    """Move tilt-series with unusable alignment metadata out of the training set."""
+    excluded = []
+    for xml_file in sorted(training_directory.glob("*.xml")):
+        try:
+            tilt_series = TiltSeries(xml_file)
+        except Exception as error:
+            excluded.append((xml_file, f"unparseable XML ({type(error).__name__})"))
+            continue
+        bad_fields = _nonfinite_alignment_fields(tilt_series)
+        if bad_fields:
+            excluded.append((xml_file, f"non-finite alignment in {bad_fields}"))
+
+    if excluded:
+        quarantine = training_directory / "excluded_nonfinite_alignment"
+        quarantine.mkdir(parents=True, exist_ok=True)
+        for xml_file, reason in excluded:
+            print(f"WARNING: excluding '{xml_file.name}' -- {reason}.", flush=True)
+            move(str(xml_file), str(quarantine / xml_file.name))
+
+    remaining = list(training_directory.glob("*.xml"))
+    if not remaining:
+        raise ValueError(
+            f"No tilt-series with usable alignment metadata remain in "
+            f"{training_directory} (excluded {len(excluded)})."
+        )
+    if excluded:
+        print(
+            f"Excluded {len(excluded)} tilt-series with unusable alignment; "
+            f"{len(remaining)} remain for training.",
+            flush=True,
+        )
+    return [xml_file for xml_file, _ in excluded]
 
 
 def _load_metadata_and_stack(
