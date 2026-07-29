@@ -19,22 +19,22 @@
 | src/miss\_alignment/data/\_\_init\_\_.py             |        2 |        0 |    100% |           |
 | src/miss\_alignment/data/\_augmentation.py           |       39 |        0 |    100% |           |
 | src/miss\_alignment/data/\_reconstruction\_worker.py |      147 |        0 |    100% |           |
-| src/miss\_alignment/data/io.py                       |       84 |       29 |     65% |44, 48, 52, 57, 154-213 |
+| src/miss\_alignment/data/io.py                       |      119 |       42 |     65% |45, 49, 53, 58, 78, 81, 91-93, 96, 99-103, 107, 112, 211-270 |
 | src/miss\_alignment/data/shift\_generation.py        |      124 |        6 |     95% |148, 291-294, 297 |
 | src/miss\_alignment/data/training\_datamodule.py     |      102 |       77 |     25% |41-55, 126-168, 172-173, 177-178, 193-258, 267, 286-310 |
 | src/miss\_alignment/data/training\_dataset.py        |       32 |        0 |    100% |           |
 | src/miss\_alignment/gradcam/\_\_init\_\_.py          |        0 |        0 |    100% |           |
 | src/miss\_alignment/gradcam/gradcam.py               |       43 |       43 |      0% |      1-71 |
-| src/miss\_alignment/infer.py                         |       75 |       11 |     85% |90-92, 100-112 |
+| src/miss\_alignment/infer.py                         |       77 |       11 |     86% |91-93, 101-113 |
 | src/miss\_alignment/models/\_\_init\_\_.py           |        4 |        0 |    100% |           |
 | src/miss\_alignment/models/\_compact.py              |      116 |       94 |     19% |6-49, 53-58, 63-91, 95-99, 104-132, 136-140, 145-173, 177-181, 186-225, 228-232, 252-280, 288-304, 321-347, 350-364 |
 | src/miss\_alignment/models/\_resnet.py               |      104 |       27 |     74% |50-68, 71-90, 180, 192, 204 |
 | src/miss\_alignment/models/models.py                 |      184 |      149 |     19% |50-53, 76-122, 140-155, 159-160, 164-190, 205-294, 299-305, 320-345, 350-351, 371-377, 381, 385-398, 409-419, 423-440, 444-445, 462-467, 471-491, 501-523 |
 | src/miss\_alignment/prepare\_stacks.py               |       46 |       36 |     22% |37-61, 85-102, 116-125, 155-173 |
 | src/miss\_alignment/preprocessing.py                 |        5 |        0 |    100% |           |
-| src/miss\_alignment/train.py                         |      154 |      107 |     31% |39-41, 64-69, 138-267, 325-509 |
+| src/miss\_alignment/train.py                         |      156 |      108 |     31% |40-42, 65-70, 139-268, 326-512 |
 | src/miss\_alignment/utils.py                         |       36 |        3 |     92% |48, 91, 95 |
-| **TOTAL**                                            | **1930** |  **873** | **55%** |           |
+| **TOTAL**                                            | **1969** |  **887** | **55%** |           |
 
 
 ## Setup coverage badge
