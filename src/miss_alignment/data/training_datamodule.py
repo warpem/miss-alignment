@@ -218,6 +218,11 @@ class MissAlignmentDataModule(pl.LightningDataModule):
                 f"Pool configuration: {self.n_workers} workers -> "
                 f"{self.n_partitions} partitions ({self.partition_size} files each)"
             )
+            print(
+                "Training reconstruction CTF: "
+                f"{'enabled' if self.apply_ctf else 'disabled'} "
+                f"(apply_ctf={self.apply_ctf}, downsample={self.downsample})"
+            )
 
             # Start worker processes
             self.stop_event = ctx.Event()

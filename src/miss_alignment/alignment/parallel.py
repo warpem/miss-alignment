@@ -80,6 +80,11 @@ def run_alignment_parallel(
     dict[str, float]
         Dictionary mapping tilt-series names to their final loss values.
     """
+    print(
+        "Alignment reconstruction CTF: "
+        f"{'enabled' if apply_ctf else 'disabled'} "
+        f"(apply_ctf={apply_ctf}, downsample={downsample})"
+    )
     jobs = [
         {
             "model_checkpoint_path": model_checkpoint,

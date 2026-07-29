@@ -11,7 +11,11 @@ import torch
 from lightning.pytorch import seed_everything
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
-from .utils import configure_logging, sync_start_iteration_xmls
+from .utils import (
+    configure_logging,
+    resolve_iteration_apply_ctf,
+    sync_start_iteration_xmls,
+)
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
@@ -137,11 +141,13 @@ def infer_miss_align(
     for x in range(start_iter, end_iter):
         iteration_settings = general_config["iteration_settings"][x]
         alignment_mode = iteration_settings["alignment"]
+        apply_ctf = resolve_iteration_apply_ctf(iteration_settings, general_config)
         model_checkpoint = model_paths[x]
 
         print(f"\n{'=' * 60}")
         print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
         print(f"  model: {model_checkpoint}")
+        print(f"  apply CTF: {apply_ctf}")
         print(f"{'=' * 60}\n")
 
         # get list of all files to process for alignment
@@ -156,7 +162,7 @@ def infer_miss_align(
             patch_size=alignment_config["patch_size"],
             patch_overlap=alignment_config["patch_overlap"],
             batch_size=alignment_config["batch_size"],
-            apply_ctf=general_config["apply_ctf"],
+            apply_ctf=apply_ctf,
             downsample=iteration_settings["downsample"],
             devices_list=devices_alignment,
         )
