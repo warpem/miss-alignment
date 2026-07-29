@@ -12,6 +12,7 @@ from lightning.pytorch import seed_everything
 
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .utils import configure_logging, sync_start_iteration_xmls
+from .data.io import exclude_nonfinite_alignment_tilt_series
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
@@ -113,6 +114,8 @@ def infer_miss_align(
             training_directory=data_directory,
             devices=devices_alignment,
         )
+
+    exclude_nonfinite_alignment_tilt_series(data_directory)
 
     start_iter = start_at_iteration
     end_iter = len(general_config["iteration_settings"])
