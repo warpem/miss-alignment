@@ -4,14 +4,13 @@ This module provides functionality to load raw tilt images and create
 preprocessed tilt stacks ready for training.
 """
 
-import queue
 from pathlib import Path
 
 import mrcfile
 from warpylib import TiltSeries
 from warpylib.movie import Movie
 
-from ._parallel import run_device_pool
+from .distributed.manager import run_distributed
 
 
 def _get_original_pixel_size(tilt_series: TiltSeries) -> float:
@@ -89,7 +88,6 @@ def _prepare_single_tilt_series(
 
     ts = TiltSeries(xml_path)
     original_pixel_size = _get_original_pixel_size(ts)
-    # print(f"{xml_path.stem}: original pixel size = {original_pixel_size:.4f} Å")
 
     images, _, _ = ts.load_images(
         original_pixel_size=original_pixel_size,
@@ -106,29 +104,11 @@ def _prepare_single_tilt_series(
     )
 
 
-def _prepare_stacks_runner(
-    device: int | None,
-    task_queue,
-    result_queue,
-    desired_pixel_size: float,
-) -> None:
-    """Pull tilt-series off the queue and prepare them on a single device."""
-    import torch
-
-    torch.set_num_threads(1)
-    while True:
-        try:
-            xml_path = task_queue.get_nowait()
-        except queue.Empty:
-            break
-        _prepare_single_tilt_series(xml_path, desired_pixel_size, device)
-        result_queue.put_nowait(xml_path.stem)
-
-
 def prepare_stacks_parallel(
     training_directory: Path,
     desired_pixel_size: float,
     devices: list[int] | None = None,
+    n_cluster_workers: int | None = None,
 ) -> None:
     """Prepare tilt stacks for all tilt series in the training directory.
 
@@ -144,13 +124,16 @@ def prepare_stacks_parallel(
     devices : list[int] | None
         CUDA device indices to distribute work across (one worker process per
         unique device). If None, a single default-device worker is used.
+    n_cluster_workers : int | None
+        Number of cluster jobs to submit. When set, activates cluster mode;
+        requires MISS_CLUSTER_CONFIG and MISS_CLUSTER_SCRIPT to be set.
 
     Raises
     ------
     FileNotFoundError
         If no XML files are found in the training directory.
     RuntimeError
-        If any tilt series fails to process (terminates on first error).
+        If any tilt series fails to process.
     """
     xml_files = list(training_directory.glob("*.xml"))
     if not xml_files:
@@ -159,15 +142,26 @@ def prepare_stacks_parallel(
         )
 
     print(
-        f"Preparing stacks for {len(xml_files)} tilt series at {desired_pixel_size} Å"
+        f"Preparing stacks for {len(xml_files)} tilt series "
+        f"at {desired_pixel_size} Å"
     )
 
-    run_device_pool(
-        jobs=xml_files,
-        runner=_prepare_stacks_runner,
-        runner_args=(desired_pixel_size,),
-        devices=devices,
-        desc="Preparing stacks",
+    queue_root = training_directory / "tasks"
+    run_distributed(
+        tilt_series_list=xml_files,
+        model_checkpoint=Path(""),
+        output_directory=training_directory,
+        setting="",
+        patch_size=0,
+        patch_overlap=0.0,
+        batch_size=0,
+        apply_ctf=False,
+        downsample=1,
+        devices=devices or [],
+        n_cluster_workers=n_cluster_workers,
+        queue_root=queue_root,
+        task_type="prepare_stacks",
+        desired_pixel_size=desired_pixel_size,
     )
 
     print(f"Successfully prepared stacks for {len(xml_files)} tilt series")

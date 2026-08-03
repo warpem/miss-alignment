@@ -1,11 +1,10 @@
 """Preprocessing utilities for tilt-series alignment."""
 
-import queue
 import torch
 from pathlib import Path
 
-from ._parallel import run_device_pool
 from .data.io import TiltSeriesData
+from .distributed.manager import run_distributed
 
 
 def _run_cross_correlation_single(
@@ -60,29 +59,11 @@ def _run_cross_correlation_single(
     ts_data.save_metadata_to_xml(ts)
 
 
-def _cross_correlation_runner(
-    device: int | None, task_queue, result_queue, lowpass_cutoff: float
-) -> None:
-    """Pull tilt-series off the queue and align them on a single device."""
-
-    torch.set_num_threads(1)
-    while True:
-        try:
-            xml_file = task_queue.get_nowait()
-        except queue.Empty:
-            break
-        _run_cross_correlation_single(
-            xml_file,
-            device,
-            lowpass_cutoff,
-        )
-        result_queue.put_nowait(xml_file.stem)
-
-
 def run_cross_correlation_alignment_parallel(
     training_directory: Path,
     devices: list[int] | None = None,
     lowpass_cutoff: float = 0.25,
+    n_cluster_workers: int | None = None,
 ) -> None:
     """
     Run cross-correlation based alignment in parallel.
@@ -100,6 +81,9 @@ def run_cross_correlation_alignment_parallel(
         unique device). If None, a single default-device worker is used.
     lowpass_cutoff : float, optional
         Low-pass filter cutoff frequency (default: 0.25).
+    n_cluster_workers : int | None
+        Number of cluster jobs to submit. When set, activates cluster mode;
+        requires MISS_CLUSTER_CONFIG and MISS_CLUSTER_SCRIPT to be set.
     """
     # Get list of all XML files to process
     xml_files = list(training_directory.glob("*.xml"))
@@ -114,12 +98,22 @@ def run_cross_correlation_alignment_parallel(
     else:
         print("  Using default device assignment\n")
 
-    run_device_pool(
-        jobs=xml_files,
-        runner=_cross_correlation_runner,
-        runner_args=(lowpass_cutoff,),
-        devices=devices,
-        desc="Cross-correlation alignment",
+    queue_root = training_directory / "tasks"
+    run_distributed(
+        tilt_series_list=xml_files,
+        model_checkpoint=Path(""),
+        output_directory=training_directory,
+        setting="",
+        patch_size=0,
+        patch_overlap=0.0,
+        batch_size=0,
+        apply_ctf=False,
+        downsample=1,
+        devices=devices or [],
+        n_cluster_workers=n_cluster_workers,
+        queue_root=queue_root,
+        task_type="cross_correlation",
+        lowpass_cutoff=lowpass_cutoff,
     )
 
     print("\nCross-correlation alignment complete!\n")

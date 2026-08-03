@@ -1,47 +1,45 @@
-"""Tests for the shared one-process-per-device work-queue helper."""
-
-import queue
+"""Tests for the distributed worker provisioner (replaces _parallel.py tests)."""
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from miss_alignment._parallel import run_device_pool
+from miss_alignment.distributed.provisioner import LocalProvisioner
 
 
-def _square_runner(device, task_queue, result_queue):
-    """Process int jobs by squaring them (device is ignored; no CUDA needed)."""
-    while True:
-        try:
-            n = task_queue.get_nowait()
-        except queue.Empty:
-            break
-        result_queue.put_nowait(n * n)
+def test_local_provisioner_spawns_worker_per_device(tmp_path):
+    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        p = LocalProvisioner(queue_dir=tmp_path, devices=[0, 1, 2])
+        p.ensure_workers(n_workers=10)
+
+        assert mock_popen.call_count == 3
 
 
-def _failing_runner(device, task_queue, result_queue):
-    """Raise on a specific job to exercise worker-failure detection."""
-    while True:
-        try:
-            n = task_queue.get_nowait()
-        except queue.Empty:
-            break
-        if n == 3:
-            raise ValueError("boom")
-        result_queue.put_nowait(n * n)
+def test_local_provisioner_does_not_double_spawn(tmp_path):
+    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
+        p.ensure_workers(n_workers=5)
+        p.ensure_workers(n_workers=5)
+
+        assert mock_popen.call_count == 1
 
 
-@pytest.mark.filterwarnings("ignore")
-def test_run_device_pool_processes_all_jobs():
-    """Every job is processed exactly once across multiple worker processes."""
-    jobs = [1, 2, 3, 4, 5]
-    results = run_device_pool(
-        jobs, _square_runner, runner_args=(), devices=[0, 1], desc="test"
-    )
-    assert sorted(results) == [1, 4, 9, 16, 25]
+def test_local_provisioner_shutdown_terminates(tmp_path):
+    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
 
+        p = LocalProvisioner(queue_dir=tmp_path, devices=[0])
+        p.ensure_workers(n_workers=5)
+        p.shutdown()
 
-@pytest.mark.filterwarnings("ignore")
-def test_run_device_pool_raises_on_worker_failure():
-    """A worker that dies with a non-zero exit code surfaces as RuntimeError."""
-    jobs = [1, 2, 3, 4, 5]
-    with pytest.raises(RuntimeError, match="stopped unexpectedly"):
-        run_device_pool(jobs, _failing_runner, runner_args=(), devices=[0], desc="test")
+        mock_proc.terminate.assert_called()

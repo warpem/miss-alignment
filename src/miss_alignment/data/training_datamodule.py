@@ -215,7 +215,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             self.pool_dir.mkdir(parents=True, exist_ok=True)
             print(f"Created pool directory: {self.pool_dir}")
             print(
-                f"Pool configuration: {self.n_workers} workers -> "
+                f"Pool configuration: {self.n_workers} reconstruction workers, "
                 f"{self.n_partitions} partitions ({self.partition_size} files each)"
             )
 
