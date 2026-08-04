@@ -72,8 +72,9 @@ class TripletMarginRankingLoss(nn.Module):
             (triplet_loss, precision_reg) - weighted triplet loss and precision
             regularization term
         """
-        # Convert log precision to precision (always positive)
-        precisions = log_precisions.exp()
+        # Bound log precision element-wise: saturated triplets contribute zero
+        # gradient to their own log precision, so nothing else holds it finite
+        log_precisions = log_precisions.clamp(-10.0, 10.0)
 
         # Identify example types and compute distances
         example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
@@ -86,12 +87,6 @@ class TripletMarginRankingLoss(nn.Module):
         distant_scores = scores[distant_mask]  # (b,)
         distant_scores = einops.rearrange(distant_scores, "b -> b 1")
 
-        # Extract precisions for weighting
-        close_precisions = precisions[close_mask]
-        close_precisions = einops.rearrange(close_precisions, "(b n) -> b n", n=2)
-        distant_precisions = precisions[distant_mask]
-        distant_precisions = einops.rearrange(distant_precisions, "b -> b 1")
-
         # Compute distances
         dist_pos = torch.abs(close_scores[..., 0] - close_scores[..., 1])
         dist_neg = torch.min(
@@ -103,13 +98,14 @@ class TripletMarginRankingLoss(nn.Module):
 
         # Weight by geometric mean of precisions in the triplet
         # This downweights triplets where any member has low precision
-        all_precisions = torch.cat([close_precisions, distant_precisions], dim=-1)
-        triplet_precision = all_precisions.prod(dim=-1).pow(1 / 3)  # geometric mean
+        triplet_precision = log_precisions.mean(dim=-1).exp()
         weighted_losses = triplet_losses * triplet_precision
 
         # Precision regularization: penalize low precision to prevent collapse
-        # Using mean of log_precisions (equivalent to log of geometric mean)
-        precision_reg = -log_precisions.mean() * self.precision_reg_weight
+        # One-sided: penalizes collapse without rewarding unbounded precision
+        precision_reg = (
+            torch.clamp(-log_precisions.mean(), min=0.0) * self.precision_reg_weight
+        )
 
         # Apply reduction to weighted losses
         if self.reduction == "mean":
