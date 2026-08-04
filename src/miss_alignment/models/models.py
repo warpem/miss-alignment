@@ -181,7 +181,7 @@ class MissAlignment(pl.LightningModule):
         score_misaligned = torch.mean(scores[target == -1])
 
         # Compute mean precision for logging
-        mean_precision = log_precisions.exp().mean()
+        mean_log_precision = log_precisions.mean()
 
         return (
             total_loss,
@@ -190,7 +190,7 @@ class MissAlignment(pl.LightningModule):
             batch_size,
             score_aligned,
             score_misaligned,
-            mean_precision,
+            mean_log_precision,
         )
 
     def training_step(
@@ -205,7 +205,7 @@ class MissAlignment(pl.LightningModule):
             batch_size,
             score_aligned,
             score_misaligned,
-            mean_precision,
+            mean_log_precision,
         ) = self._common_step(batch, batch_idx)
 
         # Fail fast on NaN loss to prevent corrupted training
@@ -268,8 +268,8 @@ class MissAlignment(pl.LightningModule):
 
         # Log mean precision to monitor uncertainty learning
         self.log(
-            name="mean_precision",
-            value=mean_precision.item(),
+            name="mean_log_precision",
+            value=mean_log_precision.item(),
             prog_bar=True,
             on_step=False,
             on_epoch=True,
