@@ -329,7 +329,6 @@ miss-alignment/
 │   ├── models/          # Neural network architectures
 │   ├── data/            # Data loading, shift generation, reconstruction workers
 │   ├── alignment/       # Alignment optimization algorithms
-│   ├── gradcam/         # Gradient-weighted Class Activation Mapping utilities
 │   ├── train.py         # Main training loop
 │   ├── _cli.py          # CLI setup with typer
 │   └── config_template.yaml  # Configuration template
