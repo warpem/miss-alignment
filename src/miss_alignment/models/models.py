@@ -72,9 +72,6 @@ class TripletMarginRankingLoss(nn.Module):
             (triplet_loss, precision_reg) - weighted triplet loss and precision
             regularization term
         """
-        # Convert log precision to precision (always positive)
-        precisions = log_precisions.exp()
-
         # Identify example types and compute distances
         example_type = einops.rearrange(triplet_indices.sum(dim=-1), "b -> b 1")
         close_mask = triplet_indices == example_type
@@ -86,12 +83,6 @@ class TripletMarginRankingLoss(nn.Module):
         distant_scores = scores[distant_mask]  # (b,)
         distant_scores = einops.rearrange(distant_scores, "b -> b 1")
 
-        # Extract precisions for weighting
-        close_precisions = precisions[close_mask]
-        close_precisions = einops.rearrange(close_precisions, "(b n) -> b n", n=2)
-        distant_precisions = precisions[distant_mask]
-        distant_precisions = einops.rearrange(distant_precisions, "b -> b 1")
-
         # Compute distances
         dist_pos = torch.abs(close_scores[..., 0] - close_scores[..., 1])
         dist_neg = torch.min(
@@ -101,15 +92,15 @@ class TripletMarginRankingLoss(nn.Module):
         # Compute triplet loss with margin
         triplet_losses = F.relu(dist_pos + dist_neg + self.margin)
 
-        # Weight by geometric mean of precisions in the triplet
-        # This downweights triplets where any member has low precision
-        all_precisions = torch.cat([close_precisions, distant_precisions], dim=-1)
-        triplet_precision = all_precisions.prod(dim=-1).pow(1 / 3)  # geometric mean
-        weighted_losses = triplet_losses * triplet_precision
+        # Weight by softmax over the log-space geometric mean of precisions;
+        # shift-invariant and bounded, so no single triplet can dominate.
+        log_triplet_precision = log_precisions.mean(dim=-1)  # log geometric mean
+        weights = torch.softmax(log_triplet_precision, dim=0)
+        weighted_losses = triplet_losses * weights * triplet_losses.shape[0]
 
-        # Precision regularization: penalize low precision to prevent collapse
-        # Using mean of log_precisions (equivalent to log of geometric mean)
-        precision_reg = -log_precisions.mean() * self.precision_reg_weight
+        # Quadratic prior pins log precision at 0 (softmax is shift-invariant,
+        # so nothing else constrains its absolute level).
+        precision_reg = 0.5 * log_precisions.pow(2).mean() * self.precision_reg_weight
 
         # Apply reduction to weighted losses
         if self.reduction == "mean":
@@ -184,8 +175,9 @@ class MissAlignment(pl.LightningModule):
         score_aligned = torch.mean(scores[target == 1])
         score_misaligned = torch.mean(scores[target == -1])
 
-        # Compute mean precision for logging
-        mean_precision = log_precisions.exp().mean()
+        # Compute mean and spread of log precision for logging
+        mean_log_precision = log_precisions.mean()
+        std_log_precision = log_precisions.std()
 
         return (
             total_loss,
@@ -194,7 +186,8 @@ class MissAlignment(pl.LightningModule):
             batch_size,
             score_aligned,
             score_misaligned,
-            mean_precision,
+            mean_log_precision,
+            std_log_precision,
         )
 
     def training_step(
@@ -209,7 +202,8 @@ class MissAlignment(pl.LightningModule):
             batch_size,
             score_aligned,
             score_misaligned,
-            mean_precision,
+            mean_log_precision,
+            std_log_precision,
         ) = self._common_step(batch, batch_idx)
 
         # Fail fast on NaN loss to prevent corrupted training
@@ -272,9 +266,21 @@ class MissAlignment(pl.LightningModule):
 
         # Log mean precision to monitor uncertainty learning
         self.log(
-            name="mean_precision",
-            value=mean_precision.item(),
+            name="mean_log_precision",
+            value=mean_log_precision.item(),
             prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=True,
+        )
+
+        # Log precision spread: rising values mean the softmax weighting is
+        # approaching one-hot, letting a single triplet dominate the batch
+        self.log(
+            name="std_log_precision",
+            value=std_log_precision.item(),
+            prog_bar=False,
             on_step=False,
             on_epoch=True,
             logger=True,
