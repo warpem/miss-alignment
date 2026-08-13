@@ -49,8 +49,6 @@ train_config:
       - { downsample: 2, alignment: anchoring }
       - { downsample: 1, alignment: global }
       - { downsample: 1, alignment: global }
-      - { downsample: 1, alignment: global }
-      - { downsample: 1, alignment: global }
 
   model_training:
     model_architecture: 'default'
@@ -86,16 +84,16 @@ train_config:
 
 # Compute resources for `miss-alignment train`, and how to run it.
 run:
-  training_devices: "0"
-  reconstruction_devices: "0"
+  training_devices: "0,1,2"
+  reconstruction_devices: "3,3,3,3,3"
   dataloaders_per_trainer: 2
-  pool_size: 200
   env:
+    TORCHDYNAMO_DISABLE: 1
     OMP_NUM_THREADS: 1
     MKL_NUM_THREADS: 1
   # If a condition's training fails, stop the whole suite instead of
   # continuing to the next condition.
-  stop_on_error: false
+  stop_on_error: true
 
 # How finished conditions are scored against ground truth.
 eval:
