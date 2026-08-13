@@ -75,7 +75,7 @@ train_config:
     outlier_probability: .5
     outlier_max_shift: 20.0
     fracture_probability: .5
-    fracture_max_shift: 30.0
+    fracture_max_shift: 20.0
 
   tilt_series_alignment:
     patch_size: 96
