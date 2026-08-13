@@ -26,8 +26,11 @@ python run_experiment.py
 This will, on a system that has nothing yet:
 1. Download and prepare the SHREC benchmark into `raw_data_dir` (via
    `../preproc.py`), if it isn't already there.
-2. Build every condition's degraded `iter0/` + `config.yaml` under
-   `output_root` (skipping any tilt-series that already exist there).
+2. Build every condition's degraded input `.xml`/`.st` + `config.yaml` under
+   `output_root` (skipping any tilt-series that already exist there). Files
+   land flat in the condition directory -- that directory *is* the
+   `training_directory` `miss-alignment train` expects, which creates its
+   own `iter0/`, `iter1/`, ... backup snapshots as it trains.
 3. Run `miss-alignment train` for each condition in turn (skips conditions
    whose final checkpoint already exists, so a killed run can be restarted
    with the same command).

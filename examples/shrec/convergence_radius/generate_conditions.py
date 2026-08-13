@@ -2,8 +2,11 @@
 Build all degraded-input SHREC project directories from settings.yaml.
 
 For every enabled experiment type and sweep value, this creates
-``<output_root>/<condition_name>/iter0/*.xml`` (+ symlinked or noised .st
-stacks) and a ``config.yaml`` ready for ``miss-alignment train``, and writes
+``<output_root>/<condition_name>/*.xml`` (+ symlinked or noised .st stacks)
+directly in the condition directory -- the ``training_directory`` for
+``miss-alignment train``, which expects its input .xml files flat at its
+root and creates ``iter0/``, ``iter1/``, ... itself as backup snapshots
+during training. It also writes a ``config.yaml`` and, at the end,
 ``<output_root>/manifest.json`` listing every condition. Safe to re-run:
 already-generated tilt-series are left untouched, but each condition's
 config.yaml is always rewritten from the current settings.
@@ -94,7 +97,7 @@ def main(settings_path: Path) -> list[dict]:
             name = f"noise_std{fmt_level(std)}"
             cond_dir = output_root / name
             for model in models:
-                out_xml = cond_dir / "iter0" / f"{model}.xml"
+                out_xml = cond_dir / f"{model}.xml"
                 if out_xml.exists():
                     continue
                 seed_i = condition_seed(seed, name, model)
@@ -114,7 +117,7 @@ def main(settings_path: Path) -> list[dict]:
             name = f"interp_{fmt_level(mult)}x"
             cond_dir = output_root / name
             for model in models:
-                out_xml = cond_dir / "iter0" / f"{model}.xml"
+                out_xml = cond_dir / f"{model}.xml"
                 if out_xml.exists():
                     continue
                 generate_interpolation_condition(
@@ -136,7 +139,7 @@ def main(settings_path: Path) -> list[dict]:
             name = f"snr_{fmt_level(snr)}"
             cond_dir = output_root / name
             for model in models:
-                out_xml = cond_dir / "iter0" / f"{model}.xml"
+                out_xml = cond_dir / f"{model}.xml"
                 if out_xml.exists():
                     continue
                 seed_i = condition_seed(seed, name, model)
