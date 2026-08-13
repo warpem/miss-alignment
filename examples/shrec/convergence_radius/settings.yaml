@@ -1,0 +1,106 @@
+# Settings for the SHREC convergence-radius experiment suite.
+# Edit values here and run `python run_experiment.py` -- nothing else needs
+# to change. See README.md for what each experiment type does.
+
+# Where the preprocessed SHREC benchmark (ground_truth/ + iter0/) lives.
+# If it isn't there yet, run_experiment.py downloads and prepares it with
+# preproc.py first (so the whole suite runs from scratch on a fresh system).
+raw_data_dir: ~/data/datasets/shrec_benchmark
+
+# Where generated per-condition project directories and results are written.
+output_root: ~/data/experiments/shrec_convergence_radius
+
+# null = use every model_* found in raw_data_dir/ground_truth/
+models: null
+
+seed: 45132
+
+experiments:
+  # Ground truth alignment + random-normal per-tilt jitter, swept over its
+  # standard deviation (in original, downsample=1 pixels; pixel size 10 A).
+  noise:
+    enabled: true
+    std_values_pixels: [1, 2, 4, 8, 16, 32]
+
+  # Ground truth alignment + a multiple of the ground-truth-to-tiltxcorr
+  # per-tilt residual (with tiltxcorr's unresolved global 3D offset removed
+  # via the existing compare_to_ground_truth.py cross-correlation code).
+  # 1x reproduces tiltxcorr's own error pattern; >1x extrapolates beyond it.
+  interpolation:
+    enabled: true
+    multipliers: [1, 2, 3]
+
+  # Tiltxcorr alignment, unchanged, with images degraded by added Gaussian
+  # noise to a target SNR = Var(clean stack) / Var(added noise). Simulates
+  # thicker samples / weaker signal on top of a realistic starting alignment.
+  snr:
+    enabled: true
+    snr_values: [20, 10, 5, 2, 1]
+
+# Written into each condition's config.yaml verbatim, with
+# general.training_directory and general.seed filled in per condition.
+# This is the standard miss-alignment training config -- see
+# docs/config_template.yaml and examples/shrec/how-to-run.md.
+train_config:
+  general:
+    apply_ctf: False
+    iteration_settings:
+      - { downsample: 2, alignment: anchoring }
+      - { downsample: 2, alignment: anchoring }
+      - { downsample: 1, alignment: global }
+      - { downsample: 1, alignment: global }
+      - { downsample: 1, alignment: global }
+      - { downsample: 1, alignment: global }
+
+  model_training:
+    model_architecture: 'default'
+    model_checkpoint: null  # random init; set to a .ckpt path to warm-start every condition
+    loss_margin: 0.5
+    learning_rate: 1.0e-3
+    weight_decay: 1.0e-4
+    max_epochs_per_iteration: 30
+    warmup_steps: 500
+    multistep_lr_scheduler:
+      milestones: [5, 15]
+      gamma: 0.5
+
+  data_loading:
+    batch_size: 32
+    patch_size: 96
+    steps_per_epoch: 1000
+
+  shift_generation:
+    trajectory_probability: .5
+    trajectory_max_shift: 10.0
+    jitter_probability: .5
+    jitter_max_std: 2.0
+    outlier_probability: .5
+    outlier_max_shift: 20.0
+    fracture_probability: .5
+    fracture_max_shift: 30.0
+
+  tilt_series_alignment:
+    patch_size: 96
+    patch_overlap: 0.1
+    batch_size: 16
+
+# Compute resources for `miss-alignment train`, and how to run it.
+run:
+  training_devices: "0"
+  reconstruction_devices: "0"
+  dataloaders_per_trainer: 2
+  pool_size: 200
+  env:
+    OMP_NUM_THREADS: 1
+    MKL_NUM_THREADS: 1
+  # If a condition's training fails, stop the whole suite instead of
+  # continuing to the next condition.
+  stop_on_error: false
+
+# How finished conditions are scored against ground truth.
+eval:
+  device: cuda  # falls back to cpu automatically if cuda is unavailable
+  # false (default): only score the final iteration -- did it converge?
+  # true: score every iterK/ snapshot -- full error-vs-iteration trajectory,
+  #       at the cost of ~(n_iterations+1)x the reconstruction work.
+  track_all_iterations: false
