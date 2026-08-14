@@ -81,12 +81,26 @@ def evaluate_condition(
 
     trajectory = {}
     for it in iters_to_eval:
-        it_dir = cond_dir / f"iter{it}"
-        if not it_dir.is_dir():
-            continue
+        if it == n_iters:
+            # train.py writes the aligned xmls back into cond_dir itself each
+            # macro-iteration before backing them up into iterN/ (which only
+            # copies the .xml, not tiltstack/) -- so for the final iteration,
+            # read directly from cond_dir, which already has tiltstack/ next
+            # to it.
+            test_dir = cond_dir
+        else:
+            test_dir = cond_dir / f"iter{it}"
+            if not test_dir.is_dir():
+                continue
+            # iterN/ only copies the .xml (see train.py / sync_start_iteration_xmls) --
+            # symlink in the shared tiltstack so TiltSeries's derived stack path
+            # (next to the xml) resolves for this snapshot too.
+            it_tiltstack = test_dir / "tiltstack"
+            if not it_tiltstack.exists():
+                it_tiltstack.symlink_to(Path("..") / "tiltstack")
         per_model = {}
         for model in models:
-            test_xml = it_dir / f"{model}.xml"
+            test_xml = test_dir / f"{model}.xml"
             if not test_xml.exists():
                 continue
             gt_data = TiltSeriesData(
