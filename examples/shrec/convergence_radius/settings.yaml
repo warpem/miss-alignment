@@ -28,7 +28,7 @@ experiments:
   # 1x reproduces tiltxcorr's own error pattern; >1x extrapolates beyond it.
   interpolation:
     enabled: true
-    multipliers: [1, 2, 3]
+    multipliers: [1, 1.5, 2, 3, 4]
 
   # Tiltxcorr alignment, unchanged, with images degraded by added Gaussian
   # noise to the SNR predicted for a sample of the given thickness. The
