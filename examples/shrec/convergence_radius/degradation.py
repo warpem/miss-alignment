@@ -10,7 +10,10 @@ alignment (or, for the SNR mode, the tiltxcorr alignment):
                         corrected) ground-truth-to-tiltxcorr residual, swept
                         over a multiplier (1x = tiltxcorr itself).
 * ``snr``            -- tiltxcorr alignment, images degraded by added
-                        Gaussian noise, swept over a target SNR.
+                        Gaussian noise, swept over target sample thickness
+                        (nm); the target SNR at each thickness follows the
+                        exponential decay model calibrated at the top of this
+                        file (see ``snr_at_thickness``).
 
 Only translations (``tilt_axis_offset_x/y``) are ever perturbed -- angles and
 tilt axis angle are always carried over unchanged from the source, matching
@@ -20,6 +23,7 @@ translations (see ``miss_alignment.data.shift_generation``).
 
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -33,6 +37,37 @@ from miss_alignment.data.shift_generation import project_shifts_3d_to_2d
 SHREC_DIR = Path(__file__).resolve().parent.parent
 if str(SHREC_DIR) not in sys.path:
     sys.path.insert(0, str(SHREC_DIR))
+
+# --- SNR-vs-thickness calibration ---------------------------------------
+# The source images for the `snr` experiment already carry real noise at
+# SNR0, measured at the reference thickness T0_NM -- they are not noise-free.
+# SNR is modelled to decay exponentially with sample thickness:
+#   SNR(t) = SNR0 * exp(-(t - T0_NM) / LAMBDA_EFF_NM)
+# LAMBDA_EFF_NM is a placeholder pending calibration against real data.
+SNR0 = 0.35
+T0_NM = 180.0
+LAMBDA_EFF_NM = 350.0
+
+
+def snr_at_thickness(
+    t: float, SNR0: float = SNR0, t0: float = T0_NM, lambda_eff: float = LAMBDA_EFF_NM
+) -> float:
+    """Predicted SNR at sample thickness ``t`` (nm), per the decay model above."""
+    return SNR0 * math.exp(-(t - t0) / lambda_eff)
+
+
+def noise_std_for_target(images: torch.Tensor, SNR0: float, SNR_target: float) -> float:
+    """Std of Gaussian noise to add so ``images`` (already noisy) reach SNR_target.
+
+    Assumes ``images`` already contains noise at SNR0, not a noise-free
+    signal: Var(images) = Var(signal) + Var(existing noise), with
+    SNR0 = Var(signal) / Var(existing noise). Solving for the extra noise
+    variance needed to bring the total down to SNR_target gives:
+        noise_std = images.std() * sqrt( (1/(1+SNR0)) * (SNR0/SNR_target - 1) )
+    """
+    return float(images.std()) * math.sqrt(
+        (1.0 / (1.0 + SNR0)) * (SNR0 / SNR_target - 1.0)
+    )
 
 
 def list_models(raw_data_dir: Path, explicit: list[str] | None = None) -> list[str]:
@@ -75,8 +110,9 @@ def build_degraded_tilt_series(
     Angles, tilt axis angle, and volume/image dimensions are copied from
     ``source_xml``. The underlying image stack is either symlinked from
     ``stack_source_st`` unchanged (``image_snr is None``), or rewritten with
-    added Gaussian noise so that
-    ``image_snr == Var(clean stack) / Var(added noise)``.
+    added Gaussian noise so the combined (existing + added) noise brings it
+    down to ``image_snr`` -- see ``noise_std_for_target``, which assumes
+    ``stack_source_st`` already carries SNR0 noise rather than being clean.
     """
     ts = TiltSeries(source_xml)
     ts.path = str(out_xml)
@@ -90,7 +126,7 @@ def build_degraded_tilt_series(
         with mrcfile.open(stack_source_st) as mrc:
             images = torch.tensor(mrc.data, dtype=torch.float32)
             pixel_size = float(mrc.voxel_size.x)
-        noise_std = float(images.std()) / (image_snr**0.5)
+        noise_std = noise_std_for_target(images, SNR0, image_snr)
         noise = torch.empty_like(images).normal_(mean=0.0, std=noise_std, generator=rng)
         ts.stack_tilts(images + noise, pixel_size, create_thumbnails=False)
     else:
@@ -192,13 +228,20 @@ def generate_interpolation_condition(
 
 
 def generate_snr_condition(
-    model: str, snr: float, raw_data_dir: Path, out_xml: Path, seed: int
+    model: str, thickness_nm: float, raw_data_dir: Path, out_xml: Path, seed: int
 ) -> None:
-    """Tiltxcorr alignment, images degraded to the given target SNR."""
+    """Tiltxcorr alignment, images degraded to the SNR predicted at thickness_nm.
+
+    The source images already carry SNR0 noise at the reference thickness
+    T0_NM (see the SNR-vs-thickness calibration constants above this module);
+    this adds just enough extra Gaussian noise to bring them down to the SNR
+    predicted for a sample thickness_nm thick.
+    """
     it0_xml = raw_data_dir / "iter0" / f"{model}.xml"
     it0_ts = TiltSeries(it0_xml)
     gt_ts = TiltSeries(raw_data_dir / "ground_truth" / f"{model}.xml")
 
+    target_snr = snr_at_thickness(thickness_nm)
     gen = torch.Generator().manual_seed(seed)
     build_degraded_tilt_series(
         it0_xml,
@@ -206,6 +249,6 @@ def generate_snr_condition(
         it0_ts.tilt_axis_offset_y,
         it0_ts.tilt_axis_offset_x,
         Path(gt_ts.tilt_stack_path),
-        image_snr=snr,
+        image_snr=target_snr,
         rng=gen,
     )

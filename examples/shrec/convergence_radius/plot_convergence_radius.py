@@ -20,7 +20,7 @@ LABELS = {
         "Random-noise degradation",
     ),
     "interpolation": ("tiltxcorr-residual multiplier", "tiltxcorr-pattern degradation"),
-    "snr": ("target image SNR", "Image-noise (thickness) degradation"),
+    "snr": ("target sample thickness (nm)", "Image-noise (thickness) degradation"),
 }
 
 
@@ -47,9 +47,6 @@ def plot_summary(rows: list[dict], out_path: Path) -> None:
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Final mean alignment error (Å)")
         ax.set_title(title)
-        if exp_type == "snr":
-            # worse (lower) SNR to the right, matching the other panels
-            ax.invert_xaxis()
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)

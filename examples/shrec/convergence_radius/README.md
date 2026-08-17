@@ -10,7 +10,7 @@ train+realign pipeline (`miss-alignment train`) from scratch per condition.
 |-----------------|---------------------------|----------------------------------------------------|------------|
 | `noise`         | ground truth              | random-normal per-tilt jitter added to offsets     | jitter std, pixels |
 | `interpolation` | ground truth              | a multiple of the ground-truth→tiltxcorr residual  | multiplier (1x = tiltxcorr) |
-| `snr`           | tiltxcorr (iter0)         | Gaussian noise added to the images                 | target SNR |
+| `snr`           | tiltxcorr (iter0)         | Gaussian noise added to the images                 | sample thickness, nm |
 
 Only translations (`tilt_axis_offset_x/y`) are ever perturbed; angles and
 tilt axis angle always come from the source unchanged (tiltxcorr does not
@@ -67,9 +67,16 @@ python run_experiment.py --skip-generate --skip-train  # only re-score + re-plot
   residual by the multiplier, so 1x/2x/3x actually escalate tiltxcorr's error
   pattern rather than a coordinate-frame artifact. This computation runs once
   per model and is cached to `tiltxcorr_residuals.json`.
-- **SNR definition**: `SNR = Var(clean image stack) / Var(added Gaussian noise)`,
-  computed per tilt-series from the (already roughly zero-mean, unit-std)
-  ground-truth image stack.
+- **SNR definition**: the source images are not noise-free -- they already
+  carry real noise at `SNR0` (measured at a reference thickness `T0_NM`).
+  Target SNR at a swept thickness follows an exponential decay model,
+  `SNR(t) = SNR0 * exp(-(t - T0_NM) / LAMBDA_EFF_NM)`, and the Gaussian noise
+  added on top brings the combined (existing + added) noise down to that
+  target. `SNR0`, `T0_NM`, and `LAMBDA_EFF_NM` (a placeholder pending
+  recalibration) are set at the top of `degradation.py`
+  (`snr_at_thickness`/`noise_std_for_target`). `T0_NM` (180nm) itself isn't
+  swept -- that's zero added noise, i.e. plain tiltxcorr, already covered
+  elsewhere.
 - **Every condition trains from random initial weights** (`model_checkpoint:
   null`), i.e. the full method (model training + alignment, both iterated)
   runs independently per condition -- this is deliberately expensive; there's

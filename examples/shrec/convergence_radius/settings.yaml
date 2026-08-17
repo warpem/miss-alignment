@@ -31,11 +31,16 @@ experiments:
     multipliers: [1, 2, 3]
 
   # Tiltxcorr alignment, unchanged, with images degraded by added Gaussian
-  # noise to a target SNR = Var(clean stack) / Var(added noise). Simulates
-  # thicker samples / weaker signal on top of a realistic starting alignment.
+  # noise to the SNR predicted for a sample of the given thickness. The
+  # source images already carry real noise (SNR0, measured at reference
+  # thickness T0_NM), not a clean signal; target SNR follows the exponential
+  # decay model SNR(t) = SNR0 * exp(-(t - T0_NM) / LAMBDA_EFF_NM), calibrated
+  # at the top of degradation.py (LAMBDA_EFF_NM is a placeholder pending
+  # recalibration). T0_NM (180nm) itself isn't swept here -- that's zero
+  # added noise, i.e. plain tiltxcorr, already covered elsewhere.
   snr:
     enabled: true
-    snr_values: [20, 10, 5, 2, 1]
+    thickness_values_nm: [300, 500, 700]
 
 # Written into each condition's config.yaml verbatim, with
 # general.training_directory and general.seed filled in per condition.

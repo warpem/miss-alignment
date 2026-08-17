@@ -135,18 +135,25 @@ def main(settings_path: Path) -> list[dict]:
             print(f"[generate] {name}: {len(models)} tilt-series ready")
 
     if exp.get("snr", {}).get("enabled"):
-        for snr in exp["snr"]["snr_values"]:
-            name = f"snr_{fmt_level(snr)}"
+        for thickness_nm in exp["snr"]["thickness_values_nm"]:
+            name = f"snr_{fmt_level(thickness_nm)}nm"
             cond_dir = output_root / name
             for model in models:
                 out_xml = cond_dir / f"{model}.xml"
                 if out_xml.exists():
                     continue
                 seed_i = condition_seed(seed, name, model)
-                generate_snr_condition(model, snr, raw_data_dir, out_xml, seed_i)
+                generate_snr_condition(
+                    model, thickness_nm, raw_data_dir, out_xml, seed_i
+                )
             write_condition_config(cond_dir, settings)
             manifest.append(
-                {"name": name, "type": "snr", "level": snr, "dir": str(cond_dir)}
+                {
+                    "name": name,
+                    "type": "snr",
+                    "level": thickness_nm,
+                    "dir": str(cond_dir),
+                }
             )
             print(f"[generate] {name}: {len(models)} tilt-series ready")
 
