@@ -5,10 +5,10 @@
 # Where the preprocessed SHREC benchmark (ground_truth/ + iter0/) lives.
 # If it isn't there yet, run_experiment.py downloads and prepares it with
 # preproc.py first (so the whole suite runs from scratch on a fresh system).
-raw_data_dir: ~/data/datasets/shrec_benchmark
+raw_data_dir: /data/mchaillet/convergence_experiment/shrec_raw
 
 # Where generated per-condition project directories and results are written.
-output_root: ~/data/experiments/shrec_convergence_radius
+output_root: /data/mchaillet/convergence_experiment/experiments
 
 # null = use every model_* found in raw_data_dir/ground_truth/
 models: null
@@ -85,20 +85,19 @@ train_config:
   tilt_series_alignment:
     patch_size: 96
     patch_overlap: 0.1
-    batch_size: 16
+    batch_size: 32
 
 # Compute resources for `miss-alignment train`, and how to run it.
 run:
-  training_devices: "0,1,2"
-  reconstruction_devices: "3,3,3,3,3"
-  dataloaders_per_trainer: 2
+  training_devices: "0,1"
+  reconstruction_devices: "2,2,2,3,3,3"
+  dataloaders_per_trainer: 5 
   env:
-    TORCHDYNAMO_DISABLE: 1
     OMP_NUM_THREADS: 1
     MKL_NUM_THREADS: 1
   # If a condition's training fails, stop the whole suite instead of
   # continuing to the next condition.
-  stop_on_error: true
+  stop_on_error: false
 
 # How finished conditions are scored against ground truth.
 eval:
