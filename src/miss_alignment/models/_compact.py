@@ -7,31 +7,31 @@ class Compact3DConvNet(nn.Module):
 
         # Feature extraction with progressive downsampling
         self.conv = nn.Sequential(
-            # Layer 0: 64x64x64 -> 64x64x64
+            # Layer 0: 96x96x96 -> 96x96x96
             nn.Conv3d(1, 8, kernel_size=3, stride=1, padding=1),
             nn.GroupNorm(8, 8),
             nn.SiLU(),
-            # Layer 1: 64x64x64 -> 32x32x32
+            # Layer 1: 96x96x96 -> 48x48x48
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 16),
             nn.SiLU(),
-            # Layer 2: 32x32x32 -> 16x16x16
+            # Layer 2: 48x48x48 -> 24x24x24
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.SiLU(),
-            # Layer 3: 16x16x16 -> 8x8x8
+            # Layer 3: 24x24x24 -> 12x12x12
             nn.Conv3d(32, 64, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 64),
             nn.SiLU(),
-            # Layer 4: 8x8x8 -> 4x4x4
+            # Layer 4: 12x12x12 -> 6x6x6
             nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 64),
             nn.SiLU(),
-            # Layer 5: 4x4x4 -> 2x2x2
+            # Layer 5: 6x6x6 -> 3x3x3
             nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 64),
             nn.SiLU(),
-            # Global average pooling: 2x2x2 -> 1x1x1
+            # Global average pooling: 3x3x3 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
         )
 
@@ -49,7 +49,7 @@ class Compact3DConvNet(nn.Module):
         self.log_precision_head = nn.Linear(16, 1)
 
     def forward(self, x):
-        # Assuming input shape: (batch_size, 1, 64, 64, 64)
+        # Assuming input shape: (batch_size, 1, 96, 96, 96)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 64)
         x = self.features(x)  # Shared features: (batch_size, 32)
@@ -64,23 +64,23 @@ class Compact3DConvNetGELU(nn.Module):
 
         # Feature extraction with progressive downsampling
         self.conv = nn.Sequential(
-            # Layer 1: 64x64x64 -> 32x32x32
+            # Layer 1: 96x96x96 -> 48x48x48
             nn.Conv3d(1, 8, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 8),
             nn.GELU(),
-            # Layer 2: 32x32x32 -> 16x16x16
+            # Layer 2: 48x48x48 -> 24x24x24
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 16),
             nn.GELU(),
-            # Layer 3: 16x16x16 -> 8x8x8
+            # Layer 3: 24x24x24 -> 12x12x12
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.GELU(),
-            # Layer 4: 8x8x8 -> 4x4x4
+            # Layer 4: 12x12x12 -> 6x6x6
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.GELU(),
-            # Global average pooling: 4x4x4 -> 1x1x1
+            # Global average pooling: 6x6x6 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
         )
 
@@ -91,7 +91,7 @@ class Compact3DConvNetGELU(nn.Module):
         self.log_precision_head = nn.Linear(32, 1)
 
     def forward(self, x):
-        # Assuming input shape: (batch_size, 1, 64, 64, 64)
+        # Assuming input shape: (batch_size, 1, 96, 96, 96)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
         score = self.score_head(x)  # (batch_size, 1)
@@ -105,23 +105,23 @@ class Compact3DConvNetSpread(nn.Module):
 
         # Feature extraction with progressive downsampling
         self.conv = nn.Sequential(
-            # Layer 1: 64x64x64 -> 32x32x32
+            # Layer 1: 96x96x96 -> 48x48x48
             nn.Conv3d(1, 8, kernel_size=7, stride=2, padding=3),
             nn.GroupNorm(8, 8),
             nn.ReLU(),
-            # Layer 2: 32x32x32 -> 16x16x16
+            # Layer 2: 48x48x48 -> 24x24x24
             nn.Conv3d(8, 16, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 16),
             nn.ReLU(),
-            # Layer 3: 16x16x16 -> 8x8x8
+            # Layer 3: 24x24x24 -> 12x12x12
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.ReLU(),
-            # Layer 4: 8x8x8 -> 4x4x4
+            # Layer 4: 12x12x12 -> 6x6x6
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.ReLU(),
-            # Global average pooling: 4x4x4 -> 1x1x1
+            # Global average pooling: 6x6x6 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
         )
 
@@ -132,7 +132,7 @@ class Compact3DConvNetSpread(nn.Module):
         self.log_precision_head = nn.Linear(32, 1)
 
     def forward(self, x):
-        # Assuming input shape: (batch_size, 1, 64, 64, 64)
+        # Assuming input shape: (batch_size, 1, 96, 96, 96)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 32)
         score = self.score_head(x)  # (batch_size, 1)
@@ -146,23 +146,23 @@ class Compact3DConvNetWide(nn.Module):
 
         # Feature extraction with progressive downsampling
         self.conv = nn.Sequential(
-            # Layer 1: 64x64x64 -> 32x32x32
+            # Layer 1: 96x96x96 -> 48x48x48
             nn.Conv3d(1, 16, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 16),
             nn.ReLU(),
-            # Layer 2: 32x32x32 -> 16x16x16
+            # Layer 2: 48x48x48 -> 24x24x24
             nn.Conv3d(16, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.ReLU(),
-            # Layer 3: 16x16x16 -> 8x8x8
+            # Layer 3: 24x24x24 -> 12x12x12
             nn.Conv3d(32, 64, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 64),
             nn.ReLU(),
-            # Layer 4: 8x8x8 -> 4x4x4
+            # Layer 4: 12x12x12 -> 6x6x6
             nn.Conv3d(64, 64, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 64),
             nn.ReLU(),
-            # Global average pooling: 4x4x4 -> 1x1x1
+            # Global average pooling: 6x6x6 -> 1x1x1
             nn.AdaptiveAvgPool3d(1),
         )
 
@@ -173,7 +173,7 @@ class Compact3DConvNetWide(nn.Module):
         self.log_precision_head = nn.Linear(64, 1)
 
     def forward(self, x):
-        # Assuming input shape: (batch_size, 1, 64, 64, 64)
+        # Assuming input shape: (batch_size, 1, 96, 96, 96)
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten: (batch_size, 64)
         score = self.score_head(x)  # (batch_size, 1)
@@ -186,28 +186,28 @@ class Compact3DConvNetDeep(nn.Module):
         super(Compact3DConvNetDeep, self).__init__()
 
         self.conv = nn.Sequential(
-            # Block 1: 64x64x64 -> 32x32x32
+            # Block 1: 96x96x96 -> 48x48x48
             nn.Conv3d(1, 8, kernel_size=3, stride=1, padding=1),
             nn.GroupNorm(8, 8),
             nn.ReLU(),
             nn.Conv3d(8, 8, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 8),
             nn.ReLU(),
-            # Block 2: 32x32x32 -> 16x16x16
+            # Block 2: 48x48x48 -> 24x24x24
             nn.Conv3d(8, 16, kernel_size=3, stride=1, padding=1),
             nn.GroupNorm(8, 16),
             nn.ReLU(),
             nn.Conv3d(16, 16, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 16),
             nn.ReLU(),
-            # Block 3: 16x16x16 -> 8x8x8
+            # Block 3: 24x24x24 -> 12x12x12
             nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.GroupNorm(8, 32),
             nn.ReLU(),
             nn.Conv3d(32, 32, kernel_size=3, stride=2, padding=1),
             nn.GroupNorm(8, 32),
             nn.ReLU(),
-            # Block 4: 8x8x8 -> 4x4x4
+            # Block 4: 12x12x12 -> 6x6x6
             nn.Conv3d(32, 32, kernel_size=3, stride=1, padding=1),
             nn.GroupNorm(8, 32),
             nn.ReLU(),

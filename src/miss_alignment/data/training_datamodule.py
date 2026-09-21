@@ -97,7 +97,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         Batch size for training (per device in DDP)
     steps_per_epoch : int, default 1000
         Number of steps per training epoch
-    patch_size : int, default 64
+    patch_size : int, default 96
         Size of 3D patches (patch_size^3)
     apply_ctf : bool, default False
         Apply CTF correction during reconstruction
@@ -117,7 +117,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
         n_training_devices: int,
         batch_size: int = 4,
         steps_per_epoch: int = 1000,
-        patch_size: int = 64,
+        patch_size: int = 96,
         apply_ctf: bool = False,
         downsample: int = 1,
         pool_size: int = DEFAULT_POOL_SIZE,
