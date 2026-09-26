@@ -122,7 +122,7 @@ def convert_pickles_to_xml(download_dir: Path):
                     original_pixel_size=ORIGINAL_PIXEL_SIZE,
                     original_stack_shape=ORIGINAL_STACK_SHAPE,
                     volume_shape=VOLUME_SHAPE,
-                    data_directory=download_dir,
+                    data_directory=tiltxcorr_dir,
                 )
                 print(f"    Created {xml_path.name}")
 
