@@ -16,6 +16,9 @@ Usage:
 
 import argparse
 import json
+import math
+import statistics
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -26,7 +29,12 @@ import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
+from degradation import SHREC_DIR, SNR0, snr_at_thickness  # noqa: E402
 from plot_convergence_radius import LABELS  # noqa: E402
+
+if str(SHREC_DIR) not in sys.path:
+    sys.path.insert(0, str(SHREC_DIR))
+from preproc import ORIGINAL_PIXEL_SIZE  # noqa: E402
 
 # Panel order matches settings.yaml's `experiments:` section rather than
 # alphabetical, so panels read noise -> interpolation -> snr.
@@ -66,11 +74,50 @@ def load_spread(results_dir: Path) -> pd.DataFrame:
     df = df[(df["type"] != "noise") | (df["level"] <= MAX_NOISE_LEVEL)]
     # 1.5x sits awkwardly close to 1x/2x and doesn't add to the story.
     df = df[~((df["type"] == "interpolation") & (df["level"] == 1.5))]
+
+    # The snr sweep's nominal "target thickness" is a simplistic proxy --
+    # annotate with the model's predicted SNR instead (see degradation.py).
+    snr_mask = df["type"] == "snr"
+    df.loc[snr_mask, "level"] = df.loc[snr_mask, "level"].apply(snr_at_thickness)
+
+    # Add the zero-added-noise baseline (SNR0, at the reference thickness):
+    # the snr sweep itself doesn't run this condition (it's plain tiltxcorr,
+    # already produced by the interpolation sweep's 1x condition, which
+    # reproduces tiltxcorr's own alignment from ground truth).
+    baseline = df[(df["type"] == "interpolation") & (df["level"] == 1)].copy()
+    baseline["type"] = "snr"
+    baseline["level"] = SNR0
+    df = pd.concat([df, baseline], ignore_index=True)
+
     return df
 
 
+def load_interp_sigma(results_dir: Path) -> float | None:
+    """Std (Angstrom) of the 1x tiltxcorr-residual magnitude, pooled over all
+    tilts and models -- the spread of the initial (pre-training) alignment
+    error the interpolation sweep injects at multiplier=1. Scales linearly
+    with the multiplier for the other levels (the residual is just scaled,
+    not redrawn, see generate_interpolation_condition in degradation.py).
+    """
+    path = results_dir / "tiltxcorr_residuals.json"
+    if not path.exists():
+        print(f"[skip] no {path.name}, interpolation x-ticks won't show sigma")
+        return None
+    residuals = json.loads(path.read_text())
+    magnitudes = [
+        math.hypot(y, x)
+        for r in residuals.values()
+        for y, x in zip(r["y_error_angstrom"], r["x_error_angstrom"])
+    ]
+    return statistics.stdev(magnitudes)
+
+
 def plot_spread(
-    df: pd.DataFrame, out_path: Path, stat: str = "median", log_y: bool = True
+    df: pd.DataFrame,
+    out_path: Path,
+    stat: str = "median",
+    log_y: bool = True,
+    interp_sigma: float | None = None,
 ) -> None:
     types = [t for t in TYPE_ORDER if t in df["type"].unique()]
     fig, axes = plt.subplots(
@@ -123,11 +170,39 @@ def plot_spread(
             zorder=3,
         )
         xlabel, title = LABELS.get(exp_type, (exp_type, exp_type))
+        if exp_type == "snr":
+            # Override the shared LABELS entry (thickness-based, used by the
+            # mean-only plot_convergence_radius.py): the thickness->SNR
+            # conversion is too simplistic to report thickness itself.
+            xlabel, title = "Approximate image SNR", "Image-noise (SNR) degradation"
+        elif exp_type == "noise":
+            # Override the shared LABELS entry (pixels): report sigma only
+            # in Angstrom, matching the interpolation panel's annotation.
+            xlabel = "Gaussian jitter starting alignment in σ (Å)"
+        elif exp_type == "interpolation":
+            xlabel = "tiltxcorr alignment multiplier: factor, σ (Å)"
         ax.set_xlabel(xlabel)
         ax.set_title(title)
-        ax.set_xticks(sorted(sub["level"].unique()))
+        levels = sorted(sub["level"].unique())
+        ax.set_xticks(levels)
+        if exp_type == "snr":
+            ax.set_xticklabels([f"{lv:.2f}" for lv in levels])
+            # Higher SNR = less noise = less degraded; flip so degradation
+            # still increases left-to-right, matching the other two panels.
+            ax.invert_xaxis()
+        elif exp_type == "noise":
+            ax.set_xticklabels(
+                [f"{lv * ORIGINAL_PIXEL_SIZE:.0f}" for lv in levels]
+            )
+        elif exp_type == "interpolation" and interp_sigma is not None:
+            # Each tick: multiplier factor, std of the initial (pre-training)
+            # alignment error it injects (multiplier * sigma of the
+            # underlying 1x tiltxcorr residual).
+            ax.set_xticklabels(
+                [f"{lv:g}x, {lv * interp_sigma:.0f}" for lv in levels]
+            )
 
-    axes[0].set_ylabel("Final mean alignment error per SHREC model (Å)")
+    axes[0].set_ylabel("Final mean alignment error (Å)")
     legend_elements = [
         Line2D(
             [0], [0], marker="o", color="none", markerfacecolor="#4c72b0",
@@ -167,5 +242,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     data = load_spread(args.results_dir)
+    interp_sigma = load_interp_sigma(args.results_dir)
     out = args.output or args.results_dir / "convergence_radius_spread.png"
-    plot_spread(data, out, stat=args.stat, log_y=not args.linear_y)
+    plot_spread(
+        data, out, stat=args.stat, log_y=not args.linear_y, interp_sigma=interp_sigma
+    )
