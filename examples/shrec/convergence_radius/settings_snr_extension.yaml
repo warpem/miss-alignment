@@ -1,14 +1,17 @@
-# Settings for the SHREC convergence-radius experiment suite.
-# Edit values here and run `python run_experiment.py` -- nothing else needs
-# to change. See README.md for what each experiment type does.
+# Extension run: only the two SNR points past the original sweep (900, 1100 nm).
+# Everything else in settings.yaml is unchanged, so this trains and scores just
+# these two conditions on a machine that doesn't have the server's results.
+# Run `python run_experiment.py --settings settings_snr_extension.yaml`.
 
 # Where the preprocessed SHREC benchmark (ground_truth/ + iter0/) lives.
 # If it isn't there yet, run_experiment.py downloads and prepares it with
-# preproc.py first (so the whole suite runs from scratch on a fresh system).
-raw_data_dir: /data/mchaillet/convergence_experiment/shrec_raw
+# preproc.py first. Set this to a path on the new machine.
+raw_data_dir: ~/convergence_experiment/shrec_raw
 
 # Where generated per-condition project directories and results are written.
-output_root: /data/mchaillet/convergence_experiment/experiments
+# Set this to a path on the new machine; the summary written here only lists
+# these two conditions and must be merged with the server's summary afterwards.
+output_root: ~/convergence_experiment/experiments_snr_extension
 
 # null = use every model_* found in raw_data_dir/ground_truth/
 models: null
@@ -19,7 +22,7 @@ experiments:
   # Ground truth alignment + random-normal per-tilt jitter, swept over its
   # standard deviation (in original, downsample=1 pixels; pixel size 10 A).
   noise:
-    enabled: true
+    enabled: false
     std_values_pixels: [1, 2, 4, 8, 16, 32]
 
   # Ground truth alignment + a multiple of the ground-truth-to-tiltxcorr
@@ -27,7 +30,7 @@ experiments:
   # via the existing compare_to_ground_truth.py cross-correlation code).
   # 1x reproduces tiltxcorr's own error pattern; >1x extrapolates beyond it.
   interpolation:
-    enabled: true
+    enabled: false
     multipliers: [1, 1.5, 2, 3, 4]
 
   # Tiltxcorr alignment, unchanged, with images degraded by added Gaussian
@@ -40,7 +43,7 @@ experiments:
   # added noise, i.e. plain tiltxcorr, already covered elsewhere.
   snr:
     enabled: true
-    thickness_values_nm: [300, 500, 700, 900, 1100]
+    thickness_values_nm: [900, 1100]
 
 # Written into each condition's config.yaml verbatim, with
 # general.training_directory and general.seed filled in per condition.
