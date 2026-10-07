@@ -1,6 +1,7 @@
-# Extension run: only the two SNR points past the original sweep (900, 1100 nm).
-# Everything else in settings.yaml is unchanged, so this trains and scores just
-# these two conditions on a machine that doesn't have the server's results.
+# Extension run: only the SNR points past the original sweep (900, 1100, 1500
+# nm). Everything else in settings.yaml is unchanged, so this trains and
+# scores just these conditions on a machine that doesn't have the server's
+# results. Already-trained conditions (900, 1100 nm) are skipped automatically.
 # Run `python run_experiment.py --settings settings_snr_extension.yaml`.
 
 # Where the preprocessed SHREC benchmark (ground_truth/ + iter0/) lives.
@@ -10,7 +11,7 @@ raw_data_dir: ~/convergence_experiment/shrec_raw
 
 # Where generated per-condition project directories and results are written.
 # Set this to a path on the new machine; the summary written here only lists
-# these two conditions and must be merged with the server's summary afterwards.
+# these conditions and must be merged with the server's summary afterwards.
 output_root: ~/convergence_experiment/experiments_snr_extension
 
 # null = use every model_* found in raw_data_dir/ground_truth/
@@ -43,7 +44,7 @@ experiments:
   # added noise, i.e. plain tiltxcorr, already covered elsewhere.
   snr:
     enabled: true
-    thickness_values_nm: [900, 1100]
+    thickness_values_nm: [900, 1100, 1500]
 
 # Written into each condition's config.yaml verbatim, with
 # general.training_directory and general.seed filled in per condition.

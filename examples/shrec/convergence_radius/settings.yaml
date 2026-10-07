@@ -40,7 +40,7 @@ experiments:
   # added noise, i.e. plain tiltxcorr, already covered elsewhere.
   snr:
     enabled: true
-    thickness_values_nm: [300, 500, 700, 900, 1100]
+    thickness_values_nm: [300, 500, 700, 900, 1100, 1500]
 
 # Written into each condition's config.yaml verbatim, with
 # general.training_directory and general.seed filled in per condition.
