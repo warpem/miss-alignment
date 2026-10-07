@@ -186,7 +186,11 @@ def plot_spread(
         levels = sorted(sub["level"].unique())
         ax.set_xticks(levels)
         if exp_type == "snr":
-            ax.set_xticklabels([f"{lv:.2f}" for lv in levels])
+            # 3 decimals + rotation: the low-SNR end is now crowded (0.08,
+            # 0.04, 0.03) and 2-decimal labels were indistinguishable/overlapping.
+            ax.set_xticklabels(
+                [f"{lv:.3f}" for lv in levels], rotation=45, ha="right"
+            )
             # Higher SNR = less noise = less degraded; flip so degradation
             # still increases left-to-right, matching the other two panels.
             ax.invert_xaxis()
