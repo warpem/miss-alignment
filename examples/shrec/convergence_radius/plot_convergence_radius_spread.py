@@ -74,6 +74,9 @@ def load_spread(results_dir: Path) -> pd.DataFrame:
     df = df[(df["type"] != "noise") | (df["level"] <= MAX_NOISE_LEVEL)]
     # 1.5x sits awkwardly close to 1x/2x and doesn't add to the story.
     df = df[~((df["type"] == "interpolation") & (df["level"] == 1.5))]
+    # 900nm sits close to 1100nm and doesn't add to the story now that
+    # 1500nm shows the breakdown more clearly.
+    df = df[~((df["type"] == "snr") & (df["level"] == 900))]
 
     # The snr sweep's nominal "target thickness" is a simplistic proxy --
     # annotate with the model's predicted SNR instead (see degradation.py).
