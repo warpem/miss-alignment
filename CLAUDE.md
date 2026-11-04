@@ -119,6 +119,15 @@ uv sync --group cpu  # pick the group for your platform, see Environment Setup
      Patterns for how this is handled).
    - Configured via YAML file (see `config_template.yaml`)
 
+5. **`infer.py` / `pretrained.py`** - Inference without training
+   - `infer` applies `iter1..iterN/model.ckpt` from `model_run_directory`; when none is
+     given it uses pretrained models from easymode (by Mart So-Last, GPL-3.0), which
+     `pretrained.py` downloads once to `~/.cache/miss-alignment` (or
+     `$MISS_ALIGNMENT_CACHE_DIR`). The download is pinned to a Hugging Face commit and
+     verified by SHA-256; updating the models means bumping those constants.
+   - Always credit easymode and its author wherever the pretrained models are surfaced
+     (CLI output, docs).
+
 ### Important Dependencies on External Libraries
 
 - **`warpylib`**: Provides `TiltSeries` and `CubicGrid` for tilt-series geometry and warping
