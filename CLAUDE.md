@@ -14,14 +14,28 @@ This software is published (preprint on biorxiv) and deployed in multiple labs. 
 
 ## Environment Setup
 
-This project has specific CUDA and PyTorch dependencies. Use the conda environment setup from README.md:
+This project has specific CUDA and PyTorch dependencies: `torch-projectors` (pulled in
+by `warpylib`) ships compiled wheels that only work with the torch version they were
+built against. The uv setup in `pyproject.toml` handles this with one mutually
+exclusive dependency group per build:
+
+| Group | torch | torch-projectors wheelhouse |
+|---|---|---|
+| `cpu` (macOS/CPU-only) | 2.6.0 | `cpu` |
+| `cu126` | 2.6.0+cu126 | `cu126` |
+| `cu128` | 2.7.0+cu128 | `cu128` |
+| `cu129` | 2.8.0+cu129 | `cu129` |
 
 ```bash
-conda create -n miss-alignment -c conda-forge python=3.11 cuda-toolkit=12.9 -y
-conda activate miss-alignment
+uv sync --group cpu    # or cu126 / cu128 / cu129; test and dev groups are default
 ```
 
-Install with: `python -m pip install -e .[dev,test]`
+**Always pass the same group to `uv run`** (e.g. `uv run --group cpu pytest`), or use
+`.venv/bin/...` / `uv run --no-sync`. uv does not remember the chosen group, so a bare
+`uv run` re-syncs without it and swaps in a mismatched torch/torch-projectors pair.
+
+The conda + pip setup from README.md (`python -m pip install -e .[dev,test]`) still
+works for users; keep the `test`/`dev` extras in sync with the dependency groups.
 
 ## Common Commands
 
@@ -65,7 +79,7 @@ miss-alignment --config-file config.yaml
 python -m build
 
 # Install in editable mode with dependencies
-python -m pip install -e .[dev,test]
+uv sync --group cpu  # pick the group for your platform, see Environment Setup
 ```
 
 ## Architecture
@@ -307,7 +321,7 @@ tilt_series.tilt_axis_offset_x += shifts_angstrom[:, 1]
 - **Testing**: Uses `pytest` with coverage reporting; warnings treated as errors
 - **Multiprocessing**: Reconstruction workers use multiprocessing with device assignment via `reconstruction_accelerators` parameter
 - **Temporary files**: `MissAlignmentDataModule` creates a temporary pool directory (`RECON_POOL_SIZE` env var controls size, default 1000)
-- **Package manager**: Currently uses conda/pip for environment installation -> would like to move to uv in the future
+- **Package manager**: uv for development (see Environment Setup); conda/pip remains supported for users
 
 ## Working on GitHub Issues
 

@@ -45,6 +45,16 @@ This lists the available commands (`train` and `infer`); run
 `miss-alignment train --help` or `miss-alignment infer --help` for details on
 each.
 
+### Alternative: uv
+
+From a clone of this repository, pick the group matching your CUDA version
+(`cu126`, `cu128`, `cu129`, or `cpu` for macOS/CPU-only):
+
+```
+uv sync --group cu129
+source .venv/bin/activate
+```
+
 ## How to run?
 
 See [docs/usage.md](docs/usage.md) for instructions.
