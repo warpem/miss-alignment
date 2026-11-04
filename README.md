@@ -41,9 +41,8 @@ Check that the CLI shows up with:
 miss-alignment --help
 ```
 
-This lists the available commands (`train` and `infer`); run
-`miss-alignment train --help` or `miss-alignment infer --help` for details on
-each.
+This lists the available commands (`train`, `infer`, and `download-models`); run
+`miss-alignment <command> --help` for details on each.
 
 ### Alternative: uv
 
@@ -57,7 +56,15 @@ source .venv/bin/activate
 
 ## How to run?
 
-See [docs/usage.md](docs/usage.md) for instructions.
+To align a dataset with the pretrained models from
+[easymode](https://mgflast.github.io/easymode/models/missalignment/) by Mart So-Last
+(downloaded on first use):
+
+```
+miss-alignment infer --data-directory /path/to/warp_tiltseries
+```
+
+See [docs/usage.md](docs/usage.md) for instructions, including training your own models.
 
 ## Changelog
 

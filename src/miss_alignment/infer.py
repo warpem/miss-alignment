@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from shutil import copyfile
-from typing import Optional
+from typing import Annotated, Optional
 
 import yaml
 
@@ -10,21 +10,76 @@ import torch
 
 from lightning.pytorch import seed_everything
 
-from ._cli import OPTION_PROMPT_KWARGS, cli
+from ._cli import cli
 from .utils import configure_logging, sync_start_iteration_xmls
 from .data.io import exclude_nonfinite_alignment_tilt_series
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
+from .pretrained import (
+    ATTRIBUTION,
+    N_PRETRAINED_ITERATIONS,
+    PRETRAINED_ITERATION_SETTINGS,
+    get_pretrained_models,
+)
 
 logger = logging.getLogger(__name__)
+
+# Used for any setting the config file leaves out (or when there is no config).
+DEFAULT_GENERAL_SETTINGS = {"apply_ctf": False, "seed": 45132}
+DEFAULT_ALIGNMENT_SETTINGS = {"patch_size": 96, "patch_overlap": 0.1, "batch_size": 32}
+
+
+def _normalize_setting(setting: dict) -> dict:
+    alignment = setting["alignment"]
+    if isinstance(alignment, (list, tuple)):
+        alignment = list(alignment)
+    return {"downsample": setting["downsample"], "alignment": alignment}
+
+
+def _check_pretrained_schedule(iteration_settings: list[dict]) -> None:
+    """Fail on too many iterations; warn if the schedule differs from training."""
+    if len(iteration_settings) > N_PRETRAINED_ITERATIONS:
+        raise ValueError(
+            f"iteration_settings lists {len(iteration_settings)} iterations but "
+            f"the pretrained models only cover {N_PRETRAINED_ITERATIONS}."
+        )
+    expected = PRETRAINED_ITERATION_SETTINGS[: len(iteration_settings)]
+    if [_normalize_setting(s) for s in iteration_settings] != expected:
+        logger.warning(
+            "iteration_settings differ from the schedule the pretrained models "
+            "were trained for; each model iterN is applied to step N regardless. "
+            "Pretrained schedule: %s",
+            PRETRAINED_ITERATION_SETTINGS,
+        )
 
 
 @cli.command(name="infer", no_args_is_help=True)
 def infer_miss_align(
-    config_file: Path = typer.Option(
-        "inference_config_template.yaml", **OPTION_PROMPT_KWARGS
-    ),
+    # Annotated, so direct Python callers get real None defaults
+    config_file: Annotated[
+        Optional[Path],
+        typer.Option(
+            help="Inference config (see docs/inference_config_template.yaml). "
+            "Optional: without it, defaults and the pretrained models are used.",
+        ),
+    ] = None,
+    data_directory: Annotated[
+        Optional[Path],
+        typer.Option(
+            help="Directory with the tilt-series XMLs to align; aligned output "
+            "is written here. Overrides general.data_directory from the config.",
+        ),
+    ] = None,
+    model_run_directory: Annotated[
+        Optional[Path],
+        typer.Option(
+            help="Finished training run holding iter1..iterN/model.ckpt. "
+            "Overrides general.model_run_directory from the config. If neither "
+            "is set, the pretrained easymode models are used (downloaded once, "
+            "then cached).",
+        ),
+    ] = None,
     start_at_iteration: int = typer.Option(
         0,
         help="Continue from a specific iteration in the config.",
@@ -48,12 +103,15 @@ def infer_miss_align(
         "When absent, local multi-GPU mode is used.",
     ),
 ) -> None:
-    """Align a dataset by applying models from a previous training run.
+    """Align a dataset with pretrained models or models from a previous run.
 
     Inference mode skips the per-iteration model training entirely. For each
-    iteration it loads the model that a previous `train` run saved at
-    `<model_run_directory>/iter{N}/model.ckpt` and runs only the alignment
-    phase, following the `iteration_settings` schedule from the config.
+    iteration it loads the model `<model_run_directory>/iter{N}/model.ckpt` and
+    runs only the alignment phase, following the `iteration_settings` schedule.
+
+    Without a model run directory, the pretrained easymode models are used with
+    the schedule they were trained for, so the simplest invocation is
+    `miss-alignment infer --data-directory /path/to/tiltseries`.
 
     Alignment is automatically spread over all visible GPUs; to limit this,
     set `CUDA_VISIBLE_DEVICES` to the subset of devices that should be used
@@ -66,19 +124,46 @@ def infer_miss_align(
     # check hardware settings, limit cpu multithreading
     torch.set_num_threads(1)
 
-    # Load configuration from YAML file
-    with open(config_file, "r") as f:
-        config = yaml.safe_load(f)
+    # Load configuration from YAML file; anything left out falls back to defaults
+    config = {}
+    if config_file is not None:
+        with open(config_file, "r") as f:
+            config = yaml.safe_load(f) or {}
 
-    general_config = config["general"]
-    alignment_config = config["tilt_series_alignment"]
+    general_config = {**DEFAULT_GENERAL_SETTINGS, **config.get("general", {})}
+    alignment_config = {
+        **DEFAULT_ALIGNMENT_SETTINGS,
+        **config.get("tilt_series_alignment", {}),
+    }
 
     # the dataset to align (and where aligned output is written)
-    data_directory = Path(general_config["data_directory"])
+    if data_directory is None:
+        if general_config.get("data_directory") is None:
+            raise typer.BadParameter(
+                "Pass --data-directory or set general.data_directory in the config."
+            )
+        data_directory = Path(general_config["data_directory"])
     data_directory.mkdir(exist_ok=True, parents=True)
 
-    # the finished run holding iter1..iterN/model.ckpt
-    model_run_directory = Path(general_config["model_run_directory"])
+    # the finished run holding iter1..iterN/model.ckpt; pretrained if unset
+    if model_run_directory is None and general_config.get("model_run_directory"):
+        model_run_directory = Path(general_config["model_run_directory"])
+    use_pretrained = model_run_directory is None
+
+    if use_pretrained:
+        iteration_settings = general_config.get(
+            "iteration_settings", PRETRAINED_ITERATION_SETTINGS
+        )
+        _check_pretrained_schedule(iteration_settings)
+        # download (or reuse the cache) before any work, so failures surface early
+        model_run_directory = get_pretrained_models()
+    elif "iteration_settings" in general_config:
+        iteration_settings = general_config["iteration_settings"]
+    else:
+        raise ValueError(
+            "general.iteration_settings must be set in the config when using "
+            "models from a previous run (model_run_directory)."
+        )
 
     # Set up environment
     torch.set_float32_matmul_precision("medium")
@@ -88,7 +173,11 @@ def infer_miss_align(
     n_visible_gpus = torch.cuda.device_count()
     devices_alignment = list(range(n_visible_gpus))
 
-    print("Inference mode (apply models from a previous run):")
+    if use_pretrained:
+        print("Inference mode (pretrained models):")
+        print(ATTRIBUTION)
+    else:
+        print("Inference mode (apply models from a previous run):")
     print(f"  data directory:      {data_directory}")
     print(f"  model run directory: {model_run_directory}")
     print(f"  alignment devices:   {devices_alignment}")
@@ -127,7 +216,7 @@ def infer_miss_align(
     exclude_nonfinite_alignment_tilt_series(data_directory)
 
     start_iter = start_at_iteration
-    end_iter = len(general_config["iteration_settings"])
+    end_iter = len(iteration_settings)
 
     # Resolve and validate every model up front so a missing checkpoint fails
     # before any alignment work is done.
@@ -147,8 +236,8 @@ def infer_miss_align(
     sync_start_iteration_xmls(start_iter, data_directory)
 
     for x in range(start_iter, end_iter):
-        iteration_settings = general_config["iteration_settings"][x]
-        alignment_mode = iteration_settings["alignment"]
+        iteration_setting = iteration_settings[x]
+        alignment_mode = iteration_setting["alignment"]
         model_checkpoint = model_paths[x]
 
         print(f"\n{'=' * 60}")
@@ -164,12 +253,12 @@ def infer_miss_align(
             model_checkpoint=str(model_checkpoint),
             tilt_series_list=tilt_series_list,
             output_directory=data_directory,
-            setting=iteration_settings["alignment"],
+            setting=iteration_setting["alignment"],
             patch_size=alignment_config["patch_size"],
             patch_overlap=alignment_config["patch_overlap"],
             batch_size=alignment_config["batch_size"],
             apply_ctf=general_config["apply_ctf"],
-            downsample=iteration_settings["downsample"],
+            downsample=iteration_setting["downsample"],
             devices_list=devices_alignment,
             n_cluster_workers=n_cluster_workers,
         )
