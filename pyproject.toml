@@ -88,6 +88,83 @@ ignore = ["E712"]  # this allows equality comparisons to False for readability
 
 [tool.uv]
 default-groups = ["test", "dev"]
+# torch-projectors (via warpylib) ships compiled extensions that only work with the
+# torch version they were built against. Each group below pairs a torch-projectors
+# wheelhouse with its matching torch build; install exactly one, e.g.
+# `uv sync --group cu129`. CUDA builds are Linux-only.
+conflicts = [
+    [
+        { group = "cpu" },
+        { group = "cu126" },
+        { group = "cu128" },
+        { group = "cu129" },
+    ],
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", group = "cpu", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-cu126", group = "cu126" },
+    { index = "pytorch-cu128", group = "cu128" },
+    { index = "pytorch-cu129", group = "cu129" },
+]
+torch-projectors = [
+    { index = "torch-projectors-cpu", group = "cpu" },
+    { index = "torch-projectors-cu126", group = "cu126" },
+    { index = "torch-projectors-cu128", group = "cu128" },
+    { index = "torch-projectors-cu129", group = "cu129" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-projectors-cpu"
+url = "https://warpem.github.io/torch-projectors/cpu/simple/"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-projectors-cu126"
+url = "https://warpem.github.io/torch-projectors/cu126/simple/"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-projectors-cu128"
+url = "https://warpem.github.io/torch-projectors/cu128/simple/"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-projectors-cu129"
+url = "https://warpem.github.io/torch-projectors/cu129/simple/"
+explicit = true
+
+# Dependency groups are not part of the published package metadata, so pip installs
+# are unaffected. torch-projectors is listed explicitly because uv only applies
+# [tool.uv.sources] to direct dependencies.
+[dependency-groups]
+cpu = ["torch==2.6.0", "torch-projectors"]
+cu126 = ["torch==2.6.0", "torch-projectors"]
+cu128 = ["torch==2.7.0", "torch-projectors"]
+cu129 = ["torch==2.8.0", "torch-projectors"]
+test = ["pytest", "pytest-cov"]
+dev = ["ipython", "pre-commit>=4.1.0", "ruff>=0.9.9", "matplotlib"]
 
 # same as console_scripts entry point
 [project.scripts]
