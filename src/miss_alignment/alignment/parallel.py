@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ..distributed.manager import run_distributed
+from ..distributed.manager import DistributedPool, run_distributed
 
 
 def run_alignment_parallel(
@@ -15,6 +15,7 @@ def run_alignment_parallel(
     downsample: int,
     devices_list: list[int],
     n_cluster_workers: int | None = None,
+    pool: DistributedPool | None = None,
 ) -> dict[str, float]:
     """Distribute per-tilt-series alignment across local GPUs or a cluster.
 
@@ -40,4 +41,5 @@ def run_alignment_parallel(
         devices=devices_list,
         n_cluster_workers=n_cluster_workers,
         queue_root=queue_root,
+        pool=pool,
     )

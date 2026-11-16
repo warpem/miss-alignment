@@ -125,6 +125,10 @@ uv sync --group cpu  # pick the group for your platform, see Environment Setup
      `pretrained.py` downloads once to `~/.cache/miss-alignment` (or
      `$MISS_ALIGNMENT_CACHE_DIR`). The download is pinned to a Hugging Face commit and
      verified by SHA-256; updating the models means bumping those constants.
+   - `infer` owns one persistent `DistributedPool` across stack preparation,
+     preprocessing and all iterations. Workers idle between batches and reload
+     models by fingerprint. Sessions and batch task IDs are isolated; close the
+     pool only at the end or on error. `train` retains one-shot phase pools.
    - Always credit easymode and its author wherever the pretrained models are surfaced
      (CLI output, docs).
 

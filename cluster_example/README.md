@@ -47,6 +47,16 @@ Workers race to claim tasks by atomic file rename — no scheduler or lock files
 and process series until the queue is empty. The head node blocks until all tasks are
 in `done/` or `failed/`, then continues to the next macro-iteration.
 
+During `infer`, one pool is retained across preparation and all alignment
+iterations. Workers wait when an iteration drains the queue, then load the next
+iteration's checkpoint. Pending jobs are retained too, so the next iteration does
+not start again at the back of the scheduler queue. The pool is released at the
+end of the run or on an error. Each inference invocation has an isolated queue
+under `<data_directory>/tasks/<session>/`; the `{{tasks_dir}}` and `{{logs_dir}}`
+placeholders automatically use that path. Training still creates a separate pool
+for each distributed phase. Set worker job time limits for the whole inference
+run; workers lost to preemption or time limits are replaced while work remains.
+
 The queue directory (`<training_dir>/tasks/`) must be on a shared filesystem visible
 to all worker nodes (Lustre, GPFS, NFS, etc.). Since the training directory already
 needs to hold the XML metadata and MRC stacks that workers read, this is satisfied

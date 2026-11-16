@@ -8,6 +8,7 @@ import shutil
 import sys
 import threading
 import time
+from uuid import uuid4
 from pathlib import Path
 
 import tqdm
@@ -90,6 +91,20 @@ def _format_worker_counts(counts: dict[str, int]) -> str:
     return " ".join(f"{label}={n}" for label, n in sorted(counts.items()))
 
 
+def _heartbeat_thread(
+    layout: QueueLayout, stop_event: threading.Event, error_box: list
+) -> None:
+    # Scheduler queries/submission can block; keep the manager heartbeat independent.
+    seq = 1
+    try:
+        while not stop_event.wait(_MANAGER_HB_INTERVAL_S):
+            _write_manager_hb(layout, seq)
+            seq += 1
+    except Exception as exc:
+        error_box.append(exc)
+        stop_event.set()
+
+
 def _scheduler_thread(
     layout: QueueLayout,
     provisioner: WorkerProvisioner,
@@ -98,37 +113,273 @@ def _scheduler_thread(
     error_box: list,
     worker_counts: dict,
 ) -> None:
-    hb_seq = 1  # seq 0 written before thread starts
-    last_hb = time.time()
-    # Start from now so the first sweep is delayed by _SCHEDULER_INTERVAL_S;
-    # run_distributed calls ensure_workers() explicitly at startup instead.
-    last_sweep = time.time()
-
+    # This thread alone provisions workers, including at startup. In particular,
+    # never race a cluster submission against another ensure_workers() call.
+    first = True
     try:
         while not stop_event.is_set():
-            now = time.time()
-
-            if now - last_hb >= _MANAGER_HB_INTERVAL_S:
-                _write_manager_hb(layout, hb_seq)
-                hb_seq += 1
-                last_hb = now
-
-            if now - last_sweep >= _SCHEDULER_INTERVAL_S:
-                _sweep_stalled_workers(layout)
-                n_pending = len(list(layout.pending.glob("*.json")))
-                if n_pending > 0:
-                    # Cap at n_pending: no point submitting more workers than tasks.
-                    # This also prevents resubmission when workers exit cleanly on
-                    # an empty queue — only re-fill if the sweep re-pended orphans.
-                    provisioner.ensure_workers(min(n_workers, n_pending))
-                worker_counts.clear()
-                worker_counts.update(provisioner.worker_counts_by_type())
-                last_sweep = now
-
-            stop_event.wait(timeout=1.0)
+            _sweep_stalled_workers(layout)
+            n_pending = len(list(layout.pending.glob("*.json")))
+            if n_pending and not stop_event.is_set():
+                provisioner.ensure_workers(
+                    n_workers if first else min(n_workers, n_pending)
+                )
+            first = False
+            worker_counts.clear()
+            worker_counts.update(provisioner.worker_counts_by_type())
+            stop_event.wait(_SCHEDULER_INTERVAL_S)
     except Exception as exc:
         error_box.append(exc)
-        stop_event.set()  # wake the poll loop so it notices immediately
+        stop_event.set()
+
+
+class DistributedPool:
+    """Own workers across sequential batches, closing them together at run end.
+
+    Persistent sessions use a unique queue directory: a delayed worker from an
+    earlier run can never claim a new run's tasks. Each batch also has unique
+    task IDs, so late result publication cannot cross an iteration barrier.
+    Initialization is lazy, so an unused pool does not submit any workers.
+    """
+
+    def __init__(
+        self,
+        devices: list[int],
+        n_cluster_workers: int | None,
+        queue_root: Path,
+        *,
+        persistent: bool = False,
+    ) -> None:
+        self.devices = devices
+        self.n_cluster_workers = n_cluster_workers
+        self.persistent = persistent
+        self._queue_parent = Path(queue_root).resolve()
+        self.layout = QueueLayout(
+            self._queue_parent / uuid4().hex if persistent else self._queue_parent
+        )
+        self._stop = threading.Event()
+        self._errors: list[Exception] = []
+        self._worker_counts: dict[str, int] = {}
+        self._provisioner: WorkerProvisioner | None = None
+        self._threads: list[threading.Thread] = []
+        self._batch = 0
+        self._owns_queue = False
+        self._closed = False
+
+    def __enter__(self) -> DistributedPool:
+        if self._closed:
+            raise RuntimeError("Worker pool is closed")
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+    def _initialize(self) -> None:
+        self.layout.ensure_directories()
+        self._owns_queue = True
+        clear_queue(self.layout)
+        self.layout.stop_file.unlink(missing_ok=True)
+        if self.n_cluster_workers is not None:
+            if self.n_cluster_workers < 1:
+                raise ValueError("n_cluster_workers must be positive")
+            cluster = ClusterProvisioner(
+                queue_dir=self.layout.root,
+                config=load_cluster_config(),
+                persistent=self.persistent,
+            )
+            if self.devices:
+                local = LocalProvisioner(
+                    queue_dir=self.layout.root,
+                    devices=self.devices,
+                    persistent=self.persistent,
+                )
+                self._provisioner = CompositeProvisioner([cluster, local])
+            else:
+                self._provisioner = cluster
+            self._n_workers = self.n_cluster_workers
+        else:
+            if not self.devices:
+                raise RuntimeError(
+                    "No local GPUs are available; use --n-cluster-workers "
+                    "to run alignment on cluster workers."
+                )
+            self._provisioner = LocalProvisioner(
+                queue_dir=self.layout.root,
+                devices=self.devices,
+                persistent=self.persistent,
+            )
+            self._n_workers = len(self.devices)
+        _write_manager_hb(self.layout, seq=0)
+
+    def _start(self) -> None:
+        # Publishing a large first batch on shared storage can take a while.
+        # Workers must see a fresh heartbeat as soon as they start.
+        _write_manager_hb(self.layout, seq=0)
+        self._threads = [
+            threading.Thread(
+                target=_heartbeat_thread,
+                args=(self.layout, self._stop, self._errors),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=_scheduler_thread,
+                args=(
+                    self.layout,
+                    self._provisioner,
+                    self._n_workers,
+                    self._stop,
+                    self._errors,
+                    self._worker_counts,
+                ),
+                daemon=True,
+            ),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def run(
+        self,
+        tilt_series_list: list[Path],
+        model_checkpoint: Path,
+        output_directory: Path,
+        setting: str | tuple,
+        patch_size: int,
+        patch_overlap: float,
+        batch_size: int,
+        apply_ctf: bool,
+        downsample: int,
+        task_type: str = "alignment",
+        desired_pixel_size: float | None = None,
+        lowpass_cutoff: float | None = None,
+    ) -> dict[str, float]:
+        if self._closed:
+            raise RuntimeError("Worker pool is closed")
+        if self._errors:
+            raise RuntimeError("Worker pool scheduler crashed") from self._errors[0]
+        if not tilt_series_list:
+            return {}
+        if not self._owns_queue:
+            self._initialize()
+        self._batch += 1
+        checkpoint = str(Path(model_checkpoint).resolve())
+        serial_setting = setting if isinstance(setting, str) else list(setting)
+        fingerprint = (
+            compute_fingerprint(
+                checkpoint,
+                serial_setting,
+                patch_size,
+                patch_overlap,
+                batch_size,
+                apply_ctf,
+                downsample,
+            )
+            if task_type == "alignment"
+            else ""
+        )
+        pending_ids = set()
+        batch_prefix = f"{self._batch:06d}-"
+        for i, ts_path in enumerate(tilt_series_list):
+            task_id = batch_prefix + _format_task_id(i, ts_path)
+            pending_ids.add(task_id)
+            write_pending(
+                self.layout,
+                TaskSpec(
+                    task_id=task_id,
+                    model_checkpoint_path=checkpoint
+                    if task_type == "alignment"
+                    else "",
+                    tilt_series_path=str(Path(ts_path).resolve()),
+                    output_directory=str(Path(output_directory).resolve()),
+                    setting=serial_setting,
+                    patch_size=patch_size,
+                    patch_overlap=patch_overlap,
+                    batch_size=batch_size,
+                    apply_ctf=apply_ctf,
+                    downsample=downsample,
+                    init_fingerprint=fingerprint,
+                    task_type=task_type,
+                    desired_pixel_size=desired_pixel_size,
+                    lowpass_cutoff=lowpass_cutoff,
+                ),
+            )
+        if not self._threads:
+            self._start()
+
+        losses: dict[str, float] = {}
+        failed_series: list[str] = []
+        desc = {
+            "alignment": "Tilt series alignment",
+            "prepare_stacks": "Preparing stacks",
+            "cross_correlation": "Cross-correlation alignment",
+        }.get(task_type, task_type)
+        with tqdm.tqdm(total=len(pending_ids), desc=desc, file=sys.stdout) as pbar:
+            while pending_ids:
+                if self._closed:
+                    raise RuntimeError("Worker pool is closed")
+                if self._errors:
+                    raise RuntimeError(
+                        "Worker pool scheduler crashed"
+                    ) from self._errors[0]
+                pbar.set_postfix_str(_format_worker_counts(self._worker_counts.copy()))
+                # Scan terminal entries rather than stat'ing every unfinished
+                # task on shared storage. Ignore earlier batches without rereading
+                # their JSON; retain them until shutdown for orphan recovery.
+                for directory, failed in (
+                    (self.layout.done, False),
+                    (self.layout.failed, True),
+                ):
+                    for result_file in directory.glob(f"{batch_prefix}*.json"):
+                        task_id = result_file.stem
+                        if task_id not in pending_ids:
+                            continue
+                        data = json.loads(result_file.read_text())
+                        name = Path(data["tilt_series_path"]).stem
+                        if failed:
+                            failed_series.append(name)
+                            print(
+                                f"[manager] FAILED {name}: {data.get('error', '')}",
+                                file=sys.stderr,
+                            )
+                        else:
+                            losses[name] = data.get("final_loss", float("nan"))
+                        pending_ids.remove(task_id)
+                        pbar.update(1)
+                if pending_ids:
+                    time.sleep(_POLL_INTERVAL_S)
+        if failed_series:
+            raise RuntimeError(
+                f"Alignment failed for {len(failed_series)} tilt series: "
+                + ", ".join(failed_series)
+            )
+        return losses
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+        if self._owns_queue:
+            try:
+                self.layout.stop_file.touch()
+            except OSError:
+                pass  # still stop/cancel workers if the queue became unwritable
+        if self._provisioner is not None:
+            self._provisioner.request_stop()
+        # Join in-flight submissions before shutdown so returned job IDs are
+        # included in cancellation.
+        for thread in self._threads:
+            thread.join()
+        try:
+            if self._provisioner is not None:
+                self._provisioner.shutdown()
+        finally:
+            if self._owns_queue:
+                shutil.rmtree(self.layout.root, ignore_errors=True)
+                if self.persistent:
+                    try:
+                        self._queue_parent.rmdir()
+                    except OSError:
+                        pass  # another session or legacy queue still uses it
 
 
 def run_distributed(
@@ -147,142 +398,28 @@ def run_distributed(
     task_type: str = "alignment",
     desired_pixel_size: float | None = None,
     lowpass_cutoff: float | None = None,
+    pool: DistributedPool | None = None,
 ) -> dict[str, float]:
-    """Write tasks, provision workers, block until all tasks are terminal.
+    """Run one batch, using an existing inference pool when supplied.
 
-    Returns dict[series_name → final_loss]. Raises RuntimeError listing all
-    failed series if any task ends in failed/. Deletes queue_root on exit.
-
-    task_type selects the worker dispatch path:
-      "alignment"          — evaluate_tilt_series (default)
-      "prepare_stacks"     — _prepare_single_tilt_series
-      "cross_correlation"  — _run_cross_correlation_single
+    Without a pool, workers and queue belong to this call and close on exit,
+    retaining the training/standalone behavior.
     """
-    layout = QueueLayout(queue_root)
-    layout.ensure_directories()
-    clear_queue(layout)
-
-    # Fingerprint only meaningful for alignment tasks (amortizes model load).
-    if task_type == "alignment":
-        fingerprint = compute_fingerprint(
-            model_checkpoint_path=str(model_checkpoint),
-            setting=setting if isinstance(setting, str) else list(setting),
-            patch_size=patch_size,
-            patch_overlap=patch_overlap,
-            batch_size=batch_size,
-            apply_ctf=apply_ctf,
-            downsample=downsample,
-        )
-    else:
-        fingerprint = ""
-
-    task_ids = []
-    for i, ts_path in enumerate(tilt_series_list):
-        task_id = _format_task_id(i, ts_path)
-        task_ids.append(task_id)
-        spec = TaskSpec(
-            task_id=task_id,
-            model_checkpoint_path=(
-                str(model_checkpoint) if task_type == "alignment" else ""
-            ),
-            tilt_series_path=str(ts_path),
-            output_directory=str(output_directory),
-            setting=setting if isinstance(setting, str) else list(setting),
-            patch_size=patch_size,
-            patch_overlap=patch_overlap,
-            batch_size=batch_size,
-            apply_ctf=apply_ctf,
-            downsample=downsample,
-            init_fingerprint=fingerprint,
-            task_type=task_type,
-            desired_pixel_size=desired_pixel_size,
-            lowpass_cutoff=lowpass_cutoff,
-        )
-        write_pending(layout, spec)
-
-    # Write first heartbeat before starting workers so workers never see a
-    # missing heartbeat on startup (would cause immediate exit).
-    _write_manager_hb(layout, seq=0)
-
-    if n_cluster_workers is not None:
-        cluster_config = load_cluster_config()
-        cluster = ClusterProvisioner(queue_dir=queue_root, config=cluster_config)
-        if devices:
-            # Also use local GPUs — the queue is shared so local and cluster
-            # workers pull from the same task list with no extra coordination.
-            local = LocalProvisioner(queue_dir=queue_root, devices=devices)
-            provisioner: WorkerProvisioner = CompositeProvisioner([cluster, local])
-        else:
-            provisioner = cluster
-        n_workers = n_cluster_workers
-    else:
-        provisioner = LocalProvisioner(queue_dir=queue_root, devices=devices)
-        n_workers = len(devices)
-
-    stop_event = threading.Event()
-    scheduler_errors: list = []
-    worker_counts: dict = {}
-    scheduler = threading.Thread(
-        target=_scheduler_thread,
-        args=(
-            layout, provisioner, n_workers, stop_event, scheduler_errors, worker_counts
-        ),
-        daemon=True,
+    kwargs = dict(
+        tilt_series_list=tilt_series_list,
+        model_checkpoint=model_checkpoint,
+        output_directory=output_directory,
+        setting=setting,
+        patch_size=patch_size,
+        patch_overlap=patch_overlap,
+        batch_size=batch_size,
+        apply_ctf=apply_ctf,
+        downsample=downsample,
+        task_type=task_type,
+        desired_pixel_size=desired_pixel_size,
+        lowpass_cutoff=lowpass_cutoff,
     )
-    scheduler.start()
-    provisioner.ensure_workers(n_workers)
-
-    pending_ids = set(task_ids)
-    losses: dict[str, float] = {}
-    failed_series: list[str] = []
-
-    _desc = {
-        "alignment": "Tilt series alignment",
-        "prepare_stacks": "Preparing stacks",
-        "cross_correlation": "Cross-correlation alignment",
-    }.get(task_type, task_type)
-    pbar = tqdm.tqdm(total=len(task_ids), desc=_desc, file=sys.stdout)
-    try:
-        while pending_ids:
-            time.sleep(_POLL_INTERVAL_S)
-
-            if scheduler_errors:
-                raise RuntimeError("Scheduler thread crashed") from scheduler_errors[0]
-
-            pbar.set_postfix_str(_format_worker_counts(worker_counts))
-
-            for done_file in layout.done.glob("*.json"):
-                data = json.loads(done_file.read_text())
-                tid = data["task_id"]
-                if tid in pending_ids:
-                    ts_name = Path(data["tilt_series_path"]).stem
-                    losses[ts_name] = data.get("final_loss", float("nan"))
-                    pending_ids.discard(tid)
-                    pbar.update(1)
-
-            for fail_file in layout.failed.glob("*.json"):
-                data = json.loads(fail_file.read_text())
-                tid = data["task_id"]
-                if tid in pending_ids:
-                    ts_name = Path(data["tilt_series_path"]).stem
-                    failed_series.append(ts_name)
-                    pending_ids.discard(tid)
-                    pbar.update(1)
-                    print(
-                        f"[manager] FAILED {ts_name}: {data.get('error', '')}",
-                        file=sys.stderr,
-                    )
-    finally:
-        pbar.close()
-        stop_event.set()
-        scheduler.join(timeout=5.0)
-        provisioner.shutdown()
-        shutil.rmtree(queue_root, ignore_errors=True)
-
-    if failed_series:
-        raise RuntimeError(
-            f"Alignment failed for {len(failed_series)} tilt series: "
-            + ", ".join(failed_series)
-        )
-
-    return losses
+    if pool is not None:
+        return pool.run(**kwargs)
+    with DistributedPool(devices, n_cluster_workers, queue_root) as standalone:
+        return standalone.run(**kwargs)

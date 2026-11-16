@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -68,6 +69,9 @@ class WorkerProvisioner(ABC):
     def live_worker_count(self) -> int:
         """Return the number of workers currently considered alive."""
 
+    def request_stop(self) -> None:
+        """Stop provisioning; shutdown follows after the scheduler has joined."""
+
     def worker_counts_by_type(self) -> dict[str, int]:
         """Return a dict of label → live count for display purposes."""
         return {"workers": self.live_worker_count()}
@@ -76,7 +80,10 @@ class WorkerProvisioner(ABC):
 class LocalProvisioner(WorkerProvisioner):
     """Spawns one miss-alignment worker subprocess per GPU device."""
 
-    def __init__(self, queue_dir: Path, devices: list[int]) -> None:
+    def __init__(
+        self, queue_dir: Path, devices: list[int], *, persistent: bool = False
+    ) -> None:
+        self._persistent = persistent
         self._queue_dir = queue_dir
         self._devices = devices
         self._procs: dict[int, subprocess.Popen] = {}
@@ -105,6 +112,7 @@ class LocalProvisioner(WorkerProvisioner):
                         str(self._queue_dir),
                         "--device",
                         str(device),
+                        *(["--persistent"] if self._persistent else []),
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=sys.stderr,
@@ -133,17 +141,17 @@ class LocalProvisioner(WorkerProvisioner):
 # Statuses where the job is actively executing on a node.
 _RUNNING_STATUSES: dict[str, set[str]] = {
     "slurm": {"RUNNING", "R", "COMPLETING", "CG", "RESIZING"},
-    "lsf":   {"RUN"},
-    "pbs":   {"R", "E"},
-    "sge":   {"r", "t", "Rr"},
+    "lsf": {"RUN"},
+    "pbs": {"R", "E"},
+    "sge": {"r", "t", "Rr"},
 }
 
 # Statuses where the job is alive but not yet on a node.
 _PENDING_STATUSES: dict[str, set[str]] = {
     "slurm": {"PENDING", "PD", "SUSPENDED", "S"},
-    "lsf":   {"PEND", "SSUSP", "USUSP", "PSUSP"},
-    "pbs":   {"Q", "H", "W", "T", "S"},
-    "sge":   {"qw", "Rq", "hqw", "hRwq"},
+    "lsf": {"PEND", "SSUSP", "USUSP", "PSUSP"},
+    "pbs": {"Q", "H", "W", "T", "S"},
+    "sge": {"qw", "Rq", "hqw", "hRwq"},
 }
 
 
@@ -229,7 +237,11 @@ class ClusterProvisioner(WorkerProvisioner):
       SLURM: squeue -u $USER -h -o "%i,%T"
     """
 
-    def __init__(self, queue_dir: Path, config: ClusterConfig) -> None:
+    def __init__(
+        self, queue_dir: Path, config: ClusterConfig, *, persistent: bool = False
+    ) -> None:
+        self._persistent = persistent
+        self._stop = threading.Event()
         self._queue_dir = queue_dir
         self._config = config
         # job_id → submission timestamp
@@ -266,6 +278,8 @@ class ClusterProvisioner(WorkerProvisioner):
                 text=True,
                 timeout=30,
             )
+            # A failed query is not evidence that long-queued jobs disappeared.
+            result.check_returncode()
             states = _parse_status_output(
                 output=result.stdout,
                 our_job_ids=our_ids,
@@ -309,17 +323,24 @@ class ClusterProvisioner(WorkerProvisioner):
         self._query_job_states()
         deficit = n_workers - len(self._job_submit_time)
         for _ in range(deficit):
+            if self._stop.is_set():
+                break
             self._submit_one()
+
+    def request_stop(self) -> None:
+        self._stop.set()
 
     def _render_script(self, index: int) -> Path:
         template_text = self._config.script_path.read_text()
         # $(hostname) and $$ are expanded by the compute node's shell at runtime.
         command = (
             f"miss-alignment worker"
-            f" --queue-dir {self._queue_dir}"
+            f" --queue-dir {shlex.quote(str(self._queue_dir))}"
             f" --device 0"
             f' --worker-id "$(hostname)-$$-{index}"'
         )
+        if self._persistent:
+            command += " --persistent"
         logs_dir = self._queue_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         rendered = template_text.replace("{{command}}", command)
@@ -338,15 +359,14 @@ class ClusterProvisioner(WorkerProvisioner):
         index = self._next_index
         self._next_index += 1
         script_path = self._render_script(index)
-        submit_cmd = self._config.submit.replace(
-            "{{script_path}}", str(script_path)
-        )
+        submit_cmd = self._config.submit.replace("{{script_path}}", str(script_path))
         result = subprocess.run(
             submit_cmd,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=sys.stderr,
             text=True,
+            timeout=60,
         )
         match = re.search(self._config.submit_job_id_regex, result.stdout)
         if match:
@@ -386,6 +406,10 @@ class CompositeProvisioner(WorkerProvisioner):
     def ensure_workers(self, n_workers: int) -> None:
         for p in self._provisioners:
             p.ensure_workers(n_workers)
+
+    def request_stop(self) -> None:
+        for p in self._provisioners:
+            p.request_stop()
 
     def shutdown(self) -> None:
         for p in self._provisioners:
