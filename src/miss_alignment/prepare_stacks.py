@@ -10,7 +10,7 @@ import mrcfile
 from warpylib import TiltSeries
 from warpylib.movie import Movie
 
-from .distributed.manager import run_distributed
+from .distributed.manager import DistributedPool, run_distributed
 
 
 def _get_original_pixel_size(tilt_series: TiltSeries) -> float:
@@ -109,6 +109,7 @@ def prepare_stacks_parallel(
     desired_pixel_size: float,
     devices: list[int] | None = None,
     n_cluster_workers: int | None = None,
+    pool: DistributedPool | None = None,
 ) -> None:
     """Prepare tilt stacks for all tilt series in the training directory.
 
@@ -142,8 +143,7 @@ def prepare_stacks_parallel(
         )
 
     print(
-        f"Preparing stacks for {len(xml_files)} tilt series "
-        f"at {desired_pixel_size} Å"
+        f"Preparing stacks for {len(xml_files)} tilt series at {desired_pixel_size} Å"
     )
 
     queue_root = training_directory / "tasks"
@@ -160,6 +160,7 @@ def prepare_stacks_parallel(
         devices=devices or [],
         n_cluster_workers=n_cluster_workers,
         queue_root=queue_root,
+        pool=pool,
         task_type="prepare_stacks",
         desired_pixel_size=desired_pixel_size,
     )

@@ -4,7 +4,7 @@ import torch
 from pathlib import Path
 
 from .data.io import TiltSeriesData
-from .distributed.manager import run_distributed
+from .distributed.manager import DistributedPool, run_distributed
 
 
 def _run_cross_correlation_single(
@@ -64,6 +64,7 @@ def run_cross_correlation_alignment_parallel(
     devices: list[int] | None = None,
     lowpass_cutoff: float = 0.25,
     n_cluster_workers: int | None = None,
+    pool: DistributedPool | None = None,
 ) -> None:
     """
     Run cross-correlation based alignment in parallel.
@@ -112,6 +113,7 @@ def run_cross_correlation_alignment_parallel(
         devices=devices or [],
         n_cluster_workers=n_cluster_workers,
         queue_root=queue_root,
+        pool=pool,
         task_type="cross_correlation",
         lowpass_cutoff=lowpass_cutoff,
     )

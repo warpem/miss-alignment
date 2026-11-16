@@ -1,9 +1,6 @@
-import sys
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from miss_alignment.distributed.config import ClusterConfig
 from miss_alignment.distributed.provisioner import (
@@ -29,6 +26,7 @@ def _cluster_cfg(tmp_path) -> ClusterConfig:
 # ---------------------------------------------------------------------------
 # Status parser unit tests
 # ---------------------------------------------------------------------------
+
 
 def test_parse_status_output_slurm_running_and_pending():
     output = "12345,PENDING\n12346,RUNNING\n12347,COMPLETING\n"
@@ -100,6 +98,7 @@ def test_parse_status_output_custom():
 # LocalProvisioner tests
 # ---------------------------------------------------------------------------
 
+
 def test_local_provisioner_spawns_one_process_per_device(tmp_path):
     with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
@@ -157,6 +156,7 @@ def test_local_provisioner_shutdown_terminates(tmp_path):
 # ClusterProvisioner tests
 # ---------------------------------------------------------------------------
 
+
 def test_cluster_provisioner_submits_n_workers_jobs(tmp_path):
     """ensure_workers submits until _job_submit_time reaches target."""
     cfg = _cluster_cfg(tmp_path)
@@ -166,8 +166,7 @@ def test_cluster_provisioner_submits_n_workers_jobs(tmp_path):
         call_num[0] += 1
         result = MagicMock()
         result.stdout = (
-            "" if "squeue" in cmd
-            else f"Submitted batch job {call_num[0]}\n"
+            "" if "squeue" in cmd else f"Submitted batch job {call_num[0]}\n"
         )
         return result
 
@@ -326,6 +325,7 @@ def test_cluster_provisioner_cancels_on_shutdown(tmp_path):
 # CompositeProvisioner tests
 # ---------------------------------------------------------------------------
 
+
 def test_composite_provisioner_delegates_to_all(tmp_path):
     a = MagicMock(spec=LocalProvisioner)
     b = MagicMock(spec=LocalProvisioner)
@@ -338,3 +338,49 @@ def test_composite_provisioner_delegates_to_all(tmp_path):
     p.shutdown()
     a.shutdown.assert_called_once()
     b.shutdown.assert_called_once()
+
+
+def test_persistent_local_workers_receive_keepalive_flag(tmp_path):
+    with patch("miss_alignment.distributed.provisioner.subprocess.Popen") as popen:
+        popen.return_value.poll.return_value = None
+        p = LocalProvisioner(tmp_path, [0], persistent=True)
+        p.ensure_workers(1)
+        assert "--persistent" in popen.call_args.args[0]
+
+
+def test_persistent_cluster_workers_receive_keepalive_flag_and_quote_queue(tmp_path):
+    import shlex
+
+    cfg = _cluster_cfg(tmp_path)
+    queue = tmp_path / "queue with spaces"
+    p = ClusterProvisioner(queue, cfg, persistent=True)
+    script = p._render_script(0).read_text()
+    assert "--persistent" in script
+    assert f"--queue-dir {shlex.quote(str(queue))}" in script
+
+
+def test_cluster_shutdown_stops_further_submissions(tmp_path):
+    cfg = _cluster_cfg(tmp_path)
+    p = ClusterProvisioner(tmp_path, cfg, persistent=True)
+    with patch("miss_alignment.distributed.provisioner.subprocess.run") as run:
+        p.request_stop()
+        p.ensure_workers(5)
+    run.assert_not_called()
+
+
+def test_scheduler_query_failure_keeps_long_queued_jobs(tmp_path):
+    import subprocess
+
+    cfg = _cluster_cfg(tmp_path)
+    p = ClusterProvisioner(tmp_path, cfg, persistent=True)
+    p._job_submit_time = {"old-pending": time.time() - 3600}
+    result = MagicMock()
+    result.stdout = ""
+    result.check_returncode.side_effect = subprocess.CalledProcessError(1, "squeue")
+    with patch(
+        "miss_alignment.distributed.provisioner.subprocess.run", return_value=result
+    ) as run:
+        p.ensure_workers(1)
+    assert p._job_ids == ["old-pending"]
+    assert run.call_count == 1
+    assert "squeue" in run.call_args.args[0]

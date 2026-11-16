@@ -14,6 +14,7 @@ import pytest
 
 from miss_alignment.distributed.manager import run_distributed
 from miss_alignment.distributed.queue import QueueLayout
+from miss_alignment.distributed.provisioner import WorkerProvisioner
 
 
 def _make_xml(tmp_path, name):
@@ -56,7 +57,7 @@ def _fake_worker_thread(queue_root, n_tasks, fail=False):
     return threading.Thread(target=_run, daemon=True)
 
 
-class _NoOpProvisioner:
+class _NoOpProvisioner(WorkerProvisioner):
     def ensure_workers(self, n_workers):
         pass
 
