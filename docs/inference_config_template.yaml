@@ -1,9 +1,12 @@
 general:
-  # MissAlignment inference: reuse a previous run's models to align a new dataset.
+  # MissAlignment inference: apply trained models to align a new dataset.
   # No model is trained; for iteration N the model at
   # <model_run_directory>/iterN/model.ckpt is loaded and applied.
+  # Only data_directory is required (or pass --data-directory). Without
+  # model_run_directory, the pretrained models run with the schedule below.
   data_directory: /data/newset/          # tilt-series to align; aligned output written here
-  model_run_directory: /data/prevrun/    # finished run holding iter1/.. iterN/model.ckpt
+  model_run_directory: /data/prevrun/    # finished run holding iter1/.. iterN/model.ckpt;
+                                         # remove to use the pretrained easymode models
   apply_ctf: False                        # leave False; enabling CTF doubles processing time
   iteration_settings:                    # length must not exceed the models available in the run
     # alignment modes: "global" (single pass), "anchoring" (iterative), "spline" (coarse-to-fine)

@@ -42,13 +42,29 @@ After miss-alignment finishes, update the CTF parameters in WarpTools (`ts_ctf`)
 
 ## Inference mode
 
-Once you have a finished run, its per-iteration models (`iter1/model.ckpt … iterN/model.ckpt`) can be reused to align a *new* dataset without retraining. The `infer` command runs only the alignment phase: for each iteration it loads the model from the previous run and applies it, following the `iteration_settings` schedule in the config.
+The `infer` command aligns a dataset without training: for each iteration it loads a model (`iter1/model.ckpt … iterN/model.ckpt`) and runs only the alignment phase, following an `iteration_settings` schedule.
 
-Use [inference_config_template.yaml](inference_config_template.yaml) as a starting point. It is a slimmed-down config (no `model_training`, `data_loading`, or `shift_generation` sections). Set `data_directory` to the new dataset, `model_run_directory` to the finished run, and make sure `iteration_settings` does not list more iterations than the run has models for.
+### Pretrained models (default)
+
+By default `infer` uses pretrained models from [easymode](https://mgflast.github.io/easymode/models/missalignment/) by Mart So-Last, trained on 54 datasets (purified specimens, cellular and tissue lamellae, whole-cell periphery). They are distributed under GPL-3.0; if you use them, please also cite the [easymode preprint](https://doi.org/10.64898/2026.05.19.726344). No config file is needed:
+
+```
+CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment infer --data-directory /path/to/warp_tiltseries --prepare-stacks 10.0
+```
+
+The models (27 MB) are downloaded on first use and cached in `~/.cache/miss-alignment` (or `$MISS_ALIGNMENT_CACHE_DIR` if set); later runs reuse the cache without network access. They run the 8-iteration schedule they were trained for, which is the one in [inference_config_template.yaml](inference_config_template.yaml). You can pass a config with a different `iteration_settings` (at most 8 iterations); model `iterN` is still applied to step N, and a warning is printed.
+
+On a cluster whose compute nodes have no internet access, download the models beforehand on a login node with `miss-alignment download-models`. The cache must be on a filesystem the compute nodes can read; set `MISS_ALIGNMENT_CACHE_DIR` (for both commands) if your home directory is not shared.
+
+### Models from your own training run
+
+To apply the models from a finished `train` run instead, pass `--model-run-directory /path/to/run` or set `model_run_directory` in the config. Use [inference_config_template.yaml](inference_config_template.yaml) as a starting point; it is a slimmed-down config (no `model_training`, `data_loading`, or `shift_generation` sections). Make sure `iteration_settings` does not list more iterations than the run has models for.
 
 ```
 CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment infer --config-file /path/to/inference_config.yaml --prepare-stacks 10.0
 ```
+
+`--data-directory` and `--model-run-directory` override the corresponding config entries.
 
 Alignment uses all visible GPUs. Each iteration writes its result snapshot to `data_directory/iterN/`, including a `model_source.txt` recording which checkpoint was applied. Like `train`, an interrupted run can be resumed with `--start-at-iteration N`.
 

@@ -15,9 +15,11 @@ __all__ = [
     "train_miss_align",
     "infer_miss_align",
     "worker_miss_align",
+    "download_models",
 ]
 
 from ._cli import cli
 from .train import train_miss_align
 from .infer import infer_miss_align
+from .pretrained import download_models
 from .distributed.worker import worker_miss_align
