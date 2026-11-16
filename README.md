@@ -4,7 +4,7 @@
 
 | Name                                                 |    Stmts |     Miss |   Cover |   Missing |
 |----------------------------------------------------- | -------: | -------: | ------: | --------: |
-| src/miss\_alignment/\_\_init\_\_.py                  |       12 |        2 |     83% |       7-8 |
+| src/miss\_alignment/\_\_init\_\_.py                  |       13 |        2 |     85% |       7-8 |
 | src/miss\_alignment/\_\_main\_\_.py                  |        2 |        2 |      0% |       1-3 |
 | src/miss\_alignment/\_cli.py                         |       10 |        1 |     90% |         9 |
 | src/miss\_alignment/alignment/\_\_init\_\_.py        |        3 |        0 |    100% |           |
@@ -29,16 +29,17 @@
 | src/miss\_alignment/distributed/provisioner.py       |      208 |       42 |     80% |26-52, 73, 86-87, 90, 121-122, 181, 245, 284-285, 288, 330-331, 377, 380-384 |
 | src/miss\_alignment/distributed/queue.py             |      105 |        6 |     94% |148-150, 196, 201, 204, 207 |
 | src/miss\_alignment/distributed/worker.py            |       91 |       13 |     86% |41-49, 64-65, 76, 92, 139 |
-| src/miss\_alignment/infer.py                         |       77 |       11 |     86% |98-100, 109-121 |
+| src/miss\_alignment/infer.py                         |      108 |        2 |     98% |  189, 200 |
 | src/miss\_alignment/models/\_\_init\_\_.py           |        4 |        0 |    100% |           |
 | src/miss\_alignment/models/\_compact.py              |      116 |       94 |     19% |6-49, 53-58, 63-91, 95-99, 104-132, 136-140, 145-173, 177-181, 186-225, 228-232, 252-280, 288-304, 321-347, 350-364 |
 | src/miss\_alignment/models/\_resnet.py               |      104 |       27 |     74% |50-68, 71-90, 180, 192, 204 |
 | src/miss\_alignment/models/models.py                 |      181 |      146 |     19% |50-53, 76-113, 131-146, 150-151, 155-182, 198-300, 305-311, 326-351, 356-357, 377-383, 387, 391-404, 415-425, 429-446, 450-451, 468-473, 477-497, 507-529 |
 | src/miss\_alignment/prepare\_stacks.py               |       36 |       28 |     22% |36-60, 84-100, 138-167 |
 | src/miss\_alignment/preprocessing.py                 |        4 |        0 |    100% |           |
+| src/miss\_alignment/pretrained.py                    |       72 |        6 |     92% |144-147, 161-163 |
 | src/miss\_alignment/train.py                         |      156 |      108 |     31% |40-42, 65-70, 139-268, 333-522 |
 | src/miss\_alignment/utils.py                         |       36 |        3 |     92% |48, 91, 95 |
-| **TOTAL**                                            | **2318** |  **932** | **60%** |           |
+| **TOTAL**                                            | **2422** |  **929** | **62%** |           |
 
 
 ## Setup coverage badge
