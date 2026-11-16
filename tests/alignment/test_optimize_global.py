@@ -1,11 +1,11 @@
-"""Tests for optimize_global.py NaN handling."""
+"""Tests for optimize.py NaN handling."""
 
 import pytest
 import torch
 from unittest.mock import patch
 from warpylib import TiltSeries
 
-from miss_alignment.alignment.optimize_global import optimize_shifts
+from miss_alignment.alignment.optimize import optimize_shifts
 
 
 def test_optimize_shifts_raises_on_nan_in_global_shifts():

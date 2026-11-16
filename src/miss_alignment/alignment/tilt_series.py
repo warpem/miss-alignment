@@ -14,7 +14,7 @@ from miss_alignment.data.io import TiltSeriesData
 from miss_alignment.models import MissAlignment
 
 # Re-export optimization functions for backwards compatibility
-from .optimize_global import optimize_shifts
+from .optimize import optimize_shifts
 from .optimize_iterative import optimize_shifts_iterative, run_iterative_anchoring
 from .optimize_spline import (
     evaluate_catmull_rom_spline,
