@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 import typer
 import yaml
+from typer.testing import CliRunner
 
+from miss_alignment import cli
 from miss_alignment import infer as infer_module
 from miss_alignment.infer import infer_miss_align
 
@@ -309,3 +311,130 @@ def test_infer_model_run_directory_requires_schedule(tmp_path):
             prepare_stacks=None,
             preprocess=False,
         )
+
+
+def _make_stub_dataset(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "ts.xml").write_text("working XML")
+    # This test covers orchestration; real XML parsing is covered elsewhere.
+    monkeypatch.setattr(
+        infer_module, "exclude_nonfinite_alignment_tilt_series", lambda *_: []
+    )
+    return data
+
+
+@pytest.mark.parametrize("start", [0, 1])
+def test_legacy_positional_call_with_all_existing_options(tmp_path, monkeypatch, start):
+    data = _make_stub_dataset(tmp_path, monkeypatch)
+    models = tmp_path / "models"
+    _make_models(models, 2)
+    config = _write_config(
+        tmp_path, data, models, [{"downsample": 1, "alignment": "global"}] * 2
+    )
+    if start:
+        (data / "iter1").mkdir()
+        (data / "iter1" / "ts.xml").write_text("snapshot XML")
+    calls = _record_alignment_calls(monkeypatch)
+    prepared, preprocessed = [], []
+    monkeypatch.setattr(
+        infer_module, "prepare_stacks_parallel", lambda **kw: prepared.append(kw)
+    )
+    monkeypatch.setattr(
+        infer_module,
+        "run_cross_correlation_alignment_parallel",
+        lambda **kw: preprocessed.append(kw),
+    )
+
+    infer_module.infer_miss_align(config, start, 10.0, start == 0, 2)
+
+    assert len(calls) == 2 - start
+    assert calls[0]["model_checkpoint"] == str(
+        models / f"iter{start + 1}" / "model.ckpt"
+    )
+    assert all(c["n_cluster_workers"] == 2 for c in calls)
+    assert prepared[0]["desired_pixel_size"] == 10.0
+    assert prepared[0]["n_cluster_workers"] == 2
+    assert len(preprocessed) == (1 if start == 0 else 0)
+    assert (data / "iter2" / "ts.xml").read_text() == (
+        "snapshot XML" if start else "working XML"
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["python", "cli"])
+def test_no_config_pretrained_run(tmp_path, monkeypatch, entrypoint):
+    data = _make_stub_dataset(tmp_path, monkeypatch)
+    models = _use_fake_pretrained(tmp_path, monkeypatch)
+    calls = _record_alignment_calls(monkeypatch)
+    if entrypoint == "python":
+        infer_module.infer_miss_align(
+            data_directory=data,
+            start_at_iteration=0,
+            prepare_stacks=None,
+            preprocess=False,
+            n_cluster_workers=None,
+        )
+    else:
+        result = CliRunner().invoke(cli, ["infer", "--data-directory", str(data)])
+        assert result.exit_code == 0, (result.output, result.exception)
+    assert len(calls) == 8
+    for i, call in enumerate(calls, 1):
+        assert call["model_checkpoint"] == str(models / f"iter{i}" / "model.ckpt")
+        assert (
+            call["setting"]
+            == infer_module.PRETRAINED_ITERATION_SETTINGS[i - 1]["alignment"]
+        )
+        assert (
+            call["downsample"]
+            == infer_module.PRETRAINED_ITERATION_SETTINGS[i - 1]["downsample"]
+        )
+        assert call["n_cluster_workers"] is None
+
+
+def test_cli_overrides_and_resume(tmp_path, monkeypatch):
+    data = _make_stub_dataset(tmp_path, monkeypatch)
+    (data / "iter1").mkdir()
+    (data / "iter1" / "ts.xml").write_text("restored XML")
+    models = tmp_path / "models"
+    _make_models(models, 2)
+    config = _write_config(
+        tmp_path,
+        tmp_path / "wrong-data",
+        tmp_path / "wrong-models",
+        [{"downsample": 1, "alignment": "global"}] * 2,
+    )
+    calls = _record_alignment_calls(monkeypatch)
+    prepared = []
+    monkeypatch.setattr(
+        infer_module,
+        "get_pretrained_models",
+        lambda: pytest.fail("should use explicit models"),
+    )
+    monkeypatch.setattr(
+        infer_module, "prepare_stacks_parallel", lambda **kw: prepared.append(kw)
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "infer",
+            "--config-file",
+            str(config),
+            "--data-directory",
+            str(data),
+            "--model-run-directory",
+            str(models),
+            "--start-at-iteration",
+            "1",
+            "--prepare-stacks",
+            "10",
+            "--n-cluster-workers",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert len(calls) == 1
+    assert calls[0]["model_checkpoint"] == str(models / "iter2" / "model.ckpt")
+    assert calls[0]["n_cluster_workers"] == 2
+    assert prepared[0]["desired_pixel_size"] == 10.0
+    assert (data / "iter2" / "ts.xml").read_text() == "restored XML"
+    assert not (tmp_path / "wrong-data").exists()

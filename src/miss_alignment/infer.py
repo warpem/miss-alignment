@@ -64,22 +64,6 @@ def infer_miss_align(
             "Optional: without it, defaults and the pretrained models are used.",
         ),
     ] = None,
-    data_directory: Annotated[
-        Optional[Path],
-        typer.Option(
-            help="Directory with the tilt-series XMLs to align; aligned output "
-            "is written here. Overrides general.data_directory from the config.",
-        ),
-    ] = None,
-    model_run_directory: Annotated[
-        Optional[Path],
-        typer.Option(
-            help="Finished training run holding iter1..iterN/model.ckpt. "
-            "Overrides general.model_run_directory from the config. If neither "
-            "is set, the pretrained easymode models are used (downloaded once, "
-            "then cached).",
-        ),
-    ] = None,
     start_at_iteration: int = typer.Option(
         0,
         help="Continue from a specific iteration in the config.",
@@ -102,6 +86,23 @@ def infer_miss_align(
         "and MISS_CLUSTER_SCRIPT environment variables to be set. "
         "When absent, local multi-GPU mode is used.",
     ),
+    *,
+    data_directory: Annotated[
+        Optional[Path],
+        typer.Option(
+            help="Directory with the tilt-series XMLs to align; aligned output "
+            "is written here. Overrides general.data_directory from the config.",
+        ),
+    ] = None,
+    model_run_directory: Annotated[
+        Optional[Path],
+        typer.Option(
+            help="Finished training run holding iter1..iterN/model.ckpt. "
+            "Overrides general.model_run_directory from the config. If neither "
+            "is set, the pretrained easymode models are used (downloaded once, "
+            "then cached).",
+        ),
+    ] = None,
 ) -> None:
     """Align a dataset with pretrained models or models from a previous run.
 
