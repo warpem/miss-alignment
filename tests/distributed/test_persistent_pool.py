@@ -390,6 +390,7 @@ from pathlib import Path
 from miss_alignment import cli
 from miss_alignment.distributed import worker
 worker._load_model = lambda path: path
+worker._check_cuda_device = lambda device: None
 
 def execute(spec, device, cached_model):
     assert cached_model == spec.model_checkpoint_path

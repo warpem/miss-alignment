@@ -100,6 +100,21 @@ def _device_int(device: str) -> int | None:
     return None
 
 
+def _check_cuda_device(device: str) -> None:
+    """Exercise CUDA rather than trusting a potentially stale NVML device count."""
+    if not device.startswith("cuda:"):
+        return
+    try:
+        torch.cuda.set_device(device)
+        torch.empty(1, device=device).fill_(0)
+        torch.cuda.synchronize(device)
+    except Exception as exc:
+        raise RuntimeError(
+            f"CUDA device {device} is unusable; exiting worker so the manager "
+            "can retry outstanding work on another worker."
+        ) from exc
+
+
 def _execute_task(
     spec: TaskSpec,
     device: str,
@@ -173,6 +188,9 @@ def run_worker_loop(
     tasks_failed = 0
 
     try:
+        # A GPU worker must never silently start doing CPU work. Probe before
+        # claiming anything, including when NVML reports a failed GPU as present.
+        _check_cuda_device(device)
         while True:
             if layout.stop_file.exists():
                 return f"pool stopped; done={tasks_done} failed={tasks_failed}"
@@ -194,6 +212,9 @@ def run_worker_loop(
                 time.sleep(_IDLE_POLL_S)
                 continue
 
+            # Persistent workers can lose their GPU between batches. Leave the
+            # claim in running/ on device failure so the manager can requeue it.
+            _check_cuda_device(device)
             try:
                 # Drop the previous model before loading the next checkpoint.
                 # Loading errors belong to this task, just like evaluation errors.
@@ -209,6 +230,9 @@ def run_worker_loop(
                 mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
                 tasks_done += 1
             except Exception:
+                # A broken CUDA context is a worker failure, not a terminal task
+                # failure. Stop heartbeating and let the manager reclaim the task.
+                _check_cuda_device(device)
                 error = traceback.format_exc()
                 mark_failed(layout, worker_id, spec, error=error)
                 tasks_failed += 1
@@ -240,7 +264,7 @@ def worker_miss_align(
         worker_id = f"local-{os.getpid()}-gpu{device}"
 
     layout = QueueLayout(queue_dir)
-    cuda_device = f"cuda:{device}" if torch.cuda.is_available() else "cpu"
+    cuda_device = f"cuda:{device}"
     exit_reason = "unknown (unhandled exception)"
     try:
         exit_reason = run_worker_loop(
