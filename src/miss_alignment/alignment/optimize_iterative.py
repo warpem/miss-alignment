@@ -11,7 +11,7 @@ from warpylib import TiltSeries
 import torch
 
 from miss_alignment.models import MissAlignment
-from .optimize_global import optimize_shifts
+from .optimize import optimize_shifts
 
 _DEBUG = os.environ.get("MISS_DEBUG", "").lower() in ("1", "true", "yes")
 

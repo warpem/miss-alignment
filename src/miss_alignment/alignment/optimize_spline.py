@@ -12,7 +12,7 @@ from warpylib import TiltSeries
 
 from miss_alignment.models import MissAlignment
 
-from .optimize_global import AlignmentNanError, optimize_shifts
+from .optimize import AlignmentNanError, optimize_shifts
 
 
 def evaluate_catmull_rom_spline(
