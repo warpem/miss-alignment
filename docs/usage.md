@@ -73,6 +73,12 @@ load the next checkpoint when its tasks arrive. Queued cluster jobs keep their
 place in the scheduler queue. Workers are released when inference finishes or
 fails. Training retains its per-phase worker lifetime.
 
+Workers require a working CUDA device and never fall back to CPU. They test the
+device before claiming work and before each task. If a task raises an error and
+the CUDA device is also unusable, the worker exits and the manager requeues its
+unfinished task once the heartbeat is stale (about two minutes). Completed tasks
+are preserved. Task errors on a healthy GPU are reported as failures as usual.
+
 Alignment uses all visible GPUs. Each iteration writes its result snapshot to `data_directory/iterN/`, including a `model_source.txt` recording which checkpoint was applied. Like `train`, an interrupted run can be resumed with `--start-at-iteration N`.
 
 ## Running on SLURM

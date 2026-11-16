@@ -89,6 +89,68 @@ def test_worker_writes_failed_on_exception(layout):
     assert "CUDA OOM" in data["error"]
 
 
+def test_gpu_worker_checks_cuda_before_claiming(layout, monkeypatch):
+    from miss_alignment.distributed import worker
+
+    _write_manager_hb(layout)
+    write_pending(layout, _spec())
+    monkeypatch.setattr(worker.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        worker.torch.cuda, "set_device", MagicMock(side_effect=RuntimeError("GPU lost"))
+    )
+    with pytest.raises(RuntimeError, match="CUDA device cuda:0 is unusable"):
+        run_worker_loop(layout, "bad-gpu", "cuda:0")
+    assert (layout.pending / "0000001-ts01.json").exists()
+    assert not list(layout.failed.glob("*.json"))
+
+
+def test_gpu_failure_during_task_leaves_claim_for_retry(layout, monkeypatch):
+    from miss_alignment.distributed import worker
+
+    _write_manager_hb(layout)
+    write_pending(layout, _spec())
+    monkeypatch.setattr(worker, "_load_model", lambda _: MagicMock())
+    probe = MagicMock(side_effect=[None, None, RuntimeError("GPU lost")])
+    monkeypatch.setattr(worker, "_check_cuda_device", probe)
+    monkeypatch.setattr(
+        worker,
+        "_execute_task",
+        MagicMock(side_effect=RuntimeError("CUDA error: device lost")),
+    )
+    with pytest.raises(RuntimeError, match="GPU lost"):
+        run_worker_loop(layout, "bad-gpu", "cuda:0")
+    assert (layout.worker_dir("bad-gpu") / "0000001-ts01.json").exists()
+    assert not list(layout.failed.glob("*.json"))
+    assert not list(layout.done.glob("*.json"))
+
+
+def test_task_error_with_healthy_gpu_is_terminal(layout, monkeypatch):
+    from miss_alignment.distributed import worker
+
+    _write_manager_hb(layout)
+    write_pending(layout, _spec())
+    monkeypatch.setattr(worker, "_load_model", lambda _: MagicMock())
+    monkeypatch.setattr(worker, "_check_cuda_device", lambda _: None)
+    monkeypatch.setattr(
+        worker, "_execute_task", MagicMock(side_effect=ValueError("invalid metadata"))
+    )
+    run_worker_loop(layout, "healthy-gpu", "cuda:0")
+    result = json.loads((layout.failed / "0000001-ts01.json").read_text())
+    assert "invalid metadata" in result["error"]
+
+
+def test_worker_cli_never_falls_back_to_cpu(layout, monkeypatch):
+    from miss_alignment.distributed import worker
+
+    monkeypatch.setattr(worker.torch.cuda, "is_available", lambda: False)
+    loop = MagicMock(return_value="queue empty")
+    monkeypatch.setattr(worker, "run_worker_loop", loop)
+    worker.worker_miss_align(
+        queue_dir=layout.root, device=0, worker_id="gpu", persistent=False
+    )
+    assert loop.call_args.args[2] == "cuda:0"
+
+
 def test_worker_exits_when_manager_hb_stale(layout):
     # Write a heartbeat file that is 200 seconds old
     hb_file = layout.manager_hb / "hb-0"
