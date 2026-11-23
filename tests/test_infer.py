@@ -200,7 +200,7 @@ def test_infer_without_config_uses_pretrained_models(tmp_path, monkeypatch, caps
         assert call["setting"] == setting["alignment"]
         assert call["downsample"] == setting["downsample"]
         assert call["patch_size"] == 96
-    assert "easymode by Mart So-Last" in capsys.readouterr().out
+    assert "easymode dataset by Mart So-Last" in capsys.readouterr().out
 
 
 def test_infer_cli_model_run_directory_overrides_pretrained(tmp_path, monkeypatch):
