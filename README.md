@@ -36,7 +36,7 @@
 | src/miss\_alignment/models/models.py                 |      181 |      146 |     19% |50-53, 76-113, 131-146, 150-151, 155-182, 198-300, 305-311, 326-351, 356-357, 377-383, 387, 391-404, 415-425, 429-446, 450-451, 468-473, 477-497, 507-529 |
 | src/miss\_alignment/prepare\_stacks.py               |       36 |       28 |     22% |36-60, 84-100, 138-167 |
 | src/miss\_alignment/preprocessing.py                 |        4 |        0 |    100% |           |
-| src/miss\_alignment/pretrained.py                    |       72 |        6 |     92% |144-147, 161-163 |
+| src/miss\_alignment/pretrained.py                    |       72 |        6 |     92% |143-146, 160-162 |
 | src/miss\_alignment/train.py                         |      156 |      108 |     31% |40-42, 65-70, 139-268, 333-522 |
 | src/miss\_alignment/utils.py                         |       36 |        3 |     92% |48, 91, 95 |
 | **TOTAL**                                            | **2422** |  **929** | **62%** |           |
