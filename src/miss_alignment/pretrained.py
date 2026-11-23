@@ -46,9 +46,8 @@ PRETRAINED_ITERATION_SETTINGS = [
 N_PRETRAINED_ITERATIONS = len(PRETRAINED_ITERATION_SETTINGS)
 
 ATTRIBUTION = (
-    "Pretrained models from easymode by Mart So-Last "
-    "(https://mgflast.github.io/easymode/, GPL-3.0).\n"
-    "If you use them, please also cite the easymode preprint: "
+    "Models were pretrained on a subset of the "
+    "easymode dataset by Mart So-Last, see: "
     "https://doi.org/10.64898/2026.05.19.726344"
 )
 
