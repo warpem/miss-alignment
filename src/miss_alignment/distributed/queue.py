@@ -24,6 +24,10 @@ class QueueLayout:
     root: Path
 
     @property
+    def stop_file(self) -> Path:
+        return self.root / "STOP"
+
+    @property
     def pending(self) -> Path:
         return self.root / "pending"
 
@@ -135,7 +139,7 @@ def claim_one(layout: QueueLayout, worker_id: str) -> TaskSpec | None:
     Returns the claimed TaskSpec, or None if the queue is empty.
     """
     worker_dir = layout.worker_dir(worker_id)
-    worker_dir.mkdir(parents=True, exist_ok=True)
+    worker_dir.mkdir(exist_ok=True)
 
     candidates = list(layout.pending.glob("*.json"))
     random.shuffle(candidates)

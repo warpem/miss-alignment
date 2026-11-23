@@ -16,6 +16,7 @@ from .data.io import exclude_nonfinite_alignment_tilt_series
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
+from .distributed.manager import DistributedPool
 from .pretrained import (
     ATTRIBUTION,
     N_PRETRAINED_ITERATIONS,
@@ -183,39 +184,6 @@ def infer_miss_align(
     print(f"  model run directory: {model_run_directory}")
     print(f"  alignment devices:   {devices_alignment}")
 
-    # Prepare tilt stacks if requested
-    if prepare_stacks is not None:
-        if prepare_stacks <= 0:
-            raise ValueError("--prepare-stacks must be a positive non-zero number")
-        prepare_stacks_parallel(
-            training_directory=data_directory,
-            desired_pixel_size=prepare_stacks,
-            devices=devices_alignment,
-            n_cluster_workers=n_cluster_workers,
-        )
-
-    # Run preprocessing if requested
-    if preprocess:
-        if start_at_iteration != 0:
-            raise ValueError(
-                "Running preprocessing while not starting at iteration 0. "
-                "This is likely not desirable behaviour."
-            )
-        # Back up original data to pre-iter directory
-        preiter_directory = data_directory / "pre-iter"
-        preiter_directory.mkdir(parents=True, exist_ok=True)
-        for xml_file in data_directory.glob("*.xml"):
-            copyfile(xml_file, preiter_directory / xml_file.name)
-        print(f"Backed up original metadata to {preiter_directory}")
-
-        run_cross_correlation_alignment_parallel(
-            training_directory=data_directory,
-            devices=devices_alignment,
-            n_cluster_workers=n_cluster_workers,
-        )
-
-    exclude_nonfinite_alignment_tilt_series(data_directory)
-
     start_iter = start_at_iteration
     end_iter = len(iteration_settings)
 
@@ -232,54 +200,94 @@ def infer_miss_align(
             )
         model_paths[x] = model_path
 
-    # iter 0 snapshots the input alignments as a baseline; resuming restores the
-    # working alignments from that iteration's snapshot.
-    sync_start_iteration_xmls(start_iter, data_directory)
+    # Keep allocations while snapshots are written and later models are queued.
+    with DistributedPool(
+        devices_alignment, n_cluster_workers, data_directory / "tasks", persistent=True
+    ) as pool:
+        # Prepare tilt stacks if requested
+        if prepare_stacks is not None:
+            if prepare_stacks <= 0:
+                raise ValueError("--prepare-stacks must be a positive non-zero number")
+            prepare_stacks_parallel(
+                training_directory=data_directory,
+                desired_pixel_size=prepare_stacks,
+                devices=devices_alignment,
+                n_cluster_workers=n_cluster_workers,
+                pool=pool,
+            )
 
-    for x in range(start_iter, end_iter):
-        iteration_setting = iteration_settings[x]
-        alignment_mode = iteration_setting["alignment"]
-        model_checkpoint = model_paths[x]
+        # Run preprocessing if requested
+        if preprocess:
+            if start_at_iteration != 0:
+                raise ValueError(
+                    "Running preprocessing while not starting at iteration 0. "
+                    "This is likely not desirable behaviour."
+                )
+            # Back up original data to pre-iter directory
+            preiter_directory = data_directory / "pre-iter"
+            preiter_directory.mkdir(parents=True, exist_ok=True)
+            for xml_file in data_directory.glob("*.xml"):
+                copyfile(xml_file, preiter_directory / xml_file.name)
+            print(f"Backed up original metadata to {preiter_directory}")
 
-        print(f"\n{'=' * 60}")
-        print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
-        print(f"  model: {model_checkpoint}")
-        print(f"{'=' * 60}\n")
+            run_cross_correlation_alignment_parallel(
+                training_directory=data_directory,
+                devices=devices_alignment,
+                n_cluster_workers=n_cluster_workers,
+                pool=pool,
+            )
 
-        # get list of all files to process for alignment
-        tilt_series_list = list(data_directory.glob("*.xml"))
+        exclude_nonfinite_alignment_tilt_series(data_directory)
 
-        # run alignment in parallel over all available devices
-        run_alignment_parallel(
-            model_checkpoint=str(model_checkpoint),
-            tilt_series_list=tilt_series_list,
-            output_directory=data_directory,
-            setting=iteration_setting["alignment"],
-            patch_size=alignment_config["patch_size"],
-            patch_overlap=alignment_config["patch_overlap"],
-            batch_size=alignment_config["batch_size"],
-            apply_ctf=general_config["apply_ctf"],
-            downsample=iteration_setting["downsample"],
-            devices_list=devices_alignment,
-            n_cluster_workers=n_cluster_workers,
-        )
+        # iter 0 snapshots the input alignments as a baseline; resuming restores the
+        # working alignments from that iteration's snapshot.
+        sync_start_iteration_xmls(start_iter, data_directory)
 
-        # make copies of the xml files after alignment
-        iteration_directory = data_directory / ("iter" + str(x + 1))
-        iteration_directory.mkdir(parents=True, exist_ok=True)
+        for x in range(start_iter, end_iter):
+            iteration_setting = iteration_settings[x]
+            alignment_mode = iteration_setting["alignment"]
+            model_checkpoint = model_paths[x]
 
-        for xml_file in data_directory.glob("*.xml"):
-            destination_xml = iteration_directory / xml_file.name
-            copyfile(xml_file, destination_xml)
+            print(f"\n{'=' * 60}")
+            print(f"Iteration {x + 1}/{end_iter} - Alignment: {alignment_mode}")
+            print(f"  model: {model_checkpoint}")
+            print(f"{'=' * 60}\n")
 
-            # copy the file with the alignment loss
-            loss_json = xml_file.stem + "_alignment_loss.json"
-            destination_json = iteration_directory / loss_json
-            copyfile(data_directory / loss_json, destination_json)
+            # get list of all files to process for alignment
+            tilt_series_list = list(data_directory.glob("*.xml"))
 
-        # record which model produced this iteration's alignment (provenance)
-        (iteration_directory / "model_source.txt").write_text(
-            f"{model_checkpoint.resolve()}\n"
-        )
+            # run alignment in parallel over all available devices
+            run_alignment_parallel(
+                model_checkpoint=str(model_checkpoint),
+                tilt_series_list=tilt_series_list,
+                output_directory=data_directory,
+                setting=iteration_setting["alignment"],
+                patch_size=alignment_config["patch_size"],
+                patch_overlap=alignment_config["patch_overlap"],
+                batch_size=alignment_config["batch_size"],
+                apply_ctf=general_config["apply_ctf"],
+                downsample=iteration_setting["downsample"],
+                devices_list=devices_alignment,
+                n_cluster_workers=n_cluster_workers,
+                pool=pool,
+            )
+
+            # make copies of the xml files after alignment
+            iteration_directory = data_directory / ("iter" + str(x + 1))
+            iteration_directory.mkdir(parents=True, exist_ok=True)
+
+            for xml_file in data_directory.glob("*.xml"):
+                destination_xml = iteration_directory / xml_file.name
+                copyfile(xml_file, destination_xml)
+
+                # copy the file with the alignment loss
+                loss_json = xml_file.stem + "_alignment_loss.json"
+                destination_json = iteration_directory / loss_json
+                copyfile(data_directory / loss_json, destination_json)
+
+            # record which model produced this iteration's alignment (provenance)
+            (iteration_directory / "model_source.txt").write_text(
+                f"{model_checkpoint.resolve()}\n"
+            )
 
     return None

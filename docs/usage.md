@@ -66,6 +66,13 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 miss-alignment 
 
 `--data-directory` and `--model-run-directory` override the corresponding config entries.
 
+Inference keeps one worker pool for the entire run, including stack preparation,
+optional cross-correlation pre-alignment, and every alignment iteration. Local
+workers and cluster jobs stay alive while the next iteration is prepared; they
+load the next checkpoint when its tasks arrive. Queued cluster jobs keep their
+place in the scheduler queue. Workers are released when inference finishes or
+fails. Training retains its per-phase worker lifetime.
+
 Alignment uses all visible GPUs. Each iteration writes its result snapshot to `data_directory/iterN/`, including a `model_source.txt` recording which checkpoint was applied. Like `train`, an interrupted run can be resumed with `--start-at-iteration N`.
 
 ## Running on SLURM

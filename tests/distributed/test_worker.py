@@ -245,3 +245,48 @@ def test_worker_dispatches_cross_correlation(layout):
     assert len(xcorr_calls) == 1
     assert xcorr_calls[0][1] == 0.25
     assert (layout.done / "0000001-ts01.json").exists()
+
+
+def test_checkpoint_load_failure_is_reported_as_task_failure(layout, monkeypatch):
+    _write_manager_hb(layout)
+    write_pending(layout, _spec())
+
+    def fail(_path):
+        raise ValueError("broken checkpoint")
+
+    monkeypatch.setattr("miss_alignment.distributed.worker._load_model", fail)
+    run_worker_loop(layout, "worker-0", "cpu")
+    result = json.loads((layout.failed / "0000001-ts01.json").read_text())
+    assert "broken checkpoint" in result["error"]
+
+
+def test_idle_persistent_worker_stops_when_queue_is_removed(layout, monkeypatch):
+    import shutil
+    import threading
+    from miss_alignment.distributed import worker
+
+    _write_manager_hb(layout)
+    monkeypatch.setattr(worker, "_IDLE_POLL_S", 0.005)
+    monkeypatch.setattr(worker, "_HB_INTERVAL_S", 0.005)
+    idle = threading.Event()
+    original = worker.claim_one
+
+    def claim(*args):
+        result = original(*args)
+        if result is None:
+            idle.set()
+        return result
+
+    monkeypatch.setattr(worker, "claim_one", claim)
+    thread = threading.Thread(
+        target=run_worker_loop,
+        args=(layout, "idle", "cpu"),
+        kwargs={"persistent": True},
+        daemon=True,
+    )
+    thread.start()
+    assert idle.wait(2)
+    shutil.rmtree(layout.root)
+    thread.join(2)
+    assert not thread.is_alive()
+    assert not layout.root.exists()

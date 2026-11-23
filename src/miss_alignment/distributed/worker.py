@@ -35,6 +35,7 @@ from .queue import (
 
 _MANAGER_HB_TIMEOUT_S = 120.0
 _HB_INTERVAL_S = 5.0
+_IDLE_POLL_S = 0.5
 
 
 def _write_worker_hb(worker_dir: Path, seq: int) -> None:
@@ -42,9 +43,8 @@ def _write_worker_hb(worker_dir: Path, seq: int) -> None:
     try:
         new_hb.write_text("")
     except FileNotFoundError:
-        # Worker dir was swept by the manager stall check; recreate it.
-        worker_dir.mkdir(parents=True, exist_ok=True)
-        new_hb.write_text("")
+        # The manager may have closed/removed the queue. Never recreate it.
+        return
     if seq > 0:
         (worker_dir / f"hb-{seq - 1}").unlink(missing_ok=True)
 
@@ -59,7 +59,7 @@ def _start_heartbeat_thread(
     """
 
     def _loop() -> None:
-        seq = 0
+        seq = 1
         while not stop_event.wait(timeout=_HB_INTERVAL_S):
             _write_worker_hb(worker_dir, seq)
             seq += 1
@@ -71,11 +71,18 @@ def _start_heartbeat_thread(
 
 def _manager_hb_age_s(layout: QueueLayout) -> float:
     """Seconds since the manager's most recent heartbeat tick, or infinity."""
-    ticks = list(layout.manager_hb.glob("hb-*"))
-    if not ticks:
-        return float("inf")
-    latest = max(ticks, key=lambda p: p.stat().st_mtime)
-    return time.time() - latest.stat().st_mtime
+    # A heartbeat can rotate after globbing; retry rather than treating that
+    # harmless race as a dead manager and surrendering an allocated worker.
+    for _ in range(2):
+        mtimes = []
+        for tick in layout.manager_hb.glob("hb-*"):
+            try:
+                mtimes.append(tick.stat().st_mtime)
+            except FileNotFoundError:
+                pass
+        if mtimes:
+            return time.time() - max(mtimes)
+    return float("inf")
 
 
 def _load_model(checkpoint_path: str) -> MissAlignment:
@@ -144,16 +151,21 @@ def run_worker_loop(
     worker_id: str,
     device: str,
     manager_hb_timeout_s: float = _MANAGER_HB_TIMEOUT_S,
+    persistent: bool = False,
 ) -> str:
-    """Main worker loop: claim → evaluate → write result. Repeat until queue empty.
+    """Claim tasks; persistent inference workers wait across empty batch gaps.
 
     Returns an exit-reason string suitable for writing to logs/<worker_id>.exit.
     """
     worker_dir = layout.worker_dir(worker_id)
-    worker_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        worker_dir.mkdir(exist_ok=True)
+    except FileNotFoundError:
+        return "queue removed"
 
     stop_hb = threading.Event()
-    _start_heartbeat_thread(worker_dir, stop_hb)
+    _write_worker_hb(worker_dir, 0)
+    heartbeat = _start_heartbeat_thread(worker_dir, stop_hb)
 
     last_fingerprint: str | None = None
     cached_model: MissAlignment | None = None
@@ -162,6 +174,8 @@ def run_worker_loop(
 
     try:
         while True:
+            if layout.stop_file.exists():
+                return f"pool stopped; done={tasks_done} failed={tasks_failed}"
             age = _manager_hb_age_s(layout)
             if age > manager_hb_timeout_s:
                 return (
@@ -170,19 +184,27 @@ def run_worker_loop(
                     f"done={tasks_done} failed={tasks_failed}"
                 )
 
-            spec = claim_one(layout, worker_id)
+            try:
+                spec = claim_one(layout, worker_id)
+            except FileNotFoundError:
+                return "queue removed"
             if spec is None:
-                return f"queue empty; done={tasks_done} failed={tasks_failed}"
-
-            # For alignment tasks, (re)load model when fingerprint changes.
-            if (
-                spec.task_type == "alignment"
-                and spec.init_fingerprint != last_fingerprint
-            ):
-                cached_model = _load_model(spec.model_checkpoint_path)
-                last_fingerprint = spec.init_fingerprint
+                if not persistent:
+                    return f"queue empty; done={tasks_done} failed={tasks_failed}"
+                time.sleep(_IDLE_POLL_S)
+                continue
 
             try:
+                # Drop the previous model before loading the next checkpoint.
+                # Loading errors belong to this task, just like evaluation errors.
+                if (
+                    spec.task_type == "alignment"
+                    and spec.init_fingerprint != last_fingerprint
+                ):
+                    cached_model = None
+                    last_fingerprint = None
+                    cached_model = _load_model(spec.model_checkpoint_path)
+                    last_fingerprint = spec.init_fingerprint
                 final_loss = _execute_task(spec, device, cached_model)
                 mark_done(layout, worker_id, spec, final_loss=final_loss, device=device)
                 tasks_done += 1
@@ -196,6 +218,7 @@ def run_worker_loop(
                 )
     finally:
         stop_hb.set()
+        heartbeat.join()
 
     # Unreachable — loop only exits via return statements above.
     return f"done={tasks_done} failed={tasks_failed}"
@@ -207,18 +230,22 @@ def worker_miss_align(
     worker_id: Optional[str] = typer.Option(
         None, help="Unique worker ID. Defaults to local-<pid>-gpu<device>."
     ),
+    persistent: bool = typer.Option(
+        False,
+        help="Wait for later inference batches instead of exiting on an empty queue.",
+    ),
 ) -> None:
     """Claim and run inference tasks from the distributed queue."""
     if worker_id is None:
         worker_id = f"local-{os.getpid()}-gpu{device}"
 
     layout = QueueLayout(queue_dir)
-    layout.ensure_directories()
-
     cuda_device = f"cuda:{device}" if torch.cuda.is_available() else "cpu"
     exit_reason = "unknown (unhandled exception)"
     try:
-        exit_reason = run_worker_loop(layout, worker_id, cuda_device)
+        exit_reason = run_worker_loop(
+            layout, worker_id, cuda_device, persistent=persistent
+        )
     except Exception:
         exit_reason = f"unhandled exception:\n{traceback.format_exc()}"
         raise
