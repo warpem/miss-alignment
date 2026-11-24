@@ -91,11 +91,14 @@ def is_deselected(xml_file: Path) -> bool:
     is parsed. Files that cannot be parsed count as selected, so that
     downstream checks can report them.
     """
-    try:
-        for _, element in ElementTree.iterparse(xml_file, events=("start",)):
-            return element.get("UnselectManual") == "True"
-    except ElementTree.ParseError:
-        pass
+    # Open the file ourselves: stopping iterparse early does not reliably close
+    # a file it opened (ResourceWarning on Python 3.10).
+    with open(xml_file, "rb") as source:
+        try:
+            for _, element in ElementTree.iterparse(source, events=("start",)):
+                return element.get("UnselectManual") == "True"
+        except ElementTree.ParseError:
+            pass
     return False
 
 
