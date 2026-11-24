@@ -3333,7 +3333,7 @@ requires-dist = [
     { name = "torch-tomogram" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "typer" },
-    { name = "warpylib" },
+    { name = "warpylib", specifier = ">=1.2.0" },
     { name = "zenodo-get" },
 ]
 provides-extras = ["dev", "test"]
@@ -8801,7 +8801,7 @@ wheels = [
 
 [[package]]
 name = "warpylib"
-version = "1.1.2"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "lxml" },
@@ -8825,9 +8825,9 @@ dependencies = [
     { name = "torch-subpixel-crop", version = "0.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'group-14-miss-alignment-cpu' and extra == 'group-14-miss-alignment-cu126') or (extra == 'group-14-miss-alignment-cpu' and extra == 'group-14-miss-alignment-cu128') or (extra == 'group-14-miss-alignment-cpu' and extra == 'group-14-miss-alignment-cu129') or (extra == 'group-14-miss-alignment-cu126' and extra == 'group-14-miss-alignment-cu128') or (extra == 'group-14-miss-alignment-cu126' and extra == 'group-14-miss-alignment-cu129') or (extra == 'group-14-miss-alignment-cu128' and extra == 'group-14-miss-alignment-cu129')" },
     { name = "torch-subpixel-crop", version = "0.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'group-14-miss-alignment-cpu' and extra == 'group-14-miss-alignment-cu126') or (extra == 'group-14-miss-alignment-cpu' and extra == 'group-14-miss-alignment-cu128') or (extra == 'group-14-miss-alignment-cpu' and extra == 'group-14-miss-alignment-cu129') or (extra == 'group-14-miss-alignment-cu126' and extra == 'group-14-miss-alignment-cu128') or (extra == 'group-14-miss-alignment-cu126' and extra == 'group-14-miss-alignment-cu129') or (extra == 'group-14-miss-alignment-cu128' and extra == 'group-14-miss-alignment-cu129')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/0e/18016d58e6aed192eb53f58deaf54728b9356191da1622d407756a54416f/warpylib-1.1.2.tar.gz", hash = "sha256:431bc6c81ea87f6bd6ac0dfa0358fa456d477098c0fcad70504b584ff2d1e4e8", size = 58353070, upload-time = "2026-07-08T15:18:55.046Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/98/b9fd00b8cc0853890ccbd9929c5d4c7629e214e7625fbdb74d1ada66b7bf/warpylib-1.2.0.tar.gz", hash = "sha256:823448a179df89ec770c07c3654ddbed7cb0195f4dd5289a83b2c17b834f5ec1", size = 58358946, upload-time = "2026-11-24T14:30:46.419Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/5c/aaecbaa97a9596196749c602aa68dd9456c7e1a988f641013ffe68373dbe/warpylib-1.1.2-py3-none-any.whl", hash = "sha256:c356f8dcb2afec2c3801d19361abad9a27cb7d7bfac2294a49099441c4d647f1", size = 116223, upload-time = "2026-07-08T15:18:53.167Z" },
+    { url = "https://files.pythonhosted.org/packages/80/c4/6f028f994fa2dc20c48099b95d7f179c921c7954a0a9f72c21572dc192f1/warpylib-1.2.0-py3-none-any.whl", hash = "sha256:d3be497b2dadcc2ba7fa82ad041b3ce22f6463d886b4e917b086edc9bb39109e", size = 118563, upload-time = "2026-11-24T14:30:43.962Z" },
 ]
 
 [[package]]
