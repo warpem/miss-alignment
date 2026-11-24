@@ -54,6 +54,11 @@ pytest tests/data/test_training_dataset.py
 pytest tests/test_miss_alignment.py::test_something
 ```
 
+On macOS, run pytest with `GLOO_SOCKET_IFNAME=lo0` (e.g. `GLOO_SOCKET_IFNAME=lo0 pytest`).
+Otherwise the 2-rank gloo DDP test in `tests/test_train.py` can hang forever at 0% CPU:
+gloo advertises the address the hostname resolves to, and on a VPN (e.g. eduVPN) that
+is a point-to-point tunnel address the ranks cannot connect through.
+
 ### Linting
 ```bash
 # Run ruff linter with auto-fix
