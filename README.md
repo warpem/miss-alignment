@@ -19,9 +19,9 @@
 | src/miss\_alignment/data/\_\_init\_\_.py             |        2 |        0 |    100% |           |
 | src/miss\_alignment/data/\_augmentation.py           |       39 |        0 |    100% |           |
 | src/miss\_alignment/data/\_reconstruction\_worker.py |      147 |        0 |    100% |           |
-| src/miss\_alignment/data/io.py                       |      119 |       42 |     65% |45, 49, 53, 58, 78, 81, 91-93, 96, 99-103, 107, 112, 211-270 |
+| src/miss\_alignment/data/io.py                       |      132 |       41 |     69% |46, 50, 54, 59, 79, 82, 135-137, 140, 143-147, 157, 256-315 |
 | src/miss\_alignment/data/shift\_generation.py        |      124 |        6 |     95% |148, 291-294, 297 |
-| src/miss\_alignment/data/training\_datamodule.py     |      102 |       77 |     25% |41-55, 126-168, 172-173, 177-178, 193-258, 267, 286-310 |
+| src/miss\_alignment/data/training\_datamodule.py     |      103 |       77 |     25% |42-56, 127-169, 173-174, 178-179, 194-259, 268, 287-311 |
 | src/miss\_alignment/data/training\_dataset.py        |       32 |        0 |    100% |           |
 | src/miss\_alignment/distributed/\_\_init\_\_.py      |        6 |        0 |    100% |           |
 | src/miss\_alignment/distributed/config.py            |       30 |        1 |     97% |        55 |
@@ -29,17 +29,17 @@
 | src/miss\_alignment/distributed/provisioner.py       |      208 |       42 |     80% |26-52, 73, 86-87, 90, 121-122, 181, 245, 284-285, 288, 330-331, 377, 380-384 |
 | src/miss\_alignment/distributed/queue.py             |      105 |        6 |     94% |148-150, 196, 201, 204, 207 |
 | src/miss\_alignment/distributed/worker.py            |       91 |       13 |     86% |41-49, 64-65, 76, 92, 139 |
-| src/miss\_alignment/infer.py                         |      108 |        2 |     98% |  189, 200 |
+| src/miss\_alignment/infer.py                         |      109 |        2 |     98% |  192, 203 |
 | src/miss\_alignment/models/\_\_init\_\_.py           |        4 |        0 |    100% |           |
 | src/miss\_alignment/models/\_compact.py              |      116 |       94 |     19% |6-49, 53-58, 63-91, 95-99, 104-132, 136-140, 145-173, 177-181, 186-225, 228-232, 252-280, 288-304, 321-347, 350-364 |
 | src/miss\_alignment/models/\_resnet.py               |      104 |       27 |     74% |50-68, 71-90, 180, 192, 204 |
 | src/miss\_alignment/models/models.py                 |      181 |      146 |     19% |50-53, 76-113, 131-146, 150-151, 155-182, 198-300, 305-311, 326-351, 356-357, 377-383, 387, 391-404, 415-425, 429-446, 450-451, 468-473, 477-497, 507-529 |
-| src/miss\_alignment/prepare\_stacks.py               |       36 |       28 |     22% |36-60, 84-100, 138-167 |
+| src/miss\_alignment/prepare\_stacks.py               |       37 |       28 |     24% |37-61, 85-101, 139-167 |
 | src/miss\_alignment/preprocessing.py                 |        4 |        0 |    100% |           |
 | src/miss\_alignment/pretrained.py                    |       72 |        6 |     92% |143-146, 160-162 |
-| src/miss\_alignment/train.py                         |      156 |      108 |     31% |40-42, 65-70, 139-268, 333-522 |
+| src/miss\_alignment/train.py                         |      157 |      109 |     31% |43-45, 68-73, 142-271, 336-527 |
 | src/miss\_alignment/utils.py                         |       36 |        3 |     92% |48, 91, 95 |
-| **TOTAL**                                            | **2422** |  **929** | **62%** |           |
+| **TOTAL**                                            | **2439** |  **929** | **62%** |           |
 
 
 ## Setup coverage badge
