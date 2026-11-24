@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from warpylib import TiltSeries
-from miss_alignment.data.io import TiltSeriesData
+from miss_alignment.data.io import (
+    TiltSeriesData,
+    exclude_nonfinite_alignment_tilt_series,
+    is_deselected,
+    list_tilt_series_xmls,
+)
 
 
 class TestTiltSeriesData:
@@ -224,3 +229,61 @@ class TestRetryOnReadError:
                     tilt_series_data.load_metadata_and_stack(retry_on_read_error=True)
 
         assert call_count == 5
+
+
+def _write_tilt_series_xml(xml_path, unselect_manual=None, angles=None):
+    n_tilts = 5
+    tilt_series = TiltSeries(path=xml_path, n_tilts=n_tilts)
+    tilt_series.angles = torch.linspace(-60, 60, n_tilts) if angles is None else angles
+    tilt_series.unselect_manual = unselect_manual
+    tilt_series.save_meta(xml_path)
+    return xml_path
+
+
+class TestWarpDeselection:
+    """Tilt-series deselected in Warp (UnselectManual) are skipped."""
+
+    @pytest.mark.parametrize(
+        "unselect_manual, expected", [(True, True), (False, False), (None, False)]
+    )
+    def test_is_deselected(self, tmp_path, unselect_manual, expected):
+        xml_path = _write_tilt_series_xml(tmp_path / "ts.xml", unselect_manual)
+        assert is_deselected(xml_path) == expected
+
+    def test_warp_null_value_is_selected(self, tmp_path):
+        """Warp writes UnselectManual="" when the flag was never set."""
+        xml_path = tmp_path / "ts.xml"
+        xml_path.write_text('<TiltSeries UnselectManual="" UnselectFilter="False" />')
+        assert not is_deselected(xml_path)
+
+    def test_unparseable_xml_is_selected(self, tmp_path):
+        xml_path = tmp_path / "ts.xml"
+        xml_path.write_text("not xml")
+        assert not is_deselected(xml_path)
+
+    def test_list_tilt_series_xmls_skips_deselected(self, tmp_path):
+        selected = _write_tilt_series_xml(tmp_path / "a.xml", unselect_manual=False)
+        _write_tilt_series_xml(tmp_path / "b.xml", unselect_manual=True)
+        unset = _write_tilt_series_xml(tmp_path / "c.xml")
+
+        assert list_tilt_series_xmls(tmp_path) == [selected, unset]
+
+    def test_exclude_nonfinite_leaves_deselected_in_place(self, tmp_path, capsys):
+        """Deselected tilt-series are reported but neither checked nor moved."""
+        _write_tilt_series_xml(tmp_path / "good.xml")
+        bad_angles = torch.tensor([float("nan")] * 5)
+        deselected = _write_tilt_series_xml(
+            tmp_path / "deselected.xml", unselect_manual=True, angles=bad_angles
+        )
+
+        excluded = exclude_nonfinite_alignment_tilt_series(tmp_path)
+
+        assert excluded == []
+        assert deselected.exists()
+        assert "deselected in Warp" in capsys.readouterr().out
+
+    def test_exclude_nonfinite_raises_if_all_deselected(self, tmp_path):
+        _write_tilt_series_xml(tmp_path / "ts.xml", unselect_manual=True)
+
+        with pytest.raises(ValueError, match="deselected 1"):
+            exclude_nonfinite_alignment_tilt_series(tmp_path)

@@ -10,6 +10,7 @@ import mrcfile
 from warpylib import TiltSeries
 from warpylib.movie import Movie
 
+from .data.io import list_tilt_series_xmls
 from .distributed.manager import run_distributed
 
 
@@ -135,15 +136,14 @@ def prepare_stacks_parallel(
     RuntimeError
         If any tilt series fails to process.
     """
-    xml_files = list(training_directory.glob("*.xml"))
+    xml_files = list_tilt_series_xmls(training_directory)
     if not xml_files:
         raise FileNotFoundError(
             f"No XML files found in training directory: {training_directory}"
         )
 
     print(
-        f"Preparing stacks for {len(xml_files)} tilt series "
-        f"at {desired_pixel_size} Å"
+        f"Preparing stacks for {len(xml_files)} tilt series at {desired_pixel_size} Å"
     )
 
     queue_root = training_directory / "tasks"

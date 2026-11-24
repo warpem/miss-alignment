@@ -4,6 +4,7 @@ import torch
 import mrcfile
 from pathlib import Path
 from shutil import move
+from xml.etree import ElementTree
 
 from warpylib import TiltSeries
 from warpylib.ops import rescale
@@ -82,10 +83,53 @@ def _nonfinite_alignment_fields(tilt_series: TiltSeries) -> list[str]:
     return bad
 
 
+def is_deselected(xml_file: Path) -> bool:
+    """Whether a tilt-series was manually deselected in Warp.
+
+    ``WarpTools change_selection --deselect`` (or deselecting in the Warp GUI)
+    sets ``UnselectManual="True"`` on the XML root element. Only the root tag
+    is parsed. Files that cannot be parsed count as selected, so that
+    downstream checks can report them.
+    """
+    # Open the file ourselves: stopping iterparse early does not reliably close
+    # a file it opened (ResourceWarning on Python 3.10).
+    with open(xml_file, "rb") as source:
+        try:
+            for _, element in ElementTree.iterparse(source, events=("start",)):
+                return element.get("UnselectManual") == "True"
+        except ElementTree.ParseError:
+            pass
+    return False
+
+
+def list_tilt_series_xmls(directory: Path) -> list[Path]:
+    """List the tilt-series XMLs in a directory, skipping deselected ones."""
+    return [
+        xml_file
+        for xml_file in sorted(directory.glob("*.xml"))
+        if not is_deselected(xml_file)
+    ]
+
+
 def exclude_nonfinite_alignment_tilt_series(training_directory: Path) -> list[Path]:
-    """Move tilt-series with unusable alignment metadata out of the training set."""
+    """Move tilt-series with unusable alignment metadata out of the training set.
+
+    Tilt-series deselected in Warp are left in place and not processed.
+    """
+    deselected = [
+        xml_file.name
+        for xml_file in sorted(training_directory.glob("*.xml"))
+        if is_deselected(xml_file)
+    ]
+    if deselected:
+        print(
+            f"Skipping {len(deselected)} tilt-series deselected in Warp "
+            f"(UnselectManual): {', '.join(deselected)}",
+            flush=True,
+        )
+
     excluded = []
-    for xml_file in sorted(training_directory.glob("*.xml")):
+    for xml_file in list_tilt_series_xmls(training_directory):
         try:
             tilt_series = TiltSeries(xml_file)
         except Exception as error:
@@ -102,11 +146,12 @@ def exclude_nonfinite_alignment_tilt_series(training_directory: Path) -> list[Pa
             print(f"WARNING: excluding '{xml_file.name}' -- {reason}.", flush=True)
             move(str(xml_file), str(quarantine / xml_file.name))
 
-    remaining = list(training_directory.glob("*.xml"))
+    remaining = list_tilt_series_xmls(training_directory)
     if not remaining:
         raise ValueError(
             f"No tilt-series with usable alignment metadata remain in "
-            f"{training_directory} (excluded {len(excluded)})."
+            f"{training_directory} (excluded {len(excluded)}, "
+            f"deselected {len(deselected)})."
         )
     if excluded:
         print(

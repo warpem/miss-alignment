@@ -3,7 +3,7 @@
 import torch
 from pathlib import Path
 
-from .data.io import TiltSeriesData
+from .data.io import TiltSeriesData, list_tilt_series_xmls
 from .distributed.manager import run_distributed
 
 
@@ -86,7 +86,7 @@ def run_cross_correlation_alignment_parallel(
         requires MISS_CLUSTER_CONFIG and MISS_CLUSTER_SCRIPT to be set.
     """
     # Get list of all XML files to process
-    xml_files = list(training_directory.glob("*.xml"))
+    xml_files = list_tilt_series_xmls(training_directory)
 
     if not xml_files:
         raise ValueError(f"No XML files found in {training_directory}")

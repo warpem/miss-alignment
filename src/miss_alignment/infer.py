@@ -12,7 +12,10 @@ from lightning.pytorch import seed_everything
 
 from ._cli import cli
 from .utils import configure_logging, sync_start_iteration_xmls
-from .data.io import exclude_nonfinite_alignment_tilt_series
+from .data.io import (
+    exclude_nonfinite_alignment_tilt_series,
+    list_tilt_series_xmls,
+)
 from .alignment import run_alignment_parallel
 from .prepare_stacks import prepare_stacks_parallel
 from .preprocessing import run_cross_correlation_alignment_parallel
@@ -247,7 +250,7 @@ def infer_miss_align(
         print(f"{'=' * 60}\n")
 
         # get list of all files to process for alignment
-        tilt_series_list = list(data_directory.glob("*.xml"))
+        tilt_series_list = list_tilt_series_xmls(data_directory)
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
@@ -268,11 +271,13 @@ def infer_miss_align(
         iteration_directory = data_directory / ("iter" + str(x + 1))
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
+        # snapshot all XMLs (deselected ones unchanged) so iterN/ is complete
         for xml_file in data_directory.glob("*.xml"):
             destination_xml = iteration_directory / xml_file.name
             copyfile(xml_file, destination_xml)
 
-            # copy the file with the alignment loss
+        # copy the alignment loss of the tilt series that were aligned
+        for xml_file in tilt_series_list:
             loss_json = xml_file.stem + "_alignment_loss.json"
             destination_json = iteration_directory / loss_json
             copyfile(data_directory / loss_json, destination_json)
