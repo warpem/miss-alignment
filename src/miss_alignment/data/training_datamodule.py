@@ -14,6 +14,7 @@ import lightning.pytorch as pl
 from torch.utils.data import DataLoader
 
 from ._reconstruction_worker import reconstruction_worker
+from .io import list_tilt_series_xmls
 from .training_dataset import ReconstructionPoolDataset
 from ..utils import is_rank_zero
 
@@ -223,7 +224,7 @@ class MissAlignmentDataModule(pl.LightningDataModule):
             self.stop_event = ctx.Event()
 
             # get a list of all the tilt series json files
-            tilt_series_xmls = list(self.dataset_directory.glob("*.xml"))
+            tilt_series_xmls = list_tilt_series_xmls(self.dataset_directory)
 
             for worker_id in range(self.n_workers):
                 p = ctx.Process(

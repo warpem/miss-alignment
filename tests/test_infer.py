@@ -438,3 +438,45 @@ def test_cli_overrides_and_resume(tmp_path, monkeypatch):
     assert prepared[0]["desired_pixel_size"] == 10.0
     assert (data / "iter2" / "ts.xml").read_text() == "restored XML"
     assert not (tmp_path / "wrong-data").exists()
+
+
+def test_infer_skips_tilt_series_deselected_in_warp(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "keep.xml").write_text('<TiltSeries UnselectManual="" />')
+    (data_dir / "skip.xml").write_text('<TiltSeries UnselectManual="True" />')
+    monkeypatch.setattr(
+        infer_module, "exclude_nonfinite_alignment_tilt_series", lambda *_: []
+    )
+    models = tmp_path / "models"
+    _make_models(models, 1)
+    config = _write_config(
+        tmp_path, data_dir, models, [{"downsample": 1, "alignment": "global"}]
+    )
+
+    aligned = []
+
+    def fake_run_alignment_parallel(*, tilt_series_list, output_directory, **_):
+        aligned.append([ts.name for ts in tilt_series_list])
+        for ts in tilt_series_list:
+            (Path(output_directory) / f"{ts.stem}_alignment_loss.json").write_text(
+                json.dumps([0.0])
+            )
+
+    monkeypatch.setattr(
+        infer_module, "run_alignment_parallel", fake_run_alignment_parallel
+    )
+
+    infer_miss_align(
+        config_file=config,
+        start_at_iteration=0,
+        prepare_stacks=None,
+        preprocess=False,
+    )
+
+    assert aligned == [["keep.xml"]]
+    # the snapshot stays complete; the deselected XML is copied unchanged
+    iter_dir = data_dir / "iter1"
+    assert (iter_dir / "skip.xml").read_text() == '<TiltSeries UnselectManual="True" />'
+    assert (iter_dir / "keep_alignment_loss.json").exists()
+    assert not (iter_dir / "skip_alignment_loss.json").exists()

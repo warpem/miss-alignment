@@ -20,7 +20,10 @@ from lightning.pytorch.strategies import DDPStrategy
 from ._cli import OPTION_PROMPT_KWARGS, cli
 from .utils import configure_logging, parse_device_list, sync_start_iteration_xmls
 from .data import MissAlignmentDataModule
-from .data.io import exclude_nonfinite_alignment_tilt_series
+from .data.io import (
+    exclude_nonfinite_alignment_tilt_series,
+    list_tilt_series_xmls,
+)
 from .data.shift_generation import create_default_generator
 from .models import MissAlignment, MAEarlyStopping, MAProgressBar
 from .alignment import run_alignment_parallel
@@ -483,7 +486,7 @@ def train_miss_align(
         # ============================================================
 
         # get list of all files to process for alignment
-        tilt_series_list = list(training_directory.glob("*.xml"))
+        tilt_series_list = list_tilt_series_xmls(training_directory)
 
         # run alignment in parallel over all available devices
         run_alignment_parallel(
@@ -504,11 +507,13 @@ def train_miss_align(
         iteration_directory = training_directory / ("iter" + str(x + 1))
         iteration_directory.mkdir(parents=True, exist_ok=True)
 
+        # snapshot all XMLs (deselected ones unchanged) so iterN/ is complete
         for xml_file in training_directory.glob("*.xml"):
             destination_xml = iteration_directory / xml_file.name
             copyfile(xml_file, destination_xml)
 
-            # copy the file with the alignment loss
+        # copy the alignment loss of the tilt series that were aligned
+        for xml_file in tilt_series_list:
             loss_json = xml_file.stem + "_alignment_loss.json"
             destination_json = iteration_directory / loss_json
             copyfile(training_directory / loss_json, destination_json)

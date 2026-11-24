@@ -19,7 +19,7 @@ python update_warp_xml.py
 
 Place a miss-alignment config file in the `warp_tiltseries/` directory — use [config_template.yaml](config_template.yaml) as a starting point. Key settings to update:
 
-- **`training_directory`**: set to `/path/to/your/warp/project/warp_tiltseries/`
+- **`training_directory`**: set to `/path/to/your/warp/project/warp_tiltseries/`. Tilt-series deselected in Warp (e.g. with `WarpTools change_selection --deselect`, which sets `UnselectManual` in the XML) are skipped for training and alignment; their XMLs are left untouched. This also applies to `data_directory` in `infer`.
 - **`batch_size`** (in the `tilt_series_alignment` section): controls how many patches are reconstructed simultaneously during alignment. A value of 32 works well for 24 GB cards; reduce it for smaller cards or increase it for larger ones to improve throughput.
 
 ### 4. Run miss-alignment
